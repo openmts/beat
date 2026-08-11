@@ -1,0 +1,47 @@
+version: 2
+project_name: beat
+
+before:
+  hooks:
+    - sh -c "cd frontend && npm ci && npm run build"
+
+builds:
+  - id: beat-server
+    dir: backend
+    main: ./cmd/server
+    binary: beat-server
+    env: [CGO_ENABLED=0]
+    goos: [linux]
+    goarch: [amd64, arm64]
+    ldflags:
+      - -s -w -X github.com/beat/backend/internal/buildinfo.Version={{.Version}} -X github.com/beat/backend/internal/buildinfo.Commit={{.Commit}} -X github.com/beat/backend/internal/buildinfo.Date={{.Date}}
+  - id: beat-agent
+    dir: backend
+    main: ./cmd/agent
+    binary: beat-agent
+    env: [CGO_ENABLED=0]
+    goos: [linux]
+    goarch: [amd64, arm64]
+    ldflags:
+      - -s -w -X github.com/beat/backend/internal/buildinfo.Version={{.Version}} -X github.com/beat/backend/internal/buildinfo.Commit={{.Commit}} -X github.com/beat/backend/internal/buildinfo.Date={{.Date}}
+
+archives:
+  - id: beat
+    ids: [beat-server, beat-agent]
+    formats: [tar.gz]
+    name_template: "beat_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - src: frontend/dist
+        dst: static
+      - README.md
+      - deploy/**/*
+      - scripts/beatctl.sh
+
+checksum:
+  name_template: checksums.txt
+
+sboms:
+  - artifacts: archive
+
+changelog:
+  sort: asc

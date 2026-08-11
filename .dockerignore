@@ -1,0 +1,10 @@
+.git
+.github
+release
+frontend/node_modules
+frontend/dist
+backend/coverage.out
+beat-server
+beat-linux-*.tar.gz
+**/*.log
+**/*.pid

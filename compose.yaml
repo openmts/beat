@@ -1,0 +1,33 @@
+services:
+  beat:
+    build:
+      context: .
+      args:
+        VERSION: ${BEAT_VERSION:-dev}
+        COMMIT: ${BEAT_COMMIT:-unknown}
+        BUILD_DATE: ${BEAT_BUILD_DATE:-unknown}
+    image: beat:${BEAT_VERSION:-dev}
+    user: "65532:65532"
+    env_file:
+      - ./deploy/beat.env
+    ports:
+      - "${BEAT_HTTP_PORT:-9180}:8080"
+    volumes:
+      - beat-data:/var/lib/beat
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,mode=0700
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "--show-error", "--output", "/dev/null", "http://127.0.0.1:8080/readyz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+volumes:
+  beat-data: {}

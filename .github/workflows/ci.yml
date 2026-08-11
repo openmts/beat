@@ -1,0 +1,81 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+      - name: Install quality tools
+        run: |
+          go install github.com/incu6us/goimports-reviser/v3@v3.12.6
+          go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.2
+          go install golang.org/x/vuln/cmd/govulncheck@v1.4.0
+      - name: Format and module checks
+        working-directory: backend
+        run: |
+          goimports-reviser -rm-unused -format -company-prefixes github.com/beat/backend ./...
+          test -z "$(git status --short -- .)"
+          go mod tidy
+          test -z "$(git status --short -- go.mod go.sum)"
+          go mod verify
+      - name: Test, coverage, lint, and security
+        working-directory: backend
+        run: |
+          go test -race -shuffle=on ./...
+          go test -coverprofile=coverage.out ./...
+          awk '/^total:/ {gsub("%", "", $3); if ($3 + 0 < 90) exit 1}' <(go tool cover -func=coverage.out)
+          golangci-lint run ./...
+          go vet ./...
+          govulncheck ./...
+      - name: Build binaries
+        working-directory: backend
+        run: |
+          go build -trimpath ./cmd/server
+          go build -trimpath ./cmd/agent
+
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - working-directory: frontend
+        run: npm ci
+      - working-directory: frontend
+        run: npm audit --registry=https://registry.npmjs.org --omit=dev --audit-level=high
+      - working-directory: frontend
+        run: npm test -- --maxWorkers=1
+      - working-directory: frontend
+        run: npm run test:coverage -- --maxWorkers=1
+      - working-directory: frontend
+        run: npm run lint
+      - working-directory: frontend
+        run: npm run build
+
+  container:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          tags: beat:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

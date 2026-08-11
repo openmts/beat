@@ -1,0 +1,28 @@
+# 运行时数据
+data/
+release/
+build/
+
+# 二进制与打包产物
+beat-server
+beat-agent
+backend/server
+backend/agent
+beat-linux-amd64.tar.gz
+*.tar.gz
+
+# 环境与密钥
+*.env
+!deploy/beat.env.example
+
+# 日志
+*.log
+*.pid
+
+# 编辑器
+.vscode/
+.idea/
+
+# Go
+coverage.out
+*.test
