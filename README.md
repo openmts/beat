@@ -16,11 +16,11 @@ Commercial readiness and current competitor-parity gaps are tracked in
 Build the frontend and server:
 
 ```bash
-cd frontend
+cd webui
 npm install
 npm run build
 
-cd ../backend
+cd ..
 go build -o beat-server ./cmd/server
 ```
 
@@ -36,7 +36,7 @@ export BEAT_LOG_LEVEL='info'
 ./beat-server \
   -db-path ./data/beat.db \
   -mts-path ./data/beat_mts \
-  -static-dir ../frontend/dist \
+  -static-dir ./webui/dist \
   -listen-addr :8080
 ```
 
@@ -137,7 +137,6 @@ See [`docs/beat/backup-restore-design.md`](docs/beat/backup-restore-design.md).
 Build the agent:
 
 ```bash
-cd backend
 go build -o beat-agent ./cmd/agent
 ```
 
@@ -195,7 +194,7 @@ rollback commands are documented in the
 Run the frontend development server:
 
 ```bash
-cd frontend
+cd webui
 npm run dev
 ```
 
@@ -204,7 +203,6 @@ It proxies `/api` to `http://localhost:8080`.
 Run the project quality gates:
 
 ```bash
-cd backend
 goimports-reviser -rm-unused -format -company-prefixes github.com/beat/backend ./...
 golangci-lint run ./...
 go test -race ./...
@@ -214,7 +212,7 @@ go vet ./...
 govulncheck ./...
 go mod verify
 
-cd ../frontend
+cd webui
 npm audit --registry=https://registry.npmjs.org --omit=dev --audit-level=high
 npm test -- --maxWorkers=1
 npm run test:coverage -- --maxWorkers=1

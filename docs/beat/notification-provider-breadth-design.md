@@ -42,10 +42,10 @@ implementation still has four commercial gaps:
 
 The current files establishing that boundary are:
 
-- `backend/internal/notification/config.go`;
-- `backend/internal/notification/service.go`;
-- `backend/internal/alerter/notification.go`;
-- `backend/internal/store/alert_channel.go`;
+- `internal/notification/config.go`;
+- `internal/notification/service.go`;
+- `internal/alerter/notification.go`;
+- `internal/store/alert_channel.go`;
 - `frontend/src/pages/admin/alert-channel-dialog.tsx`.
 
 ## Competitor audit

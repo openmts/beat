@@ -38,10 +38,10 @@ independent location-visibility control.
 
 Relevant current boundaries:
 
-- `backend/internal/model/node.go`;
-- `backend/internal/store/node.go` and `node_heartbeat.go`;
-- `backend/internal/api/handler/node.go` and `node_response.go`;
-- `backend/internal/api/handler/node_update.go`;
+- `internal/model/node.go`;
+- `internal/store/node.go` and `node_heartbeat.go`;
+- `internal/api/handler/node.go` and `node_response.go`;
+- `internal/api/handler/node_update.go`;
 - `frontend/src/components/admin-node-card.tsx`;
 - `frontend/src/types/index.ts`.
 

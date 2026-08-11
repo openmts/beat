@@ -15,15 +15,14 @@ jobs:
       - uses: actions/checkout@v5
       - uses: actions/setup-go@v6
         with:
-          go-version-file: backend/go.mod
-          cache-dependency-path: backend/go.sum
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
       - name: Install quality tools
         run: |
           go install github.com/incu6us/goimports-reviser/v3@v3.12.6
           go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.2
           go install golang.org/x/vuln/cmd/govulncheck@v1.4.0
       - name: Format and module checks
-        working-directory: backend
         run: |
           goimports-reviser -rm-unused -format -company-prefixes github.com/beat/backend ./...
           test -z "$(git status --short -- .)"
@@ -31,7 +30,6 @@ jobs:
           test -z "$(git status --short -- go.mod go.sum)"
           go mod verify
       - name: Test, coverage, lint, and security
-        working-directory: backend
         run: |
           go test -race -shuffle=on ./...
           go test -coverprofile=coverage.out ./...
@@ -40,7 +38,6 @@ jobs:
           go vet ./...
           govulncheck ./...
       - name: Build binaries
-        working-directory: backend
         run: |
           go build -trimpath ./cmd/server
           go build -trimpath ./cmd/agent
@@ -53,18 +50,18 @@ jobs:
         with:
           node-version: 22
           cache: npm
-          cache-dependency-path: frontend/package-lock.json
-      - working-directory: frontend
+          cache-dependency-path: webui/package-lock.json
+      - working-directory: webui
         run: npm ci
-      - working-directory: frontend
+      - working-directory: webui
         run: npm audit --registry=https://registry.npmjs.org --omit=dev --audit-level=high
-      - working-directory: frontend
+      - working-directory: webui
         run: npm test -- --maxWorkers=1
-      - working-directory: frontend
+      - working-directory: webui
         run: npm run test:coverage -- --maxWorkers=1
-      - working-directory: frontend
+      - working-directory: webui
         run: npm run lint
-      - working-directory: frontend
+      - working-directory: webui
         run: npm run build
 
   container:

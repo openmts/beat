@@ -6,8 +6,8 @@ build/
 # 二进制与打包产物
 beat-server
 beat-agent
-backend/server
-backend/agent
+cmd/server/server
+cmd/agent/agent
 beat-linux-amd64.tar.gz
 *.tar.gz
 

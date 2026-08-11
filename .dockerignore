@@ -1,9 +1,9 @@
 .git
 .github
 release
-frontend/node_modules
-frontend/dist
-backend/coverage.out
+webui/node_modules
+webui/dist
+coverage.out
 beat-server
 beat-linux-*.tar.gz
 **/*.log

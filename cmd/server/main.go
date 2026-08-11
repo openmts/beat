@@ -17,7 +17,7 @@ func main() {
 	dbPath := flag.String("db-path", "./data/beat.db", "path to sqlite database file")
 	mtsPath := flag.String("mts-path", "./data/beat_mts", "path to MTS time series data")
 	listenAddr := flag.String("listen-addr", ":8080", "address to listen on")
-	staticDir := flag.String("static-dir", "../frontend/dist", "path to frontend static files")
+	staticDir := flag.String("static-dir", "../webui/dist", "path to frontend static files")
 	showVersion := flag.Bool("version", false, "print version and exit")
 	flag.Parse()
 	if *showVersion {

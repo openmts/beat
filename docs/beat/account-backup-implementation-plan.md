@@ -12,8 +12,8 @@ Source designs:
 
 ## Constraints discovered during planning
 
-- `backend/internal/api/router.go` is 285 lines and
-  `backend/internal/store/sqlite.go` is 291 lines. New routes and DDL cannot be
+- `internal/api/router.go` is 285 lines and
+  `internal/store/sqlite.go` is 291 lines. New routes and DDL cannot be
   added directly without violating the 300-line production-file limit.
 - `frontend/src/lib/api.ts` and `frontend/src/types/index.ts` already exceed 300
   lines. New security and backup contracts must use focused modules.

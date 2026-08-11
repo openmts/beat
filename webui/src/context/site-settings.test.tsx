@@ -44,7 +44,7 @@ describe("site settings context", () => {
     render(<SiteSettingsProvider><Harness /></SiteSettingsProvider>)
     expect(screen.getByText("loading")).toBeInTheDocument()
     expect(await screen.findByText("Infrastructure")).toBeInTheDocument()
-    expect(document.title).toBe("Infrastructure")
+    await waitFor(() => expect(document.title).toBe("Infrastructure"))
     expect(document.querySelector("meta[name='description']")).toHaveAttribute(
       "content",
       "Public infrastructure status",
@@ -52,7 +52,7 @@ describe("site settings context", () => {
     expect(document.querySelector("link[rel~='icon']")).toHaveAttribute("href", "/custom.svg")
 
     fireEvent.click(screen.getByText("apply"))
-    expect(document.title).toBe("Applied")
+    await waitFor(() => expect(document.title).toBe("Applied"))
     expect(document.querySelector("link[rel~='icon']")).toHaveAttribute("href", "/favicon.svg")
   })
 

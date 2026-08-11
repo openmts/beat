@@ -19,7 +19,7 @@ must be authenticated and authorized.
 
 ## Current Beat evidence and gap
 
-`backend/internal/adminauth/service.go` currently provides constant-work
+`internal/adminauth/service.go` currently provides constant-work
 password verification, optional TOTP, per-IP/per-username in-memory rate
 limits, revocable sessions, and persistent `auth.login` audit records.
 

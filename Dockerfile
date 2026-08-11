@@ -12,11 +12,11 @@ RUN dnf install -y --setopt=install_weak_deps=False \
     rm -rf /var/cache/dnf
 
 FROM build-base AS frontend-build
-WORKDIR /src/frontend
-COPY frontend/package.json frontend/package-lock.json ./
+WORKDIR /src/webui
+COPY webui/package.json webui/package-lock.json ./
 RUN npm ci && \
     npm audit --registry=https://registry.npmjs.org --omit=dev --audit-level=high
-COPY frontend/ ./
+COPY webui/ ./
 RUN npm run build
 
 FROM build-base AS backend-build
@@ -24,10 +24,11 @@ ARG VERSION=dev
 ARG COMMIT=unknown
 ARG BUILD_DATE=unknown
 ARG GOPROXY=https://goproxy.cn,direct
-WORKDIR /src/backend
-COPY backend/go.mod backend/go.sum ./
+WORKDIR /src/beat
+COPY go.mod go.sum ./
 RUN GOPROXY="${GOPROXY}" go mod download
-COPY backend/ ./
+COPY cmd/ ./cmd/
+COPY internal/ ./internal/
 RUN GOPROXY="${GOPROXY}" CGO_ENABLED=0 go build -trimpath \
     -ldflags="-s -w -X github.com/beat/backend/internal/buildinfo.Version=${VERSION} -X github.com/beat/backend/internal/buildinfo.Commit=${COMMIT} -X github.com/beat/backend/internal/buildinfo.Date=${BUILD_DATE}" \
     -o /out/beat-server ./cmd/server && \
@@ -39,7 +40,7 @@ FROM ${RUNTIME_IMAGE}
 RUN install -d -m 0700 -o 65532 -g 65532 /var/lib/beat
 COPY --from=backend-build --chown=65532:65532 /out/beat-server /usr/local/bin/beat-server
 COPY --from=backend-build --chown=65532:65532 /out/beat-agent /usr/local/bin/beat-agent
-COPY --from=frontend-build --chown=65532:65532 /src/frontend/dist /opt/beat/static
+COPY --from=frontend-build --chown=65532:65532 /src/webui/dist /opt/beat/static
 RUN chmod 0700 /usr/local/bin/beat-server /usr/local/bin/beat-agent && \
     chmod -R u=rwX,go= /opt/beat/static
 USER 65532:65532
