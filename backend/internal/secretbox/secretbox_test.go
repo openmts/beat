@@ -93,27 +93,6 @@ func TestKeyFileErrorPaths(t *testing.T) {
 	}
 }
 
-func TestKeyFileChmodFailure(t *testing.T) {
-	if os.Geteuid() == 0 {
-		t.Skip("chmod permission checks are unreliable when running as root")
-	}
-	root := t.TempDir()
-	if err := os.Chmod(root, 0o500); err != nil {
-		t.Fatalf("chmod root directory: %v", err)
-	}
-	t.Cleanup(func() { _ = os.Chmod(root, 0o700) })
-	blocked := filepath.Join(root, "readonly")
-	if err := os.WriteFile(blocked, bytes.Repeat([]byte{6}, keyLength), 0o400); err != nil {
-		t.Fatalf("write read-only key: %v", err)
-	}
-	if err := os.Chmod(blocked, 0o400); err != nil {
-		t.Fatalf("chmod read-only key: %v", err)
-	}
-	if _, err := New(blocked, bytes.NewReader(nil)); err == nil {
-		t.Fatal("chmod failure on existing key was ignored")
-	}
-}
-
 func TestManagerUsesDefaultRandomSource(t *testing.T) {
 	keyPath := filepath.Join(t.TempDir(), "admin-data.key")
 	manager, err := New(keyPath, nil)

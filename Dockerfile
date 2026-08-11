@@ -3,11 +3,11 @@ ARG RUNTIME_IMAGE=mcr.microsoft.com/azurelinux/base/core@sha256:4ecd6b297db85c54
 
 FROM ${BUILD_IMAGE} AS build-base
 RUN dnf install -y --setopt=install_weak_deps=False \
-        golang-1.26.5-1.fc44 \
-        nodejs22-22.22.2-3.fc44 \
-        nodejs22-bin-22.22.2-3.fc44 \
-        nodejs22-npm-10.9.7-1.22.22.2.3.fc44 \
-        nodejs22-npm-bin-22.22.2-3.fc44 && \
+        golang \
+        nodejs22 \
+        nodejs22-bin \
+        nodejs22-npm \
+        nodejs22-npm-bin && \
     dnf clean all && \
     rm -rf /var/cache/dnf
 

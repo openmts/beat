@@ -20,6 +20,10 @@ type fakeIPResolver struct {
 	err       error
 }
 
+func isICMPPrivilegeError(err error) bool {
+	return errors.Is(err, syscall.EPERM) || errors.Is(err, syscall.EACCES)
+}
+
 func (resolver fakeIPResolver) LookupNetIP(context.Context, string, string) ([]netip.Addr, error) {
 	return resolver.addresses, resolver.err
 }
@@ -116,6 +120,9 @@ func TestNetworkProberICMPLoopback(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 			defer cancel()
 			if err := prober.probeICMP(ctx, test.target, test.family); err != nil {
+				if isICMPPrivilegeError(err) {
+					t.Skipf("ICMP socket unavailable in this environment: %v", err)
+				}
 				t.Fatalf("probe ICMP %s: %v", test.target, err)
 			}
 		})
