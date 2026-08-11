@@ -175,19 +175,38 @@ func TestMainStartsAndStopsOnSignal(t *testing.T) {
 		flag.CommandLine = oldFlags
 	})
 	dataDir := t.TempDir()
+	address := availableServerAddress(t)
 	flag.CommandLine = flag.NewFlagSet("beat-server", flag.ContinueOnError)
 	flag.CommandLine.SetOutput(io.Discard)
 	os.Args = []string{"beat-server",
 		"-db-path", filepath.Join(dataDir, "beat.db"),
 		"-mts-path", filepath.Join(dataDir, "mts"),
-		"-listen-addr", "127.0.0.1:0",
+		"-listen-addr", address,
 		"-static-dir", t.TempDir(),
 	}
 	go func() {
-		time.Sleep(100 * time.Millisecond)
+		waitForHTTPHealth(t, address)
 		_ = syscall.Kill(os.Getpid(), syscall.SIGTERM)
 	}()
 	main()
+}
+
+func waitForHTTPHealth(t *testing.T, address string) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		response, err := http.Get("http://" + address + "/healthz")
+		if err == nil {
+			if closeErr := response.Body.Close(); closeErr != nil {
+				t.Fatalf("close health response: %v", closeErr)
+			}
+			if response.StatusCode == http.StatusOK {
+				return
+			}
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("server did not become healthy")
 }
 
 func TestBuildVersionIncludesBuildInfo(t *testing.T) {
