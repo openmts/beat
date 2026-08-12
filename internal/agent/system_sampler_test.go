@@ -25,7 +25,7 @@ func TestAggregateSample(t *testing.T) {
 		swap:       mem.SwapMemoryStat{Used: 25, Total: 100, UsedPercent: 25},
 		load:       load.AvgStat{Load1: 1, Load5: 2, Load15: 3},
 		host:       host.InfoStat{Uptime: 600, Procs: 20},
-		rootUsage:  disk.UsageStat{Used: 80, Total: 200, UsedPercent: 40},
+		diskUsage:  diskUsageStat{Used: 80, Total: 200, UsedPercent: 40},
 		counters: ioCounters{
 			disks: map[string]disk.IOCountersStat{
 				"a": {ReadBytes: 10, WriteBytes: 20},
@@ -84,6 +84,41 @@ func TestSystemSamplerLogicalCPUCountErrors(t *testing.T) {
 	}
 }
 
+func TestSystemSamplerPropagatesEachStepError(t *testing.T) {
+	tests := []struct {
+		name  string
+		setup func()
+	}{
+		{"cpu", func() {
+			readCPUPercent = func(context.Context, time.Duration, bool) ([]float64, error) { return nil, errors.New("cpu") }
+		}},
+		{"system info", func() {
+			readHostInfo = func(context.Context) (*host.InfoStat, error) { return nil, errors.New("host") }
+		}},
+		{"resources", func() {
+			readMemory = func(context.Context) (*mem.VirtualMemoryStat, error) { return nil, errors.New("memory") }
+		}},
+		{"io counters", func() {
+			readDiskIO = func(context.Context, ...string) (map[string]disk.IOCountersStat, error) {
+				return nil, errors.New("disk")
+			}
+		}},
+		{"connections", func() {
+			readConnections = func(context.Context, string) ([]gopsnet.ConnectionStat, error) { return nil, errors.New("tcp") }
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			restore := preserveSystemReaders()
+			t.Cleanup(restore)
+			test.setup()
+			if _, err := (SystemSampler{}).Sample(context.Background()); err == nil {
+				t.Fatal("expected sampling error propagation")
+			}
+		})
+	}
+}
+
 func TestSampleCPUErrors(t *testing.T) {
 	restore := preserveSystemReaders()
 	t.Cleanup(restore)
@@ -128,7 +163,7 @@ func TestSampleResourceErrors(t *testing.T) {
 			readLoadAverage = func(context.Context) (*load.AvgStat, error) { return nil, errors.New("failed") }
 		}},
 		{"root", func() {
-			readRootUsage = func(context.Context, string) (*disk.UsageStat, error) { return nil, errors.New("failed") }
+			readPartitions = func(context.Context, bool) ([]disk.PartitionStat, error) { return nil, errors.New("failed") }
 		}},
 	}
 	for _, test := range tests {
@@ -141,6 +176,56 @@ func TestSampleResourceErrors(t *testing.T) {
 				t.Fatal("expected resource sampling error")
 			}
 		})
+	}
+}
+
+func TestSampleDiskUsage(t *testing.T) {
+	restore := preserveSystemReaders()
+	t.Cleanup(restore)
+	readPartitions = func(context.Context, bool) ([]disk.PartitionStat, error) {
+		return []disk.PartitionStat{
+			{Device: "/dev/sda1", Mountpoint: "/", Fstype: "ext4"},
+			{Device: "/dev/sda1", Mountpoint: "/mnt/bind", Fstype: "ext4"},
+			{Device: "/dev/sdb1", Mountpoint: "/data", Fstype: "ext4"},
+			{Device: "", Mountpoint: "/proc", Fstype: "proc"},
+			{Device: "/dev/sdc1", Mountpoint: "", Fstype: "ext4"},
+			{Device: "/dev/sdd1", Mountpoint: "/unreadable", Fstype: "ext4"},
+		}, nil
+	}
+	readUsage = func(_ context.Context, mountpoint string) (*disk.UsageStat, error) {
+		switch mountpoint {
+		case "/":
+			return &disk.UsageStat{Total: 100, Used: 40, UsedPercent: 40}, nil
+		case "/mnt/bind":
+			return &disk.UsageStat{Total: 100, Used: 40, UsedPercent: 40}, nil
+		case "/data":
+			return &disk.UsageStat{Total: 200, Used: 60, UsedPercent: 30}, nil
+		}
+		return nil, errors.New("usage failed")
+	}
+	got, err := sampleDiskUsage(context.Background())
+	if err != nil {
+		t.Fatalf("sample disk usage: %v", err)
+	}
+	if got.Total != 300 || got.Used != 100 {
+		t.Fatalf("disk usage = %+v, want total 300 used 100", got)
+	}
+	if got.UsedPercent != float64(100)/float64(300)*100 {
+		t.Fatalf("used percent = %v, want %v", got.UsedPercent, float64(100)/float64(300)*100)
+	}
+}
+
+func TestSampleDiskUsageEmptyAndPartitionFailure(t *testing.T) {
+	restore := preserveSystemReaders()
+	t.Cleanup(restore)
+	readPartitions = func(context.Context, bool) ([]disk.PartitionStat, error) { return nil, nil }
+	got, err := sampleDiskUsage(context.Background())
+	if err != nil || got.Total != 0 || got.Used != 0 {
+		t.Fatalf("empty partitions = %+v, %v", got, err)
+	}
+	readPartitions = func(context.Context, bool) ([]disk.PartitionStat, error) { return nil, errors.New("failed") }
+	if _, err := sampleDiskUsage(context.Background()); err == nil {
+		t.Fatal("expected partition error")
 	}
 }
 
@@ -179,20 +264,23 @@ func setSuccessfulResourceReaders() {
 	readMemory = func(context.Context) (*mem.VirtualMemoryStat, error) { return &mem.VirtualMemoryStat{}, nil }
 	readSwapMemory = func(context.Context) (*mem.SwapMemoryStat, error) { return &mem.SwapMemoryStat{}, nil }
 	readLoadAverage = func(context.Context) (*load.AvgStat, error) { return &load.AvgStat{}, nil }
-	readRootUsage = func(context.Context, string) (*disk.UsageStat, error) { return &disk.UsageStat{}, nil }
+	readPartitions = func(context.Context, bool) ([]disk.PartitionStat, error) { return nil, nil }
+	readUsage = func(context.Context, string) (*disk.UsageStat, error) { return &disk.UsageStat{}, nil }
 }
 
 func preserveSystemReaders() func() {
 	originalCPUPercent, originalCPUInfo := readCPUPercent, readCPUInfo
 	originalHost, originalLoad := readHostInfo, readLoadAverage
 	originalMemory, originalSwap := readMemory, readSwapMemory
-	originalRoot, originalDisk := readRootUsage, readDiskIO
-	originalNetwork, originalConnections := readNetworkIO, readConnections
+	originalPartitions, originalUsage := readPartitions, readUsage
+	originalDisk, originalNetwork := readDiskIO, readNetworkIO
+	originalConnections := readConnections
 	return func() {
 		readCPUPercent, readCPUInfo = originalCPUPercent, originalCPUInfo
 		readHostInfo, readLoadAverage = originalHost, originalLoad
 		readMemory, readSwapMemory = originalMemory, originalSwap
-		readRootUsage, readDiskIO = originalRoot, originalDisk
-		readNetworkIO, readConnections = originalNetwork, originalConnections
+		readPartitions, readUsage = originalPartitions, originalUsage
+		readDiskIO, readNetworkIO = originalDisk, originalNetwork
+		readConnections = originalConnections
 	}
 }

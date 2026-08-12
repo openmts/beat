@@ -30,7 +30,8 @@ var (
 	readLoadAverage = load.AvgWithContext
 	readMemory      = mem.VirtualMemoryWithContext
 	readSwapMemory  = mem.SwapMemoryWithContext
-	readRootUsage   = disk.UsageWithContext
+	readPartitions  = disk.PartitionsWithContext
+	readUsage       = disk.UsageWithContext
 	readDiskIO      = disk.IOCountersWithContext
 	readNetworkIO   = gopsnet.IOCountersWithContext
 	readConnections = gopsnet.ConnectionsWithContext
@@ -41,6 +42,12 @@ type ioCounters struct {
 	networks []gopsnet.IOCountersStat
 }
 
+type diskUsageStat struct {
+	Total       uint64
+	Used        uint64
+	UsedPercent float64
+}
+
 type systemSnapshot struct {
 	systemInfo model.SystemInfo
 	cpuPercent float64
@@ -49,7 +56,7 @@ type systemSnapshot struct {
 	swap       mem.SwapMemoryStat
 	load       load.AvgStat
 	host       host.InfoStat
-	rootUsage  disk.UsageStat
+	diskUsage  diskUsageStat
 	counters   ioCounters
 	tcpCount   int
 	udpCount   int
@@ -64,7 +71,7 @@ func (SystemSampler) Sample(ctx context.Context) (RawSample, error) {
 	if err != nil {
 		return RawSample{}, err
 	}
-	memory, swap, loadAverage, rootUsage, err := sampleResources(ctx)
+	memory, swap, loadAverage, diskStat, err := sampleResources(ctx)
 	if err != nil {
 		return RawSample{}, err
 	}
@@ -84,7 +91,7 @@ func (SystemSampler) Sample(ctx context.Context) (RawSample, error) {
 		swap:       swap,
 		load:       loadAverage,
 		host:       hostInfo,
-		rootUsage:  rootUsage,
+		diskUsage:  diskStat,
 		counters:   counters,
 		tcpCount:   tcpCount,
 		udpCount:   udpCount,
@@ -110,25 +117,56 @@ func sampleCPU(ctx context.Context) (float64, float64, error) {
 }
 
 func sampleResources(ctx context.Context) (
-	mem.VirtualMemoryStat, mem.SwapMemoryStat, load.AvgStat, disk.UsageStat, error,
+	mem.VirtualMemoryStat, mem.SwapMemoryStat, load.AvgStat, diskUsageStat, error,
 ) {
 	memory, err := readMemory(ctx)
 	if err != nil {
-		return mem.VirtualMemoryStat{}, mem.SwapMemoryStat{}, load.AvgStat{}, disk.UsageStat{}, fmt.Errorf("read memory usage: %w", err)
+		return mem.VirtualMemoryStat{}, mem.SwapMemoryStat{}, load.AvgStat{}, diskUsageStat{}, fmt.Errorf("read memory usage: %w", err)
 	}
 	swap, err := readSwapMemory(ctx)
 	if err != nil {
-		return mem.VirtualMemoryStat{}, mem.SwapMemoryStat{}, load.AvgStat{}, disk.UsageStat{}, fmt.Errorf("read swap usage: %w", err)
+		return mem.VirtualMemoryStat{}, mem.SwapMemoryStat{}, load.AvgStat{}, diskUsageStat{}, fmt.Errorf("read swap usage: %w", err)
 	}
 	average, err := readLoadAverage(ctx)
 	if err != nil {
-		return mem.VirtualMemoryStat{}, mem.SwapMemoryStat{}, load.AvgStat{}, disk.UsageStat{}, fmt.Errorf("read load average: %w", err)
+		return mem.VirtualMemoryStat{}, mem.SwapMemoryStat{}, load.AvgStat{}, diskUsageStat{}, fmt.Errorf("read load average: %w", err)
 	}
-	root, err := readRootUsage(ctx, "/")
+	diskStat, err := sampleDiskUsage(ctx)
 	if err != nil {
-		return mem.VirtualMemoryStat{}, mem.SwapMemoryStat{}, load.AvgStat{}, disk.UsageStat{}, fmt.Errorf("read root filesystem usage: %w", err)
+		return mem.VirtualMemoryStat{}, mem.SwapMemoryStat{}, load.AvgStat{}, diskUsageStat{}, fmt.Errorf("read disk usage: %w", err)
 	}
-	return *memory, *swap, *average, *root, nil
+	return *memory, *swap, *average, diskStat, nil
+}
+
+func sampleDiskUsage(ctx context.Context) (diskUsageStat, error) {
+	partitions, err := readPartitions(ctx, false)
+	if err != nil {
+		return diskUsageStat{}, fmt.Errorf("read disk partitions: %w", err)
+	}
+	var total uint64
+	var used uint64
+	seen := make(map[string]struct{}, len(partitions))
+	for _, partition := range partitions {
+		if partition.Mountpoint == "" || partition.Device == "" {
+			continue
+		}
+		if _, duplicate := seen[partition.Device]; duplicate {
+			continue
+		}
+		seen[partition.Device] = struct{}{}
+		usage, err := readUsage(ctx, partition.Mountpoint)
+		if err != nil {
+			continue
+		}
+		total += usage.Total
+		used += usage.Used
+	}
+	if total == 0 {
+		return diskUsageStat{}, nil
+	}
+	return diskUsageStat{
+		Total: total, Used: used, UsedPercent: float64(used) / float64(total) * 100,
+	}, nil
 }
 
 func sampleIOCounters(ctx context.Context) (ioCounters, error) {
@@ -187,9 +225,9 @@ func aggregateSample(snapshot systemSnapshot) RawSample {
 		Memory:         snapshot.memory.UsedPercent,
 		MemoryUsed:     snapshot.memory.Used,
 		MemoryTotal:    snapshot.memory.Total,
-		Disk:           snapshot.rootUsage.UsedPercent,
-		DiskUsed:       snapshot.rootUsage.Used,
-		DiskTotal:      snapshot.rootUsage.Total,
+		Disk:           snapshot.diskUsage.UsedPercent,
+		DiskUsed:       snapshot.diskUsage.Used,
+		DiskTotal:      snapshot.diskUsage.Total,
 		SwapUsed:       snapshot.swap.Used,
 		SwapTotal:      snapshot.swap.Total,
 		SwapPercent:    snapshot.swap.UsedPercent,
