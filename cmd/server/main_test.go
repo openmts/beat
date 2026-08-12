@@ -186,7 +186,14 @@ func TestMainStartsAndStopsOnSignal(t *testing.T) {
 	}
 	go func() {
 		waitForHTTPHealth(t, address)
-		_ = syscall.Kill(os.Getpid(), syscall.SIGTERM)
+		process, err := os.FindProcess(os.Getpid())
+		if err != nil {
+			t.Errorf("find self process: %v", err)
+			return
+		}
+		if err := process.Signal(syscall.SIGTERM); err != nil {
+			t.Errorf("signal self: %v", err)
+		}
 	}()
 	main()
 }
