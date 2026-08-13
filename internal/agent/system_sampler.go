@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"strings"
 
 	"github.com/shirou/gopsutil/v4/cpu"
@@ -143,23 +144,28 @@ func sampleDiskUsage(ctx context.Context) (diskUsageStat, error) {
 	if err != nil {
 		return diskUsageStat{}, fmt.Errorf("read disk partitions: %w", err)
 	}
-	var total uint64
-	var used uint64
-	seen := make(map[string]struct{}, len(partitions))
+	var results []mountUsage
+	seenDevices := make(map[string]struct{}, len(partitions))
 	for _, partition := range partitions {
 		if partition.Mountpoint == "" || partition.Device == "" {
 			continue
 		}
-		if _, duplicate := seen[partition.Device]; duplicate {
+		if _, duplicate := seenDevices[partition.Device]; duplicate {
 			continue
 		}
-		seen[partition.Device] = struct{}{}
+		seenDevices[partition.Device] = struct{}{}
 		usage, err := readUsage(ctx, partition.Mountpoint)
 		if err != nil {
 			continue
 		}
-		total += usage.Total
-		used += usage.Used
+		results = append(results, mountUsage{mountpoint: partition.Mountpoint, usage: usage})
+	}
+	results = deduplicateByCapacity(results)
+	var total uint64
+	var used uint64
+	for _, result := range results {
+		total += result.usage.Total
+		used += result.usage.Used
 	}
 	if total == 0 {
 		return diskUsageStat{}, nil
@@ -167,6 +173,44 @@ func sampleDiskUsage(ctx context.Context) (diskUsageStat, error) {
 	return diskUsageStat{
 		Total: total, Used: used, UsedPercent: float64(used) / float64(total) * 100,
 	}, nil
+}
+
+type mountUsage struct {
+	mountpoint string
+	usage      *disk.UsageStat
+}
+
+func deduplicateByCapacity(results []mountUsage) []mountUsage {
+	selected := make([]mountUsage, 0, len(results))
+	for _, result := range results {
+		overlap := false
+		for _, existing := range selected {
+			if existing.usage.Total != result.usage.Total {
+				continue
+			}
+			if isSubpath(result.mountpoint, existing.mountpoint) || isSubpath(existing.mountpoint, result.mountpoint) {
+				overlap = true
+				break
+			}
+		}
+		if !overlap {
+			selected = append(selected, result)
+		}
+	}
+	return selected
+}
+
+func isSubpath(candidate, parent string) bool {
+	if candidate == parent {
+		return true
+	}
+	if !strings.HasPrefix(candidate, parent) {
+		return false
+	}
+	if strings.HasSuffix(parent, string(filepath.Separator)) {
+		return true
+	}
+	return len(candidate) > len(parent) && candidate[len(parent)] == filepath.Separator
 }
 
 func sampleIOCounters(ctx context.Context) (ioCounters, error) {

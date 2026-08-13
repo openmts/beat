@@ -229,6 +229,109 @@ func TestSampleDiskUsageEmptyAndPartitionFailure(t *testing.T) {
 	}
 }
 
+func TestSampleDiskUsageMacOSAPFS(t *testing.T) {
+	restore := preserveSystemReaders()
+	t.Cleanup(restore)
+	readPartitions = func(context.Context, bool) ([]disk.PartitionStat, error) {
+		return []disk.PartitionStat{
+			{Device: "/dev/disk3s1", Mountpoint: "/", Fstype: "apfs"},
+			{Device: "/dev/disk3s5", Mountpoint: "/System/Volumes/Data", Fstype: "apfs"},
+			{Device: "/dev/disk4s1", Mountpoint: "/Volumes/External", Fstype: "apfs"},
+		}, nil
+	}
+	readUsage = func(_ context.Context, mountpoint string) (*disk.UsageStat, error) {
+		switch mountpoint {
+		case "/":
+			return &disk.UsageStat{Total: 1000, Used: 400, UsedPercent: 40}, nil
+		case "/System/Volumes/Data":
+			return &disk.UsageStat{Total: 1000, Used: 400, UsedPercent: 40}, nil
+		case "/Volumes/External":
+			return &disk.UsageStat{Total: 2000, Used: 800, UsedPercent: 40}, nil
+		}
+		return nil, errors.New("usage failed")
+	}
+	got, err := sampleDiskUsage(context.Background())
+	if err != nil {
+		t.Fatalf("sample disk usage: %v", err)
+	}
+	if got.Total != 3000 || got.Used != 1200 {
+		t.Fatalf("disk usage = %+v, want total 3000 used 1200", got)
+	}
+}
+
+func TestDeduplicateByCapacity(t *testing.T) {
+	usage := func(total uint64, used uint64) *disk.UsageStat {
+		return &disk.UsageStat{Total: total, Used: used}
+	}
+	tests := []struct {
+		name    string
+		results []mountUsage
+		want    []mountUsage
+	}{
+		{"non overlapping", []mountUsage{
+			{mountpoint: "/", usage: usage(100, 40)},
+			{mountpoint: "/data", usage: usage(200, 60)},
+		}, []mountUsage{
+			{mountpoint: "/", usage: usage(100, 40)},
+			{mountpoint: "/data", usage: usage(200, 60)},
+		}},
+		{"apfs system and data volume", []mountUsage{
+			{mountpoint: "/", usage: usage(1000, 400)},
+			{mountpoint: "/System/Volumes/Data", usage: usage(1000, 400)},
+		}, []mountUsage{
+			{mountpoint: "/", usage: usage(1000, 400)},
+		}},
+		{"same total distinct paths", []mountUsage{
+			{mountpoint: "/a", usage: usage(1000, 400)},
+			{mountpoint: "/b", usage: usage(1000, 400)},
+		}, []mountUsage{
+			{mountpoint: "/a", usage: usage(1000, 400)},
+			{mountpoint: "/b", usage: usage(1000, 400)},
+		}},
+		{"child and parent equal total", []mountUsage{
+			{mountpoint: "/mnt", usage: usage(500, 100)},
+			{mountpoint: "/mnt/sub", usage: usage(500, 100)},
+		}, []mountUsage{
+			{mountpoint: "/mnt", usage: usage(500, 100)},
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got := deduplicateByCapacity(test.results)
+			if len(got) != len(test.want) {
+				t.Fatalf("got %d entries, want %d: %+v", len(got), len(test.want), got)
+			}
+			for i := range test.want {
+				if got[i].mountpoint != test.want[i].mountpoint || got[i].usage.Total != test.want[i].usage.Total {
+					t.Fatalf("entry %d = %+v, want %+v", i, got[i], test.want[i])
+				}
+			}
+		})
+	}
+}
+
+func TestIsSubpath(t *testing.T) {
+	tests := []struct {
+		candidate string
+		parent    string
+		want      bool
+	}{
+		{"/", "/", true},
+		{"/System/Volumes/Data", "/", true},
+		{"/", "/System/Volumes/Data", false},
+		{"/data", "/data", true},
+		{"/data/sub", "/data", true},
+		{"/data2", "/data", false},
+		{"/data/sub", "/data/sub", true},
+		{"/mnt", "/mnt/sub", false},
+	}
+	for _, test := range tests {
+		if got := isSubpath(test.candidate, test.parent); got != test.want {
+			t.Fatalf("isSubpath(%q, %q) = %v, want %v", test.candidate, test.parent, got, test.want)
+		}
+	}
+}
+
 func TestSampleIOAndConnectionErrors(t *testing.T) {
 	restore := preserveSystemReaders()
 	t.Cleanup(restore)
