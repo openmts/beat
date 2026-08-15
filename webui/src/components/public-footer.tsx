@@ -8,8 +8,8 @@ export function PublicFooter() {
 
   return (
     <footer className="border-t py-6">
-      <div className="container-page flex flex-col items-center justify-between gap-3 text-sm text-muted-foreground sm:flex-row">
-        <p className="truncate">
+      <div className="container-page flex min-w-0 flex-col items-center justify-between gap-3 text-sm text-muted-foreground sm:flex-row">
+        <p className="w-full min-w-0 truncate text-center sm:w-auto sm:text-left">
           {settings.site_title}
           {settings.site_description ? ` — ${settings.site_description}` : ""}
         </p>
