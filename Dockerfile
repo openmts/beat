@@ -24,6 +24,7 @@ ARG VERSION=dev
 ARG COMMIT=unknown
 ARG BUILD_DATE=unknown
 ARG GOPROXY=https://goproxy.cn,direct
+ENV GOTOOLCHAIN=auto
 WORKDIR /src/beat
 COPY go.mod go.sum ./
 RUN GOPROXY="${GOPROXY}" go mod download
