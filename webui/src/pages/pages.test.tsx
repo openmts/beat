@@ -93,6 +93,45 @@ describe("public pages", () => {
     expect(hooks.useNodeMetrics).toHaveBeenLastCalledWith("node", undefined, 6)
   })
 
+  it("renders node resource cards, runtime stats, and tags", () => {
+    const richNode = {
+      ...nodeWithTraffic(),
+      alias: "Rich",
+      tags: ["edge", "prod"],
+      public_remark: "Primary node",
+      kernel: "6.8.0",
+      cpu_model: "Test CPU",
+      virtualization: "kvm guest",
+      agent_version: "1.2.3",
+      last_seen: "2026-07-30T00:00:00Z",
+      metrics: {
+        cpu: 12.34, cpu_used: 1, cpu_total: 8,
+        memory: 50, memory_used: 4096, memory_total: 8192,
+        disk: 40, disk_used: 40 * 1024 ** 3, disk_total: 100 * 1024 ** 3,
+        swap: 25, swap_used: 1024, swap_total: 4096,
+        net_sent: 1024, net_recv: 2048, net_sent_total: 4096, net_recv_total: 8192,
+        load1: 1, load5: 2, load15: 3, uptime: 3600, processes: 42,
+        tcp_connections: 7, udp_connections: 3,
+      },
+    }
+    vi.mocked(hooks.useNode).mockReturnValue(hookState({ data: richNode }) as never)
+    vi.mocked(hooks.useNodeMetrics).mockReturnValue(hookState({ data: {} }) as never)
+    render(<Providers><Routes><Route path="/node/:id" element={<NodeDetail />} /></Routes></Providers>)
+    expect(screen.getByText("12.3%")).toBeInTheDocument()
+    expect(screen.getByText("1 / 8 cores")).toBeInTheDocument()
+    expect(screen.getByText("50.0%")).toBeInTheDocument()
+    expect(screen.getByText("40.0%")).toBeInTheDocument()
+    expect(screen.getByText("25.0%")).toBeInTheDocument()
+    expect(screen.getByText("1h 0m")).toBeInTheDocument()
+    expect(screen.getByText("1 / 2 / 3")).toBeInTheDocument()
+    expect(screen.getByText("42")).toBeInTheDocument()
+    expect(screen.getByText("7 TCP / 3 UDP")).toBeInTheDocument()
+    expect(screen.getByText("edge")).toBeInTheDocument()
+    expect(screen.getByText("prod")).toBeInTheDocument()
+    expect(screen.getByText("Primary node")).toBeInTheDocument()
+    expect(screen.getByText("Test CPU")).toBeInTheDocument()
+  })
+
   it("renders the not found page", () => {
     render(<Providers><NotFound /></Providers>)
     expect(screen.getByText("404")).toBeInTheDocument()
