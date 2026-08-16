@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 
 	"github.com/google/uuid"
 
@@ -48,7 +49,7 @@ func (s *SSHKeyStore) CreateSSHKey(ctx context.Context, name, keyType, publicKey
 		ID:          uuid.New().String(),
 		Name:        name,
 		KeyType:     keyType,
-		PublicKey:   publicKey,
+		PublicKey:   strings.TrimSpace(publicKey),
 		PrivateKey:  privateKey,
 		Fingerprint: fingerprint,
 		CreatedAt:   now,
@@ -66,6 +67,16 @@ func (s *SSHKeyStore) CreateSSHKey(ctx context.Context, name, keyType, publicKey
 }
 
 func (s *SSHKeyStore) GetSSHKeyByPublicKey(ctx context.Context, publicKey string) (*model.SSHKey, error) {
+	key, err := s.getSSHKeyByPublicKey(ctx, strings.TrimSpace(publicKey))
+	if err != nil || key != nil {
+		return key, err
+	}
+	// Fall back to a newline-terminated form for legacy rows stored with a
+	// trailing newline before public key trimming was introduced.
+	return s.getSSHKeyByPublicKey(ctx, strings.TrimSpace(publicKey)+"\n")
+}
+
+func (s *SSHKeyStore) getSSHKeyByPublicKey(ctx context.Context, publicKey string) (*model.SSHKey, error) {
 	var key model.SSHKey
 	err := s.db.QueryRowContext(ctx,
 		"SELECT id, name, key_type, public_key, private_key, fingerprint, created_at FROM ssh_keys WHERE public_key = ?",

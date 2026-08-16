@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-const currentSchemaVersion = 1
+const currentSchemaVersion = 2
 
 type sqliteMigration struct {
 	version int
@@ -17,6 +17,24 @@ type sqliteMigration struct {
 
 var sqliteMigrations = []sqliteMigration{
 	{version: 1, name: "application_schema_baseline", apply: applyApplicationSchema},
+	{version: 2, name: "agent_task_channel", apply: applyAgentTaskChannel},
+}
+
+func applyAgentTaskChannel(ctx context.Context, db schemaExecutor) error {
+	for _, statement := range []string{
+		`CREATE TABLE IF NOT EXISTS agent_tasks (
+			id TEXT PRIMARY KEY, node_id TEXT NOT NULL, type TEXT NOT NULL,
+			payload TEXT NOT NULL DEFAULT '', status TEXT NOT NULL CHECK(status IN ('pending', 'done', 'failed')),
+			created_at DATETIME NOT NULL, attempted_at DATETIME, completed_at DATETIME,
+			FOREIGN KEY(node_id) REFERENCES nodes(id) ON DELETE CASCADE
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_agent_tasks_pending ON agent_tasks(node_id, status)`,
+	} {
+		if _, err := db.ExecContext(ctx, statement); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func applyMigrations(ctx context.Context, db *sql.DB) error {

@@ -189,6 +189,22 @@ rollback commands are documented in the
 - Batch commands support up to 50 online nodes, with five concurrent workers
   and a 30-second request timeout.
 
+## Agent tasks
+
+Agents keep a WebSocket channel open to the server (`/api/v1/agents/ws`) on top
+of the heartbeat reports. The server enqueues tasks in SQLite and pushes them
+to the agent over this channel; offline agents receive pending tasks after
+reconnecting.
+
+- When a node's assigned SSH key changes, the server enqueues an
+  `authorized_key` task. The agent writes the key's public key into its own
+  `~/.ssh/authorized_keys` idempotently, so repeated updates never duplicate
+  entries.
+- Tasks are persisted and replayed until the agent reports a result; failed
+  tasks are not retried.
+- Task results are sent back over the same WebSocket and recorded by the
+  server.
+
 ## Development
 
 Run the frontend development server:

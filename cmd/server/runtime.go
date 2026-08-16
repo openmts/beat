@@ -42,6 +42,7 @@ type serverStores struct {
 	maintenanceSetting *store.MaintenanceSettingsStore
 	admins             *store.AdminStore
 	backups            *store.BackupStore
+	agentTasks         *store.AgentTaskStore
 }
 
 type serverServices struct {
@@ -139,7 +140,7 @@ func openServerStores(ctx context.Context, dbPath, mtsPath string) (*serverStore
 		trafficReports: store.NewTrafficReportScheduleStore(database),
 		networkTasks:   store.NewNetworkTaskStore(database), siteSettings: store.NewSiteSettingsStore(database),
 		maintenanceSetting: store.NewMaintenanceSettingsStore(database), admins: store.NewAdminStore(database),
-		backups: store.NewBackupStore(database)}, nil
+		backups: store.NewBackupStore(database), agentTasks: store.NewAgentTaskStore(database)}, nil
 }
 
 func newServerServices(
@@ -207,7 +208,8 @@ func buildHTTPHandler(config httpHandlerConfig) (http.Handler, *alerter.Alerter)
 		api.WithTerminalOperations(config.services.terminal), api.WithNetworkTaskStore(config.stores.networkTasks),
 		api.WithSiteSettingsStore(config.stores.siteSettings), api.WithNotificationService(config.services.delivery),
 		api.WithTrafficReportService(config.services.trafficReports), api.WithMaintenanceService(config.services.maintenance),
-		api.WithAdminSecurity(config.services.security), api.WithBackupService(config.services.backups))
+		api.WithAdminSecurity(config.services.security), api.WithBackupService(config.services.backups),
+		api.WithAgentTaskStore(config.stores.agentTasks))
 	mux := http.NewServeMux()
 	mux.Handle("/api/v1/", router.ServeHandler())
 	mux.Handle("/ws", websocket.NewHandler(hub))

@@ -1,12 +1,15 @@
 package handler
 
 import (
+	"context"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/beat/backend/internal/api/middleware"
 	"github.com/beat/backend/internal/model"
+	"github.com/beat/backend/internal/service"
 	"github.com/beat/backend/internal/store"
 )
 
@@ -14,6 +17,13 @@ type NodeHandler struct {
 	nodeStore     *store.NodeStore
 	mtsStore      *store.MTSStore
 	settingsStore *store.SiteSettingsStore
+	taskEnqueuer  AgentTaskEnqueuer
+	agentHub      *service.AgentHub
+}
+
+// AgentTaskEnqueuer queues agent tasks for a node.
+type AgentTaskEnqueuer interface {
+	EnqueueAuthorizedKeyTask(context.Context, string, string) (*model.AgentTask, error)
 }
 
 func NewNodeHandler(
@@ -26,6 +36,16 @@ func NewNodeHandler(
 		handler.settingsStore = settingsStores[0]
 	}
 	return handler
+}
+
+func (h *NodeHandler) WithTaskEnqueuer(enqueuer AgentTaskEnqueuer) *NodeHandler {
+	h.taskEnqueuer = enqueuer
+	return h
+}
+
+func (h *NodeHandler) WithAgentHub(hub *service.AgentHub) *NodeHandler {
+	h.agentHub = hub
+	return h
 }
 
 func (h *NodeHandler) HandleListNodes(w http.ResponseWriter, r *http.Request) {
@@ -113,6 +133,12 @@ func (h *NodeHandler) HandleUpdateNode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	previous, err := h.nodeStore.GetNode(r.Context(), id)
+	if err != nil {
+		JSONError(w, http.StatusInternalServerError, "failed to update node")
+		return
+	}
+
 	node, err := h.nodeStore.UpdateNode(r.Context(), id, body.storeUpdate())
 	if err != nil {
 		JSONError(w, http.StatusInternalServerError, "failed to update node")
@@ -126,7 +152,29 @@ func (h *NodeHandler) HandleUpdateNode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.maybeDistributeKey(r.Context(), node, previous)
+
 	JSONResponse(w, http.StatusOK, node)
+}
+
+func (h *NodeHandler) maybeDistributeKey(ctx context.Context, node *model.Node, previous *model.Node) {
+	if h.taskEnqueuer == nil || node.SSHPublicKey == "" {
+		return
+	}
+	if previous != nil && previous.SSHPublicKey == node.SSHPublicKey {
+		return
+	}
+	task, err := h.taskEnqueuer.EnqueueAuthorizedKeyTask(ctx, node.ID, node.SSHPublicKey)
+	if err != nil {
+		slog.WarnContext(ctx, "enqueue authorized key task failed", "node_id", node.ID, "error", err)
+		return
+	}
+	slog.InfoContext(ctx, "enqueued authorized key task",
+		"node_id", node.ID, "task_id", task.ID, "online", h.agentHub != nil && h.agentHub.Online(node.ID))
+	if h.agentHub != nil && !h.agentHub.PushTask(ctx, *task) {
+		slog.DebugContext(ctx, "agent is offline, task will be replayed on reconnect",
+			"node_id", node.ID, "task_id", task.ID)
+	}
 }
 
 func validateTrafficUpdate(limit *int64, limitType *string, resetDay *int) error {

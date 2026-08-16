@@ -5,6 +5,7 @@ import (
 
 	"github.com/beat/backend/internal/api/handler"
 	"github.com/beat/backend/internal/api/middleware"
+	"github.com/beat/backend/internal/service"
 )
 
 func (r *Router) registerAuthAndSettingsRoutes(api *http.ServeMux) {
@@ -74,6 +75,15 @@ func requireSameOrigin(next http.Handler) http.Handler {
 
 func (r *Router) registerNodeAndGroupRoutes(api *http.ServeMux) {
 	nodeHandler := handler.NewNodeHandler(r.nodeStore, r.mtsStore, r.siteSettingsStore)
+	if r.agentTasks != nil {
+		channelService := service.NewAgentChannelService(r.agentTasks)
+		hub := service.NewAgentHub()
+		nodeHandler = nodeHandler.WithTaskEnqueuer(channelService).WithAgentHub(hub)
+		channelHandler := handler.NewAgentChannelHandler(channelService, hub)
+		api.Handle("GET /api/v1/agents/ws", r.agent(
+			http.HandlerFunc(channelHandler.HandleAgentWebSocket), bodyNodeName("name"),
+		))
+	}
 	groupHandler := handler.NewGroupHandler(r.groupStore)
 	api.HandleFunc("GET /api/v1/nodes", nodeHandler.HandleListNodes)
 	api.Handle("POST /api/v1/nodes", r.admin(http.HandlerFunc(nodeHandler.HandleCreateManagedNode)))

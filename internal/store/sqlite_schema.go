@@ -108,4 +108,11 @@ var platformSchemaStatements = []string{
 	`INSERT OR IGNORE INTO maintenance_settings (
 		id, retention_days, auto_cleanup_enabled, cleanup_hour_utc, updated_at
 	) VALUES (1, 30, 1, 3, CURRENT_TIMESTAMP)`,
+	`CREATE TABLE IF NOT EXISTS agent_tasks (
+		id TEXT PRIMARY KEY, node_id TEXT NOT NULL, type TEXT NOT NULL,
+		payload TEXT NOT NULL DEFAULT '', status TEXT NOT NULL CHECK(status IN ('pending', 'done', 'failed')),
+		created_at DATETIME NOT NULL, attempted_at DATETIME, completed_at DATETIME,
+		FOREIGN KEY(node_id) REFERENCES nodes(id) ON DELETE CASCADE
+	)`,
+	`CREATE INDEX IF NOT EXISTS idx_agent_tasks_pending ON agent_tasks(node_id, status)`,
 }

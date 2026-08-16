@@ -24,6 +24,7 @@ type Router struct {
 	mtsStore          *store.MTSStore
 	networkTaskStore  *store.NetworkTaskStore
 	siteSettingsStore *store.SiteSettingsStore
+	agentTasks        *store.AgentTaskStore
 	delivery          *notification.Service
 	trafficReports    handler.TrafficReportOperations
 	maintenance       handler.MaintenanceOperations
@@ -64,6 +65,12 @@ func WithAgentAuthentication(legacyAgentToken string) RouterOption {
 func WithTerminalOperations(terminal handler.TerminalOperations) RouterOption {
 	return func(router *Router) {
 		router.terminal = terminal
+	}
+}
+
+func WithAgentTaskStore(agentTasks *store.AgentTaskStore) RouterOption {
+	return func(router *Router) {
+		router.agentTasks = agentTasks
 	}
 }
 

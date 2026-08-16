@@ -3,10 +3,12 @@ package handler
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/beat/backend/internal/api/middleware"
@@ -544,3 +546,122 @@ var _ http.HandlerFunc = (&NodeHandler{}).HandleDeleteNode
 var _ http.HandlerFunc = (&NodeHandler{}).HandleNodeReport
 
 var _ http.HandlerFunc = (&NodeHandler{}).HandleGetNodeMetrics
+
+type fakeTaskEnqueuer struct {
+	mu    sync.Mutex
+	calls []string
+	tasks []*model.AgentTask
+	err   error
+}
+
+func (f *fakeTaskEnqueuer) EnqueueAuthorizedKeyTask(_ context.Context, nodeID string, _ string) (*model.AgentTask, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls = append(f.calls, nodeID)
+	if f.err != nil {
+		return nil, f.err
+	}
+	task := &model.AgentTask{ID: "task-" + nodeID, NodeID: nodeID, Status: model.AgentTaskStatusPending}
+	f.tasks = append(f.tasks, task)
+	return task, nil
+}
+
+func (f *fakeTaskEnqueuer) count() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.calls)
+}
+
+func TestHandleUpdateNodeEnqueuesKeyTask(t *testing.T) {
+	s, mtsStore := setupNodeTestDB(t)
+	ctx := context.Background()
+	nodeStore := store.NewNodeStore(s.DB)
+	enqueuer := &fakeTaskEnqueuer{}
+	h := NewNodeHandler(nodeStore, mtsStore).WithTaskEnqueuer(enqueuer)
+
+	node, err := nodeStore.UpsertNode(ctx, "key-node", "192.168.0.2", 22)
+	if err != nil {
+		t.Fatalf("upsert node: %v", err)
+	}
+	defaultGroup, err := store.NewGroupStore(s.DB).GetDefaultGroup(ctx)
+	if err != nil {
+		t.Fatalf("get default group: %v", err)
+	}
+
+	// First update assigns a key -> task enqueued.
+	body := `{"alias":"a","group_id":"` + defaultGroup.ID + `","ssh_public_key":"ssh-ed25519 key-a"}`
+	req := httptest.NewRequest(http.MethodPut, "/api/nodes/"+node.ID, strings.NewReader(body))
+	req.SetPathValue("id", node.ID)
+	w := httptest.NewRecorder()
+	h.HandleUpdateNode(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d", w.Code)
+	}
+	if enqueuer.count() != 1 {
+		t.Fatalf("enqueue calls = %d, want 1", enqueuer.count())
+	}
+
+	// Same key update -> no task enqueued.
+	req = httptest.NewRequest(http.MethodPut, "/api/nodes/"+node.ID, strings.NewReader(body))
+	req.SetPathValue("id", node.ID)
+	w = httptest.NewRecorder()
+	h.HandleUpdateNode(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d", w.Code)
+	}
+	if enqueuer.count() != 1 {
+		t.Fatalf("enqueue calls after same-key update = %d, want 1", enqueuer.count())
+	}
+}
+
+func TestHandleUpdateNodeNoEnqueuer(t *testing.T) {
+	s, mtsStore := setupNodeTestDB(t)
+	ctx := context.Background()
+	nodeStore := store.NewNodeStore(s.DB)
+	h := NewNodeHandler(nodeStore, mtsStore) // no enqueuer
+
+	node, err := nodeStore.UpsertNode(ctx, "no-dist-node", "192.168.0.3", 22)
+	if err != nil {
+		t.Fatalf("upsert node: %v", err)
+	}
+	defaultGroup, err := store.NewGroupStore(s.DB).GetDefaultGroup(ctx)
+	if err != nil {
+		t.Fatalf("get default group: %v", err)
+	}
+	body := `{"alias":"a","group_id":"` + defaultGroup.ID + `","ssh_public_key":"ssh-ed25519 key-b"}`
+	req := httptest.NewRequest(http.MethodPut, "/api/nodes/"+node.ID, strings.NewReader(body))
+	req.SetPathValue("id", node.ID)
+	w := httptest.NewRecorder()
+	h.HandleUpdateNode(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d", w.Code)
+	}
+}
+
+func TestHandleUpdateNodeEnqueueFailureLogged(t *testing.T) {
+	s, mtsStore := setupNodeTestDB(t)
+	ctx := context.Background()
+	nodeStore := store.NewNodeStore(s.DB)
+	enqueuer := &fakeTaskEnqueuer{err: errors.New("store down")}
+	h := NewNodeHandler(nodeStore, mtsStore).WithTaskEnqueuer(enqueuer)
+
+	node, err := nodeStore.UpsertNode(ctx, "fail-node", "192.168.0.4", 22)
+	if err != nil {
+		t.Fatalf("upsert node: %v", err)
+	}
+	defaultGroup, err := store.NewGroupStore(s.DB).GetDefaultGroup(ctx)
+	if err != nil {
+		t.Fatalf("get default group: %v", err)
+	}
+	body := `{"alias":"a","group_id":"` + defaultGroup.ID + `","ssh_public_key":"ssh-ed25519 key-c"}`
+	req := httptest.NewRequest(http.MethodPut, "/api/nodes/"+node.ID, strings.NewReader(body))
+	req.SetPathValue("id", node.ID)
+	w := httptest.NewRecorder()
+	h.HandleUpdateNode(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 despite enqueue failure", w.Code)
+	}
+	if enqueuer.count() != 1 {
+		t.Fatalf("enqueue calls = %d, want 1", enqueuer.count())
+	}
+}

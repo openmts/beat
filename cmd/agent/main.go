@@ -65,23 +65,31 @@ func run(ctx context.Context, configPath string) error {
 		Client: networkClient, Prober: agent.NewNetworkProber(),
 		OnError: func(runErr error) { slog.Error("network probe failed", "error", runErr) },
 	})
-	return runComponents(ctx, runner.Run, networkRunner.Run)
+	channel, err := agent.NewChannel(config.ServerURL, config.AgentToken, agent.NewAuthorizedKeyExecutor(""))
+	if err != nil {
+		return err
+	}
+	channel.SetOnError(func(runErr error) { slog.Error("agent channel failed", "error", runErr) })
+	return runComponents(ctx, runner.Run, networkRunner.Run, channel.Run)
 }
 
 func runComponents(
 	ctx context.Context,
 	metrics func(context.Context) error,
 	network func(context.Context) error,
+	channel func(context.Context) error,
 ) error {
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	errorsCh := make(chan error, 2)
+	errorsCh := make(chan error, 3)
 	go func() { errorsCh <- metrics(runCtx) }()
 	go func() { errorsCh <- network(runCtx) }()
+	go func() { errorsCh <- channel(runCtx) }()
 	first := <-errorsCh
 	cancel()
 	second := <-errorsCh
-	return errors.Join(first, second)
+	third := <-errorsCh
+	return errors.Join(first, second, third)
 }
 
 var agentNow = func() time.Time { return time.Now().UTC() }

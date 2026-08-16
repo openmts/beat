@@ -64,6 +64,7 @@ export function NodeEditDialog({ node, groups, sshKeys, loading, onChange, onSav
                     <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
                   ))}</SelectGroup></SelectContent>
                 </Select>
+                <FieldDescription>{t("node.ssh_key_distribute_hint")}</FieldDescription>
               </Field>
             </div>
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">

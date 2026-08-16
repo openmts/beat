@@ -48,6 +48,7 @@ export const baseTranslationsEn: Record<string, string> = {
   "node.network": "Network",
   "node.alias": "Alias",
   "node.ssh_key": "SSH Key",
+  "node.ssh_key_distribute_hint": "The key's public key is distributed to the node after saving.",
   "node.not_assigned": "Not assigned",
   "node.unknown_key": "Unknown key",
   "node.loading": "Loading node...",

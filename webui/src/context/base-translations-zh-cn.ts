@@ -48,6 +48,7 @@ export const baseTranslationsZhCN: Record<string, string> = {
   "node.network": "网络",
   "node.alias": "别名",
   "node.ssh_key": "SSH 密钥",
+  "node.ssh_key_distribute_hint": "保存后，该密钥的公钥将自动分发到节点。",
   "node.not_assigned": "未分配",
   "node.unknown_key": "未知密钥",
   "node.loading": "正在加载节点...",

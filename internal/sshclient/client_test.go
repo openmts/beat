@@ -102,7 +102,13 @@ func serveSSHSession(channel ssh.Channel, requests <-chan *ssh.Request) {
 			if payload.Command == "sleep" {
 				time.Sleep(100 * time.Millisecond)
 			}
-			_, _ = io.WriteString(channel, "ran:"+payload.Command)
+			if strings.Contains(payload.Command, "authorized_keys") &&
+				strings.Contains(payload.Command, "grep -qxF") {
+				// Simulate an existing key: emit the already-present marker.
+				_, _ = io.WriteString(channel, "beat-authorized-key-present\n")
+			} else {
+				_, _ = io.WriteString(channel, "ran:"+payload.Command)
+			}
 			_, _ = channel.SendRequest("exit-status", false, ssh.Marshal(struct{ Status uint32 }{0}))
 			_ = channel.Close()
 			return

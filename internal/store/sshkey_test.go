@@ -144,3 +144,42 @@ func TestDeleteSSHKeyNonExistent(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
+
+func TestGetSSHKeyByPublicKeyTrimmedMatch(t *testing.T) {
+	s := setupTestDB(t)
+	ctx := context.Background()
+	sshStore := NewSSHKeyStore(s.DB)
+	key, err := sshStore.CreateSSHKey(ctx, "trim-key", "ed25519", "ssh-ed25519 AAA\n", "private", "fp")
+	if err != nil {
+		t.Fatalf("create key: %v", err)
+	}
+	got, err := sshStore.GetSSHKeyByPublicKey(ctx, "ssh-ed25519 AAA")
+	if err != nil {
+		t.Fatalf("get key: %v", err)
+	}
+	if got == nil || got.ID != key.ID {
+		t.Fatalf("key = %#v, want id %s", got, key.ID)
+	}
+}
+
+func TestGetSSHKeyByPublicKeyLegacyNewlineRow(t *testing.T) {
+	s := setupTestDB(t)
+	ctx := context.Background()
+	sshStore := NewSSHKeyStore(s.DB)
+	// Simulate a legacy row created before public key trimming was introduced.
+	key, err := sshStore.CreateSSHKey(ctx, "legacy-key", "ed25519", "ssh-ed25519 AAA\n", "private", "fp")
+	if err != nil {
+		t.Fatalf("create key: %v", err)
+	}
+	// Overwrite the stored row with the untrimmed legacy form.
+	if _, err := s.DB.ExecContext(ctx, "UPDATE ssh_keys SET public_key = 'ssh-ed25519 AAA\n' WHERE id = ?", key.ID); err != nil {
+		t.Fatalf("update legacy row: %v", err)
+	}
+	got, err := sshStore.GetSSHKeyByPublicKey(ctx, "ssh-ed25519 AAA")
+	if err != nil {
+		t.Fatalf("get key: %v", err)
+	}
+	if got == nil || got.ID != key.ID {
+		t.Fatalf("key = %#v, want id %s", got, key.ID)
+	}
+}
