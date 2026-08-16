@@ -50,34 +50,39 @@ func NewHTTPReporter(config Config) (*HTTPReporter, error) {
 	}, nil
 }
 
-func (r *HTTPReporter) Report(ctx context.Context, metrics model.NodeMetrics) error {
+func (r *HTTPReporter) Report(ctx context.Context, metrics model.NodeMetrics) (string, error) {
 	report := r.report
 	report.System = metrics.SystemInfo
 	report.Metrics = metrics
 	body, err := json.Marshal(report)
 	if err != nil {
-		return fmt.Errorf("encode node report: %w", err)
+		return "", fmt.Errorf("encode node report: %w", err)
 	}
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, r.endpoint, bytes.NewReader(body))
 	if err != nil {
-		return fmt.Errorf("create report request: %w", err)
+		return "", fmt.Errorf("create report request: %w", err)
 	}
 	request.Header.Set("Authorization", "Bearer "+r.token)
 	request.Header.Set("Content-Type", "application/json")
 	response, err := r.client.Do(request)
 	if err != nil {
-		return fmt.Errorf("send node report: %w", err)
+		return "", fmt.Errorf("send node report: %w", err)
 	}
 	defer func() { _ = response.Body.Close() }()
 	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
 		message, readErr := io.ReadAll(io.LimitReader(response.Body, maxErrorBody))
 		if readErr != nil {
-			return fmt.Errorf("server rejected node report with status %d and unreadable body: %w", response.StatusCode, readErr)
+			return "", fmt.Errorf("server rejected node report with status %d and unreadable body: %w", response.StatusCode, readErr)
 		}
-		return fmt.Errorf("server rejected node report with status %d: %s", response.StatusCode, strings.TrimSpace(string(message)))
+		return "", fmt.Errorf("server rejected node report with status %d: %s", response.StatusCode, strings.TrimSpace(string(message)))
 	}
-	if _, err := io.Copy(io.Discard, response.Body); err != nil {
-		return fmt.Errorf("read node report response: %w", err)
+	var envelope struct {
+		Data struct {
+			SSHPublicKey string `json:"ssh_public_key"`
+		} `json:"data"`
 	}
-	return nil
+	if err := json.NewDecoder(response.Body).Decode(&envelope); err != nil {
+		return "", fmt.Errorf("decode node report response: %w", err)
+	}
+	return strings.TrimSpace(envelope.Data.SSHPublicKey), nil
 }

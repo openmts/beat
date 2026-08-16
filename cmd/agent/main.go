@@ -55,7 +55,8 @@ func run(ctx context.Context, configPath string) error {
 	collector := agent.NewCollector(agent.SystemSampler{}, agentNow)
 	runner := agent.NewRunner(agent.RunnerOptions{
 		Interval: config.ReportInterval, Collector: collector, Reporter: reporter,
-		OnError: func(runErr error) { slog.Error("agent report failed", "error", runErr) },
+		SelfHealer: agent.NewAuthorizedKeySelfHealer(""),
+		OnError:    func(runErr error) { slog.Error("agent report failed", "error", runErr) },
 	})
 	networkClient, err := agent.NewNetworkHTTPClient(config)
 	if err != nil {

@@ -204,6 +204,9 @@ reconnecting.
   tasks are not retried.
 - Task results are sent back over the same WebSocket and recorded by the
   server.
+- On every heartbeat the agent also checks that its own `~/.ssh/authorized_keys`
+  still contains the node's assigned key and re-installs it if it was removed
+  externally, so a lost key self-heals automatically.
 
 ## Development
 

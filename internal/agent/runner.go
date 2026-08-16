@@ -13,21 +13,28 @@ type MetricsCollector interface {
 }
 
 type MetricsReporter interface {
-	Report(context.Context, model.NodeMetrics) error
+	Report(context.Context, model.NodeMetrics) (string, error)
+}
+
+// SelfHealer repairs locally detectable drift, such as a missing authorized key.
+type SelfHealer interface {
+	SelfHeal(context.Context, string) error
 }
 
 type Runner struct {
-	interval  time.Duration
-	collector MetricsCollector
-	reporter  MetricsReporter
-	onError   func(error)
+	interval   time.Duration
+	collector  MetricsCollector
+	reporter   MetricsReporter
+	selfHealer SelfHealer
+	onError    func(error)
 }
 
 type RunnerOptions struct {
-	Interval  time.Duration
-	Collector MetricsCollector
-	Reporter  MetricsReporter
-	OnError   func(error)
+	Interval   time.Duration
+	Collector  MetricsCollector
+	Reporter   MetricsReporter
+	SelfHealer SelfHealer
+	OnError    func(error)
 }
 
 func NewRunner(options RunnerOptions) *Runner {
@@ -36,7 +43,8 @@ func NewRunner(options RunnerOptions) *Runner {
 	}
 	return &Runner{
 		interval: options.Interval, collector: options.Collector,
-		reporter: options.Reporter, onError: options.OnError,
+		reporter: options.Reporter, selfHealer: options.SelfHealer,
+		onError: options.OnError,
 	}
 }
 
@@ -64,8 +72,14 @@ func (r *Runner) report(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("collect metrics: %w", err)
 	}
-	if err := r.reporter.Report(ctx, metrics); err != nil {
+	assignedKey, err := r.reporter.Report(ctx, metrics)
+	if err != nil {
 		return fmt.Errorf("report metrics: %w", err)
+	}
+	if r.selfHealer != nil && assignedKey != "" {
+		if err := r.selfHealer.SelfHeal(ctx, assignedKey); err != nil {
+			return fmt.Errorf("self heal authorized key: %w", err)
+		}
 	}
 	return nil
 }
