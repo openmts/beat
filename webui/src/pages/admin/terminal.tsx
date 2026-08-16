@@ -372,10 +372,6 @@ function applyTerminalColors(container: HTMLElement, theme: TerminalTheme) {
   if (xterm) {
     xterm.style.backgroundColor = theme.background
     xterm.style.background = theme.background
-    const rows = xterm.querySelector<HTMLElement>(".xterm-rows")
-    if (rows) {
-      rows.style.color = theme.foreground
-    }
   }
   container.style.backgroundColor = theme.background
 }

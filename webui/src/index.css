@@ -264,11 +264,11 @@
 .light .xterm,
 .light .xterm-screen,
 .light .xterm-viewport {
-  background-color: #ffffff !important;
+  background-color: #fafafa !important;
 }
 
 .dark .xterm,
 .dark .xterm-screen,
 .dark .xterm-viewport {
-  background-color: #0a0a0a !important;
+  background-color: #282c34 !important;
 }
