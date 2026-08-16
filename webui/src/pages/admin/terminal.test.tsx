@@ -140,4 +140,33 @@ describe("admin terminal", () => {
     unmount()
     expect(terminal.dispose).toHaveBeenCalled()
   })
+
+  it("shows an empty-state hint until a node is selected", () => {
+    view()
+    expect(screen.getByText("Select a node to begin")).toBeInTheDocument()
+    const select = screen.getByTestId("select")
+    fireEvent.change(select, { target: { value: "n1" } })
+    expect(screen.getByText("Ready to connect to host")).toBeInTheDocument()
+  })
+
+  it("copies the batch command to the clipboard", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    Object.assign(navigator, { clipboard: { writeText } })
+    view()
+    fireEvent.change(screen.getByPlaceholderText("e.g. uptime"), { target: { value: "uptime" } })
+    fireEvent.click(screen.getByRole("button", { name: "Copy command" }))
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith("uptime"))
+  })
+
+  it("shows connection duration while connected", () => {
+    vi.useFakeTimers()
+    view()
+    const select = screen.getByTestId("select")
+    fireEvent.change(select, { target: { value: "n1" } })
+    fireEvent.click(screen.getByRole("button", { name: "Connect" }))
+    act(() => sockets[0].onopen?.())
+    act(() => { vi.advanceTimersByTime(65000) })
+    expect(screen.getByText(/1:05/)).toBeInTheDocument()
+    vi.useRealTimers()
+  })
 })

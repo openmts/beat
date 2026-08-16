@@ -12,9 +12,10 @@ import { Label } from "@/components/ui/label"
 import { Badge } from "@/components/ui/badge"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Alert, AlertDescription } from "@/components/ui/alert"
-import { Terminal as TerminalIcon, PlayIcon, SquareIcon } from "lucide-react"
+import { Terminal as TerminalIcon, PlayIcon, SquareIcon, ServerIcon, GlobeIcon, ClockIcon, CopyIcon, CheckIcon, ShieldCheckIcon } from "lucide-react"
 import { Terminal } from "@xterm/xterm"
 import { FitAddon } from "@xterm/addon-fit"
+import { WebLinksAddon } from "@xterm/addon-web-links"
 import "@xterm/xterm/css/xterm.css"
 import { PageHeader } from "@/components/page-header"
 
@@ -24,9 +25,12 @@ function TerminalPage() {
   const { theme } = useTheme()
   const [selectedNodeId, setSelectedNodeId] = useState<string>("")
   const [connected, setConnected] = useState(false)
+  const [connectedAt, setConnectedAt] = useState<number | null>(null)
+  const [now, setNow] = useState(Date.now())
   const [batchCommand, setBatchCommand] = useState("")
   const [batchOutput, setBatchOutput] = useState("")
   const [batchRunning, setBatchRunning] = useState(false)
+  const [copiedCommand, setCopiedCommand] = useState(false)
   const terminalRef = useRef<HTMLDivElement>(null)
   const termRef = useRef<Terminal | null>(null)
   const fitRef = useRef<FitAddon | null>(null)
@@ -37,8 +41,10 @@ function TerminalPage() {
       fitRef.current?.fit()
     }
     window.addEventListener("resize", handleResize)
+    const timer = window.setInterval(() => setNow(Date.now()), 1000)
     return () => {
       window.removeEventListener("resize", handleResize)
+      window.clearInterval(timer)
       wsRef.current?.close()
       termRef.current?.dispose()
     }
@@ -71,6 +77,7 @@ function TerminalPage() {
 
     const fitAddon = new FitAddon()
     term.loadAddon(fitAddon)
+    term.loadAddon(new WebLinksAddon())
     term.open(terminalRef.current)
     applyTerminalColors(terminalRef.current, terminalTheme)
     fitAddon.fit()
@@ -84,6 +91,7 @@ function TerminalPage() {
 
     _ws.onopen = () => {
       setConnected(true)
+      setConnectedAt(Date.now())
     }
 
     _ws.onmessage = (event) => {
@@ -92,12 +100,14 @@ function TerminalPage() {
 
     _ws.onclose = () => {
       setConnected(false)
+      setConnectedAt(null)
       term.write(`\r\n\n[${t("terminal.closed")}]\r\n`)
     }
 
     _ws.onerror = () => {
       term.write(`\r\n\n[${t("terminal.failed")}]\r\n`)
       setConnected(false)
+      setConnectedAt(null)
     }
 
     term.onData((data) => {
@@ -123,6 +133,18 @@ function TerminalPage() {
       wsRef.current = null
     }
     setConnected(false)
+    setConnectedAt(null)
+  }
+
+  const handleCopyCommand = async () => {
+    if (!batchCommand.trim()) return
+    try {
+      await navigator.clipboard.writeText(batchCommand.trim())
+      setCopiedCommand(true)
+      window.setTimeout(() => setCopiedCommand(false), 1500)
+    } catch {
+      setCopiedCommand(false)
+    }
   }
 
   const handleBatchExecute = async () => {
@@ -148,6 +170,10 @@ function TerminalPage() {
     label: `${node.alias || node.name} (${node.host})`,
     value: node.id,
   }))
+  const selectedNode = nodes?.find((n) => n.id === selectedNodeId) ?? null
+  const connectedDuration = connected && connectedAt
+    ? formatDuration(Math.max(0, Math.floor((now - connectedAt) / 1000)))
+    : null
 
   if (error) {
     return (
@@ -158,20 +184,42 @@ function TerminalPage() {
   }
 
   return (
-    <div className="flex flex-col gap-4">
+    <div className="flex flex-col gap-5">
       <PageHeader title={t("terminal.title")} description={t("terminal.description")} />
 
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+      <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
+        {/* Terminal window */}
         <div className="lg:col-span-2">
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between py-3">
-              <CardTitle className="text-base">{t("terminal.ssh")}</CardTitle>
-              <div className="flex items-center gap-2">
-                <Badge variant={connected ? "default" : "secondary"}>
-                  {connected ? t("terminal.connected") : t("terminal.disconnected")}
-                </Badge>
+          <div className="overflow-hidden rounded-xl bg-card ring-1 ring-foreground/10 shadow-sm">
+            {/* Title bar */}
+            <div className="flex items-center gap-3 border-b border-foreground/10 bg-muted/40 px-4 py-2.5">
+              <div className="flex shrink-0 items-center gap-1.5" aria-hidden>
+                <span className="size-3 rounded-full bg-[#ff5f57]" />
+                <span className="size-3 rounded-full bg-[#febc2e]" />
+                <span className="size-3 rounded-full bg-[#28c840]" />
+              </div>
+              <div className="flex min-w-0 items-center gap-2 text-xs font-medium text-foreground">
+                <TerminalIcon className="size-3.5 shrink-0 text-muted-foreground" />
+                <span className="truncate">
+                  {selectedNode ? selectedNode.alias || selectedNode.name : t("terminal.select_placeholder")}
+                </span>
+                {selectedNode && (
+                  <span className="hidden items-center gap-1 text-muted-foreground sm:flex">
+                    <GlobeIcon className="size-3" />
+                    <span className="truncate">{selectedNode.host}</span>
+                  </span>
+                )}
+              </div>
+              <div className="ml-auto flex items-center gap-2">
+                {connected && (
+                  <span className="hidden items-center gap-1.5 rounded-full bg-success/10 px-2.5 py-1 text-[11px] font-medium text-success sm:flex">
+                    <span className="size-1.5 rounded-full bg-success animate-pulse" />
+                    {t("terminal.connected")}
+                    {connectedDuration && <span className="tabular-nums">{connectedDuration}</span>}
+                  </span>
+                )}
                 {connected ? (
-                  <Button variant="destructive" size="sm" onClick={handleDisconnect}>
+                  <Button variant="outline" size="sm" onClick={handleDisconnect}>
                     <SquareIcon data-icon="inline-start" />
                     {t("terminal.disconnect")}
                   </Button>
@@ -182,80 +230,132 @@ function TerminalPage() {
                   </Button>
                 )}
               </div>
-            </CardHeader>
-            <CardContent>
+            </div>
+
+            {/* Terminal body */}
+            <div className="p-2 sm:p-3">
               {loading ? (
                 <Skeleton className="h-80 w-full" />
               ) : (
-                <div
-                  ref={terminalRef}
-                  className="h-80 w-full overflow-hidden rounded bg-background"
-                />
+                <div className="relative">
+                  <div
+                    ref={terminalRef}
+                    className="h-80 w-full overflow-hidden rounded-lg border border-foreground/10 bg-background font-mono shadow-inner focus-within:ring-2 focus-within:ring-ring/50"
+                  />
+                  {!selectedNodeId && !loading && (
+                    <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center gap-2 text-muted-foreground">
+                      <ServerIcon className="size-8" />
+                      <p className="text-sm">{t("terminal.no_node_selected")}</p>
+                    </div>
+                  )}
+                </div>
               )}
-            </CardContent>
-          </Card>
+            </div>
+          </div>
         </div>
 
-        <div className="flex flex-col gap-4">
+        {/* Side panel */}
+        <div className="flex flex-col gap-5">
           <Card>
             <CardHeader className="py-3">
-              <CardTitle className="text-base">{t("terminal.select_node")}</CardTitle>
+              <CardTitle className="flex items-center gap-2 text-base">
+                <ServerIcon className="size-4 text-muted-foreground" />
+                {t("terminal.select_node")}
+              </CardTitle>
             </CardHeader>
             <CardContent>
               {loading ? (
                 <Skeleton className="h-10 w-full" />
               ) : (
-                <Select
-                  items={nodeOptions}
-                  value={selectedNodeId}
-                  onValueChange={(v) => { if (v) setSelectedNodeId(v) }}
-                  disabled={connected}
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder={t("terminal.select_placeholder")} />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectGroup>
-                      {nodeOptions.map((option) => (
-                        <SelectItem key={option.value} value={option.value}>
-                          {option.label}
-                        </SelectItem>
-                      ))}
-                    </SelectGroup>
-                  </SelectContent>
-                </Select>
+                <div className="flex flex-col gap-2.5">
+                  <Select
+                    items={nodeOptions}
+                    value={selectedNodeId}
+                    onValueChange={(v) => { if (v) setSelectedNodeId(v) }}
+                    disabled={connected}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder={t("terminal.select_placeholder")} />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectGroup>
+                        {nodeOptions.map((option) => (
+                          <SelectItem key={option.value} value={option.value}>
+                            {option.label}
+                          </SelectItem>
+                        ))}
+                      </SelectGroup>
+                    </SelectContent>
+                  </Select>
+                  {selectedNode && !connected && (
+                    <div className="flex items-center gap-2 rounded-md bg-muted/50 px-3 py-2 text-xs text-muted-foreground">
+                      <ShieldCheckIcon className="size-3.5 shrink-0" />
+                      <span className="truncate">
+                        {t("terminal.ready_connect")} {selectedNode.host}
+                      </span>
+                    </div>
+                  )}
+                  {!selectedNodeId && (
+                    <p className="text-xs text-muted-foreground">{t("terminal.no_online_nodes")}</p>
+                  )}
+                </div>
               )}
             </CardContent>
           </Card>
 
           <Card>
             <CardHeader className="py-3">
-              <CardTitle className="text-base">{t("terminal.batch")}</CardTitle>
+              <CardTitle className="flex items-center justify-between gap-2 text-base">
+                <span className="flex items-center gap-2">
+                  <PlayIcon className="size-4 text-muted-foreground" />
+                  {t("terminal.batch")}
+                </span>
+                <Badge variant="secondary">{onlineNodes.length}</Badge>
+              </CardTitle>
             </CardHeader>
             <CardContent className="flex flex-col gap-3">
               <div className="flex flex-col gap-2">
                 <Label>{t("terminal.command")}</Label>
-                <Input
-                  value={batchCommand}
-                  onChange={(e) => setBatchCommand(e.target.value)}
-                  placeholder="e.g. uptime"
-                />
+                <div className="flex gap-2">
+                  <Input
+                    value={batchCommand}
+                    onChange={(e) => setBatchCommand(e.target.value)}
+                    placeholder="e.g. uptime"
+                    onKeyDown={(e) => { if (e.key === "Enter") handleBatchExecute() }}
+                  />
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    onClick={handleCopyCommand}
+                    disabled={!batchCommand.trim()}
+                    aria-label={t("terminal.copy")}
+                  >
+                    {copiedCommand ? <CheckIcon data-icon /> : <CopyIcon data-icon />}
+                  </Button>
+                </div>
               </div>
               <Button
                 onClick={handleBatchExecute}
                 disabled={batchRunning || !batchCommand.trim() || onlineNodes.length === 0}
                 className="w-full"
               >
-                <PlayIcon data-icon="inline-start" />
+                {batchRunning ? (
+                  <span className="size-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
+                ) : (
+                  <PlayIcon data-icon="inline-start" />
+                )}
                 {t("terminal.execute_all")}
               </Button>
-              {!loading && onlineNodes.length === 0 && (
-                <p className="text-sm text-muted-foreground">{t("terminal.no_online_nodes")}</p>
-              )}
               {batchOutput && (
-                <pre className="max-h-60 overflow-auto rounded bg-muted p-3 font-mono text-xs">
-                  {batchOutput}
-                </pre>
+                <div className="overflow-hidden rounded-lg border border-foreground/10">
+                  <div className="flex items-center justify-between border-b border-foreground/10 bg-muted/40 px-3 py-1.5 text-xs text-muted-foreground">
+                    <span>{t("terminal.output")}</span>
+                    <ClockIcon className="size-3.5" />
+                  </div>
+                  <pre className="max-h-64 overflow-auto bg-muted/20 p-3 font-mono text-xs leading-relaxed">
+                    {batchOutput}
+                  </pre>
+                </div>
               )}
             </CardContent>
           </Card>
@@ -278,4 +378,12 @@ function applyTerminalColors(container: HTMLElement, theme: TerminalTheme) {
     }
   }
   container.style.backgroundColor = theme.background
+}
+
+function formatDuration(totalSeconds: number): string {
+  const hours = Math.floor(totalSeconds / 3600)
+  const minutes = Math.floor((totalSeconds % 3600) / 60)
+  const seconds = totalSeconds % 60
+  if (hours > 0) return `${hours}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`
+  return `${minutes}:${String(seconds).padStart(2, "0")}`
 }
