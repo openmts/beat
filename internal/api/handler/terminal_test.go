@@ -185,9 +185,11 @@ func TestHandleExecuteBatchUnavailable(t *testing.T) {
 }
 
 func TestTerminalHandshake(t *testing.T) {
+	// A request without a WebSocket protocol must still handshake; session
+	// authentication is performed by middleware, not the handshake.
 	request := httptest.NewRequest(http.MethodGet, "https://example.test/ws", nil)
-	if err := terminalHandshake(&websocket.Config{}, request); err == nil {
-		t.Fatal("expected missing protocol error")
+	if err := terminalHandshake(&websocket.Config{}, request); err != nil {
+		t.Fatalf("handshake without protocol should succeed, got %v", err)
 	}
 
 	tests := []struct {

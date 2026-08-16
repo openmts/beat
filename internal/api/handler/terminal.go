@@ -89,11 +89,9 @@ func (h *TerminalHandler) HandleExecuteBatch(w http.ResponseWriter, r *http.Requ
 }
 
 func terminalHandshake(config *websocket.Config, request *http.Request) error {
-	protocol := middleware.SelectedWebSocketProtocol(request)
-	if protocol == "" {
-		return errors.New("websocket authentication protocol is missing")
+	if protocol := middleware.SelectedWebSocketProtocol(request); protocol != "" {
+		config.Protocol = []string{protocol}
 	}
-	config.Protocol = []string{protocol}
 
 	origin := request.Header.Get("Origin")
 	if origin == "" {
