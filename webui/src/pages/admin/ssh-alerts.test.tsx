@@ -77,11 +77,16 @@ describe("SSH keys", () => {
   })
 
   it("renders states and key actions", async () => {
+    vi.mocked(api.getSSHKey).mockResolvedValue({
+      ...key,
+      private_key: "-----BEGIN PRIVATE KEY-----\nprivate-content\n-----END PRIVATE KEY-----",
+    } as never)
     view(<SSHKeys />)
     const rowButtons = within(screen.getByText("Managed").closest("tr")!).getAllByRole("button")
     fireEvent.click(rowButtons[0])
     await waitFor(() => expect(navigator.clipboard.writeText).toHaveBeenCalledWith(key.public_key))
     fireEvent.click(rowButtons[1])
+    expect(await screen.findByText(/BEGIN PRIVATE KEY/)).toBeInTheDocument()
     expect(screen.getByText(key.public_key)).toBeInTheDocument()
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }))
     fireEvent.click(rowButtons[2])

@@ -284,3 +284,74 @@ func assertGeneratedKeyPair(t *testing.T, body string) {
 		t.Errorf("private key missing or invalid: %q", response.Data.PrivateKey)
 	}
 }
+
+func TestHandleGetSSHKey(t *testing.T) {
+	s := setupTestDB(t)
+	ctx := context.Background()
+	sshKeyStore := store.NewSSHKeyStore(s.DB)
+	h := NewSSHKeyHandler(sshKeyStore)
+
+	k, err := sshKeyStore.CreateSSHKey(ctx, "detail-key", "rsa", "ssh-rsa public", "PRIVATE-KEY-CONTENT", "fp")
+	if err != nil {
+		t.Fatalf("create key: %v", err)
+	}
+
+	t.Run("returns full key pair", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/ssh-keys/"+k.ID, nil)
+		req.SetPathValue("id", k.ID)
+		w := httptest.NewRecorder()
+
+		h.HandleGetSSHKey(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("status = %d, want %d: %s", w.Code, http.StatusOK, w.Body.String())
+		}
+		var response struct {
+			Data struct {
+				PublicKey  string `json:"public_key"`
+				PrivateKey string `json:"private_key"`
+				Name       string `json:"name"`
+			} `json:"data"`
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+			t.Fatalf("decode response: %v", err)
+		}
+		if response.Data.PublicKey != "ssh-rsa public" {
+			t.Errorf("public key = %q", response.Data.PublicKey)
+		}
+		if response.Data.PrivateKey != "PRIVATE-KEY-CONTENT" {
+			t.Errorf("private key = %q", response.Data.PrivateKey)
+		}
+		if response.Data.Name != "detail-key" {
+			t.Errorf("name = %q", response.Data.Name)
+		}
+	})
+
+	t.Run("missing key returns 404", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/ssh-keys/missing", nil)
+		req.SetPathValue("id", "missing")
+		w := httptest.NewRecorder()
+
+		h.HandleGetSSHKey(w, req)
+
+		if w.Code != http.StatusNotFound {
+			t.Errorf("status = %d, want %d", w.Code, http.StatusNotFound)
+		}
+	})
+}
+
+func TestHandleGetSSHKeyStoreError(t *testing.T) {
+	s := setupTestDB(t)
+	sshKeyStore := store.NewSSHKeyStore(s.DB)
+	h := NewSSHKeyHandler(sshKeyStore)
+	if err := s.Close(); err != nil {
+		t.Fatalf("close db: %v", err)
+	}
+	req := httptest.NewRequest(http.MethodGet, "/api/ssh-keys/x", nil)
+	req.SetPathValue("id", "x")
+	w := httptest.NewRecorder()
+	h.HandleGetSSHKey(w, req)
+	if w.Code != http.StatusInternalServerError {
+		t.Errorf("status = %d, want %d", w.Code, http.StatusInternalServerError)
+	}
+}

@@ -17,6 +17,7 @@ func (r *Router) registerSSHRoutes(api *http.ServeMux) {
 	api.Handle("GET /api/v1/ssh-keys", r.admin(http.HandlerFunc(sshKeyHandler.HandleListSSHKeys)))
 	api.Handle("POST /api/v1/ssh-keys", r.admin(http.HandlerFunc(sshKeyHandler.HandleCreateSSHKey)))
 	api.Handle("POST /api/v1/ssh-keys/generate", r.admin(http.HandlerFunc(sshKeyHandler.HandleGenerateSSHKey)))
+	api.Handle("GET /api/v1/ssh-keys/{id}", r.admin(http.HandlerFunc(sshKeyHandler.HandleGetSSHKey)))
 	api.Handle("DELETE /api/v1/ssh-keys/{id}", r.admin(http.HandlerFunc(sshKeyHandler.HandleDeleteSSHKey)))
 }
 

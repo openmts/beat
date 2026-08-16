@@ -198,6 +198,11 @@ export async function generateSSHKey(
   return res.data
 }
 
+export async function getSSHKey(id: string): Promise<GeneratedSSHKey> {
+  const res = await api.get<GeneratedSSHKey>(`/ssh-keys/${id}`)
+  return res.data
+}
+
 export async function deleteSSHKey(id: string): Promise<void> {
   await api.delete(`/ssh-keys/${id}`)
 }

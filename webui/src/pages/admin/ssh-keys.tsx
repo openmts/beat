@@ -24,6 +24,7 @@ const keyTypeOptions = [
 interface ViewKeyData {
   name: string
   publicKey: string
+  privateKey: string
   fingerprint: string
 }
 
@@ -42,6 +43,7 @@ function SSHKeys() {
   const [genName, setGenName] = useState("")
   const [genType, setGenType] = useState("ed25519")
   const [copiedKey, setCopiedKey] = useState<"public" | "private" | null>(null)
+  const [viewLoading, setViewLoading] = useState(false)
   const [actionError, setActionError] = useState<string | null>(null)
 
   const handleImport = async () => {
@@ -109,6 +111,25 @@ function SSHKeys() {
     await handleCopy(text)
     setCopiedKey(kind)
     window.setTimeout(() => setCopiedKey(null), 1500)
+  }
+
+  const handleView = async (key: { id: string; name: string; public_key: string; fingerprint: string }) => {
+    setActionError(null)
+    setViewKey({ name: key.name, publicKey: key.public_key, privateKey: "", fingerprint: key.fingerprint })
+    setViewLoading(true)
+    try {
+      const detail = await api.getSSHKey(key.id)
+      setViewKey({
+        name: detail.name,
+        publicKey: detail.public_key,
+        privateKey: detail.private_key || "",
+        fingerprint: detail.fingerprint,
+      })
+    } catch (err) {
+      setActionError(messageFromError(err))
+    } finally {
+      setViewLoading(false)
+    }
   }
 
   const resetForm = () => {
@@ -188,7 +209,7 @@ function SSHKeys() {
                         <Button
                           variant="ghost"
                           size="icon-sm"
-                          onClick={() => setViewKey({ name: key.name, publicKey: key.public_key, fingerprint: key.fingerprint })}
+                          onClick={() => void handleView(key)}
                           aria-label={t("ssh.fingerprint")}
                           title={t("ssh.fingerprint")}
                         >
@@ -287,7 +308,17 @@ function SSHKeys() {
           </DialogHeader>
           <div className="flex flex-col gap-4">
             <KeyField label={t("ssh.fingerprint")} value={viewKey?.fingerprint || "-"} />
-            <KeyField label={t("ssh.public_key")} value={viewKey?.publicKey || ""} copyable />
+            {viewLoading ? (
+              <>
+                <Skeleton className="h-24 w-full" />
+                <Skeleton className="h-40 w-full" />
+              </>
+            ) : (
+              <>
+                <KeyField label={t("ssh.public_key")} value={viewKey?.publicKey || ""} copyable />
+                <KeyField label={t("ssh.private_key")} value={viewKey?.privateKey || ""} copyable />
+              </>
+            )}
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setViewKey(null)}>{t("app.cancel")}</Button>

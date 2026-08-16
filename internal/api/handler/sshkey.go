@@ -38,6 +38,31 @@ func (h *SSHKeyHandler) HandleListSSHKeys(w http.ResponseWriter, r *http.Request
 	JSONResponse(w, http.StatusOK, keys)
 }
 
+func (h *SSHKeyHandler) HandleGetSSHKey(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	k, err := h.sshKeyStore.GetSSHKeyByID(r.Context(), id)
+	if err != nil {
+		JSONError(w, http.StatusInternalServerError, "failed to get ssh key")
+
+		return
+	}
+	if k == nil {
+		JSONError(w, http.StatusNotFound, "ssh key not found")
+
+		return
+	}
+
+	JSONResponse(w, http.StatusOK, sshKeyDetailResponse{
+		ID:          k.ID,
+		Name:        k.Name,
+		KeyType:     k.KeyType,
+		PublicKey:   k.PublicKey,
+		PrivateKey:  k.PrivateKey,
+		Fingerprint: k.Fingerprint,
+		CreatedAt:   k.CreatedAt,
+	})
+}
+
 func (h *SSHKeyHandler) HandleCreateSSHKey(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Name       string `json:"name"`
@@ -119,7 +144,7 @@ func (h *SSHKeyHandler) HandleGenerateSSHKey(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	JSONResponse(w, http.StatusCreated, generatedKeyResponse{
+	JSONResponse(w, http.StatusCreated, sshKeyDetailResponse{
 		ID:          k.ID,
 		Name:        k.Name,
 		KeyType:     k.KeyType,
@@ -130,7 +155,7 @@ func (h *SSHKeyHandler) HandleGenerateSSHKey(w http.ResponseWriter, r *http.Requ
 	})
 }
 
-type generatedKeyResponse struct {
+type sshKeyDetailResponse struct {
 	ID          string    `json:"id"`
 	Name        string    `json:"name"`
 	KeyType     string    `json:"key_type"`

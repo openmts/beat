@@ -84,6 +84,25 @@ func (s *SSHKeyStore) GetSSHKeyByPublicKey(ctx context.Context, publicKey string
 	return &key, nil
 }
 
+func (s *SSHKeyStore) GetSSHKeyByID(ctx context.Context, id string) (*model.SSHKey, error) {
+	var key model.SSHKey
+	err := s.db.QueryRowContext(ctx,
+		"SELECT id, name, key_type, public_key, private_key, fingerprint, created_at FROM ssh_keys WHERE id = ?",
+		id,
+	).Scan(
+		&key.ID, &key.Name, &key.KeyType, &key.PublicKey,
+		&key.PrivateKey, &key.Fingerprint, &key.CreatedAt,
+	)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("querying ssh key by id: %w", err)
+	}
+
+	return &key, nil
+}
+
 func (s *SSHKeyStore) DeleteSSHKey(ctx context.Context, id string) error {
 	_, err := s.db.ExecContext(ctx, "DELETE FROM ssh_keys WHERE id = ?", id)
 	if err != nil {
