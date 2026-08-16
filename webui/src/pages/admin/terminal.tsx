@@ -46,11 +46,12 @@ function TerminalPage() {
 
   const terminalTheme: TerminalTheme = theme === "light" ? lightTerminalTheme : darkTerminalTheme
 
-  // xterm's default stylesheet paints the terminal black; pin the background to
-  // the active palette so light mode never renders an unreadable dark shell.
+  // xterm's default stylesheet paints the terminal black; pin the background and
+  // text color to the active palette so mobile browsers (which may not support
+  // oklch) never render an unreadable shell.
   useEffect(() => {
     if (terminalRef.current) {
-      applyTerminalBackground(terminalRef.current, terminalTheme.background)
+      applyTerminalColors(terminalRef.current, terminalTheme)
     }
   }, [terminalTheme])
 
@@ -71,7 +72,7 @@ function TerminalPage() {
     const fitAddon = new FitAddon()
     term.loadAddon(fitAddon)
     term.open(terminalRef.current)
-    applyTerminalBackground(terminalRef.current, terminalTheme.background)
+    applyTerminalColors(terminalRef.current, terminalTheme)
     fitAddon.fit()
     fitRef.current = fitAddon
 
@@ -266,11 +267,15 @@ function TerminalPage() {
 
 export default TerminalPage
 
-function applyTerminalBackground(container: HTMLElement, background: string) {
+function applyTerminalColors(container: HTMLElement, theme: TerminalTheme) {
   const xterm = container.querySelector<HTMLElement>(".xterm")
   if (xterm) {
-    xterm.style.backgroundColor = background
-    xterm.style.background = background
+    xterm.style.backgroundColor = theme.background
+    xterm.style.background = theme.background
+    const rows = xterm.querySelector<HTMLElement>(".xterm-rows")
+    if (rows) {
+      rows.style.color = theme.foreground
+    }
   }
-  container.style.backgroundColor = background
+  container.style.backgroundColor = theme.background
 }
