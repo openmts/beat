@@ -19,6 +19,14 @@ func newSPAHandler(staticDir string) http.Handler {
 		requestedPath := strings.TrimPrefix(path.Clean(request.URL.Path), "/")
 		fullPath := filepath.Join(staticDir, filepath.FromSlash(requestedPath))
 		if _, err := os.Stat(fullPath); err == nil {
+			// Hashed build assets are immutable and can be cached long-term;
+			// non-hashed files (like index.html) must revalidate so updates
+			// reach browsers promptly.
+			if strings.HasPrefix(requestedPath, "assets/") {
+				w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+			} else {
+				w.Header().Set("Cache-Control", "no-cache")
+			}
 			fileServer.ServeHTTP(w, request)
 			return
 		}
@@ -30,6 +38,7 @@ func newSPAHandler(staticDir string) http.Handler {
 		indexRequest := request.Clone(request.Context())
 		indexRequest.URL.Path = "/"
 		indexRequest.URL.RawPath = ""
+		w.Header().Set("Cache-Control", "no-cache")
 		fileServer.ServeHTTP(w, indexRequest)
 	})
 }

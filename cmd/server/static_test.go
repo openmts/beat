@@ -64,6 +64,28 @@ func TestSPARouterPreservesAPI(t *testing.T) {
 	}
 }
 
+func TestSPACacheHeaders(t *testing.T) {
+	staticDir := t.TempDir()
+	writeStaticFile(t, staticDir, "index.html", "app-shell")
+	writeStaticFile(t, staticDir, "assets/app.js", "code")
+	handler := newSPAHandler(staticDir)
+
+	assetRequest := httptest.NewRequest(http.MethodGet, "/assets/app.js", nil)
+	assetResponse := httptest.NewRecorder()
+	handler.ServeHTTP(assetResponse, assetRequest)
+	if got := assetResponse.Header().Get("Cache-Control"); got != "public, max-age=31536000, immutable" {
+		t.Fatalf("asset Cache-Control = %q", got)
+	}
+
+	indexRequest := httptest.NewRequest(http.MethodGet, "/admin/terminal", nil)
+	indexRequest.Header.Set("Accept", "text/html")
+	indexResponse := httptest.NewRecorder()
+	handler.ServeHTTP(indexResponse, indexRequest)
+	if got := indexResponse.Header().Get("Cache-Control"); got != "no-cache" {
+		t.Fatalf("index Cache-Control = %q", got)
+	}
+}
+
 func writeStaticFile(t *testing.T, root, name, content string) {
 	t.Helper()
 	path := filepath.Join(root, name)
