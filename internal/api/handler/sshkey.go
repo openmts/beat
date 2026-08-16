@@ -1,10 +1,10 @@
 package handler
 
 import (
+	"crypto"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
-	"crypto/x509"
 	"encoding/base64"
 	"encoding/pem"
 	"fmt"
@@ -205,9 +205,9 @@ func generateRSAKey() (string, string, string, error) {
 
 	fingerprint := generateFingerprint(publicKeyStr)
 
-	privateKeyPEM := marshalRSAPrivateKey(privateKey)
+	privateKeyPEM, err := marshalPrivateKey(privateKey)
 
-	return privateKeyPEM, publicKeyStr, fingerprint, nil
+	return privateKeyPEM, publicKeyStr, fingerprint, err
 }
 
 func generateEd25519Key() (string, string, string, error) {
@@ -225,30 +225,16 @@ func generateEd25519Key() (string, string, string, error) {
 
 	fingerprint := generateFingerprint(publicKeyStr)
 
-	privateKeyPEM := marshalEd25519PrivateKey(privKey)
+	privateKeyPEM, err := marshalPrivateKey(privKey)
 
-	return privateKeyPEM, publicKeyStr, fingerprint, nil
+	return privateKeyPEM, publicKeyStr, fingerprint, err
 }
 
-func marshalRSAPrivateKey(key *rsa.PrivateKey) string {
-	der := x509.MarshalPKCS1PrivateKey(key)
-	block := &pem.Block{
-		Type:  "RSA PRIVATE KEY",
-		Bytes: der,
-	}
-
-	return string(pem.EncodeToMemory(block))
-}
-
-func marshalEd25519PrivateKey(key ed25519.PrivateKey) string {
-	der, err := x509.MarshalPKCS8PrivateKey(key)
+func marshalPrivateKey(privateKey crypto.Signer) (string, error) {
+	block, err := ssh.MarshalPrivateKey(privateKey, "")
 	if err != nil {
-		return ""
-	}
-	block := &pem.Block{
-		Type:  "PRIVATE KEY",
-		Bytes: der,
+		return "", fmt.Errorf("marshaling private key: %w", err)
 	}
 
-	return string(pem.EncodeToMemory(block))
+	return string(pem.EncodeToMemory(block)), nil
 }

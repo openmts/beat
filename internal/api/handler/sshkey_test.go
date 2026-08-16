@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 
+	"golang.org/x/crypto/ssh"
+
 	"github.com/beat/backend/internal/store"
 )
 
@@ -280,8 +282,11 @@ func assertGeneratedKeyPair(t *testing.T, body string) {
 	if !strings.HasPrefix(response.Data.PublicKey, "ssh-") {
 		t.Errorf("public key missing or invalid: %q", response.Data.PublicKey)
 	}
-	if !strings.Contains(response.Data.PrivateKey, "PRIVATE KEY") {
-		t.Errorf("private key missing or invalid: %q", response.Data.PrivateKey)
+	if !strings.Contains(response.Data.PrivateKey, "BEGIN OPENSSH PRIVATE KEY") {
+		t.Errorf("private key not in OpenSSH format: %q", response.Data.PrivateKey)
+	}
+	if _, err := ssh.ParseRawPrivateKey([]byte(response.Data.PrivateKey)); err != nil {
+		t.Errorf("private key not parseable: %v", err)
 	}
 }
 
