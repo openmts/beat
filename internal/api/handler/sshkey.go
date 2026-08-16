@@ -1,7 +1,6 @@
 package handler
 
 import (
-	"crypto"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
@@ -9,8 +8,8 @@ import (
 	"encoding/base64"
 	"encoding/pem"
 	"fmt"
-	"io"
 	"net/http"
+	"time"
 
 	"golang.org/x/crypto/ed25519"
 	"golang.org/x/crypto/ssh"
@@ -120,7 +119,25 @@ func (h *SSHKeyHandler) HandleGenerateSSHKey(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	JSONResponse(w, http.StatusCreated, k)
+	JSONResponse(w, http.StatusCreated, generatedKeyResponse{
+		ID:          k.ID,
+		Name:        k.Name,
+		KeyType:     k.KeyType,
+		PublicKey:   k.PublicKey,
+		PrivateKey:  privateKeyPEM,
+		Fingerprint: k.Fingerprint,
+		CreatedAt:   k.CreatedAt,
+	})
+}
+
+type generatedKeyResponse struct {
+	ID          string    `json:"id"`
+	Name        string    `json:"name"`
+	KeyType     string    `json:"key_type"`
+	PublicKey   string    `json:"public_key"`
+	PrivateKey  string    `json:"private_key"`
+	Fingerprint string    `json:"fingerprint"`
+	CreatedAt   time.Time `json:"created_at"`
 }
 
 func (h *SSHKeyHandler) HandleDeleteSSHKey(w http.ResponseWriter, r *http.Request) {
@@ -199,7 +216,7 @@ func marshalRSAPrivateKey(key *rsa.PrivateKey) string {
 }
 
 func marshalEd25519PrivateKey(key ed25519.PrivateKey) string {
-	der, err := x509.MarshalPKCS8PrivateKey(&rawEd25519PrivateKey{key: key})
+	der, err := x509.MarshalPKCS8PrivateKey(key)
 	if err != nil {
 		return ""
 	}
@@ -210,17 +227,3 @@ func marshalEd25519PrivateKey(key ed25519.PrivateKey) string {
 
 	return string(pem.EncodeToMemory(block))
 }
-
-type rawEd25519PrivateKey struct {
-	key ed25519.PrivateKey
-}
-
-func (r *rawEd25519PrivateKey) Public() crypto.PublicKey {
-	return r.key.Public()
-}
-
-func (r *rawEd25519PrivateKey) Sign(rand io.Reader, digest []byte, opts crypto.SignerOpts) ([]byte, error) {
-	return r.key.Sign(rand, digest, opts)
-}
-
-var _ crypto.Signer = (*rawEd25519PrivateKey)(nil)

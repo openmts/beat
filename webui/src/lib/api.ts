@@ -3,6 +3,7 @@ import type {
   Node,
   Group,
   SSHKey,
+  GeneratedSSHKey,
   AlertRule,
   AlertChannel,
   AlertEvent,
@@ -192,8 +193,8 @@ export async function createSSHKey(data: {
 export async function generateSSHKey(
   name: string,
   keyType: string,
-): Promise<SSHKey> {
-  const res = await api.post<SSHKey>("/ssh-keys/generate", { name, key_type: keyType })
+): Promise<GeneratedSSHKey> {
+  const res = await api.post<GeneratedSSHKey>("/ssh-keys/generate", { name, key_type: keyType })
   return res.data
 }
 

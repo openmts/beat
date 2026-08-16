@@ -18,7 +18,7 @@ vi.mock("@/components/ui/dialog", async () => {
   return {
     Dialog: mocks.MockDialog, DialogContent: mocks.PassThrough,
     DialogHeader: mocks.PassThrough, DialogTitle: mocks.PassThrough,
-    DialogFooter: mocks.PassThrough,
+    DialogDescription: mocks.PassThrough, DialogFooter: mocks.PassThrough,
   }
 })
 vi.mock("@/components/ui/select", async () => {
@@ -85,11 +85,19 @@ describe("SSH keys", () => {
     expect(screen.getByText(key.public_key)).toBeInTheDocument()
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }))
     fireEvent.click(rowButtons[2])
-    fireEvent.click(screen.getByRole("button", { name: "Delete" }))
+    const confirmDialog = screen.getAllByRole("dialog")[0]
+    fireEvent.click(within(confirmDialog).getByRole("button", { name: "Delete" }))
     await waitFor(() => expect(api.deleteSSHKey).toHaveBeenCalledWith("k1"))
   })
 
-  it("imports and generates keys", async () => {
+  it("imports and generates keys with full key pair", async () => {
+    const generated = {
+      id: "k2", name: "Generated", key_type: "rsa",
+      public_key: "ssh-rsa AAAAGeneratedPublic",
+      private_key: "-----BEGIN RSA PRIVATE KEY-----\nMIIEow...\n-----END RSA PRIVATE KEY-----",
+      fingerprint: "SHA256:gen", created_at: "",
+    }
+    vi.mocked(api.generateSSHKey).mockResolvedValue(generated as never)
     view(<SSHKeys />)
     fireEvent.click(screen.getByRole("button", { name: "Create" }))
     const dialog = screen.getByRole("dialog")
@@ -110,6 +118,16 @@ describe("SSH keys", () => {
     expect(keyTypeSelect).toHaveAttribute("data-selected-label", "RSA 2048")
     fireEvent.click(screen.getByRole("button", { name: "Confirm" }))
     await waitFor(() => expect(api.generateSSHKey).toHaveBeenCalledWith("Generated", "rsa"))
+    const generatedDialog = await screen.findByRole("dialog")
+    expect(within(generatedDialog).getByText(generated.public_key)).toBeInTheDocument()
+    expect(within(generatedDialog).getByText(/BEGIN RSA PRIVATE KEY/)).toBeInTheDocument()
+    fireEvent.click(within(generatedDialog).getByRole("button", { name: "Public Key" }))
+    await waitFor(() => expect(navigator.clipboard.writeText).toHaveBeenCalledWith(generated.public_key))
+    fireEvent.click(within(generatedDialog).getByRole("button", { name: /Private Key/ }))
+    await waitFor(() => expect(navigator.clipboard.writeText).toHaveBeenCalledWith(generated.private_key))
+    expect(await within(generatedDialog).findByText("Copied")).toBeInTheDocument()
+    fireEvent.click(within(generatedDialog).getByRole("button", { name: "Cancel" }))
+    await waitFor(() => expect(screen.queryByText(generated.public_key)).not.toBeInTheDocument())
   })
 
   it("renders fetch, loading, empty, and clipboard failures", async () => {

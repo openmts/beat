@@ -2,9 +2,7 @@ package handler
 
 import (
 	"context"
-	"crypto"
-	"crypto/ed25519"
-	"crypto/rand"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -12,44 +10,6 @@ import (
 
 	"github.com/beat/backend/internal/store"
 )
-
-func TestRawEd25519PrivateKey_Public(t *testing.T) {
-	_, priv, err := generateTestEd25519Key()
-	if err != nil {
-		t.Fatalf("generate key: %v", err)
-	}
-
-	raw := &rawEd25519PrivateKey{key: priv}
-	pub := raw.Public()
-	if pub == nil {
-		t.Fatal("expected non-nil public key")
-	}
-}
-
-func TestRawEd25519PrivateKey_Sign(t *testing.T) {
-	_, priv, err := generateTestEd25519Key()
-	if err != nil {
-		t.Fatalf("generate key: %v", err)
-	}
-
-	raw := &rawEd25519PrivateKey{key: priv}
-	digest := []byte("test data")
-	sig, err := raw.Sign(nil, digest, crypto.Hash(0))
-	if err != nil {
-		t.Fatalf("sign: %v", err)
-	}
-	if len(sig) == 0 {
-		t.Fatal("expected non-empty signature")
-	}
-}
-
-func generateTestEd25519Key() (ed25519.PublicKey, ed25519.PrivateKey, error) {
-	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
-	if err != nil {
-		return nil, nil, err
-	}
-	return publicKey, privateKey, nil
-}
 
 func TestHandleDeleteSSHKey_NotFound(t *testing.T) {
 	s := setupTestDB(t)
@@ -202,6 +162,7 @@ func TestHandleGenerateSSHKey(t *testing.T) {
 		if w.Code != http.StatusCreated {
 			t.Errorf("expected status 201, got %d", w.Code)
 		}
+		assertGeneratedKeyPair(t, w.Body.String())
 	})
 
 	t.Run("generates Ed25519 key", func(t *testing.T) {
@@ -221,6 +182,7 @@ func TestHandleGenerateSSHKey(t *testing.T) {
 		if w.Code != http.StatusCreated {
 			t.Errorf("expected status 201, got %d", w.Code)
 		}
+		assertGeneratedKeyPair(t, w.Body.String())
 	})
 
 	t.Run("defaults to RSA when key_type is empty", func(t *testing.T) {
@@ -301,5 +263,24 @@ func TestHandleDeleteSSHKey(t *testing.T) {
 
 	if w.Code != http.StatusNoContent {
 		t.Errorf("expected status 204, got %d", w.Code)
+	}
+}
+
+func assertGeneratedKeyPair(t *testing.T, body string) {
+	t.Helper()
+	var response struct {
+		Data struct {
+			PublicKey  string `json:"public_key"`
+			PrivateKey string `json:"private_key"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(body), &response); err != nil {
+		t.Fatalf("decode generate response: %v", err)
+	}
+	if !strings.HasPrefix(response.Data.PublicKey, "ssh-") {
+		t.Errorf("public key missing or invalid: %q", response.Data.PublicKey)
+	}
+	if !strings.Contains(response.Data.PrivateKey, "PRIVATE KEY") {
+		t.Errorf("private key missing or invalid: %q", response.Data.PrivateKey)
 	}
 }

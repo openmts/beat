@@ -151,6 +151,10 @@ export interface SSHKey {
   created_at: string
 }
 
+export interface GeneratedSSHKey extends SSHKey {
+  private_key: string
+}
+
 export interface AlertRule {
   id: string
   name: string
