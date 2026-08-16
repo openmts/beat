@@ -1,7 +1,9 @@
 import { useState, useEffect, useRef } from "react"
 import { useNodes } from "@/hooks/use-api"
 import { useLocale } from "@/context/locale"
+import { useTheme } from "@/context/theme"
 import { executeBatchCommand } from "@/lib/api"
+import { darkTerminalTheme, lightTerminalTheme, type TerminalTheme } from "@/lib/terminal-theme"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -19,6 +21,7 @@ import { PageHeader } from "@/components/page-header"
 function TerminalPage() {
   const { data: nodes, loading, error } = useNodes()
   const { t } = useLocale()
+  const { theme } = useTheme()
   const [selectedNodeId, setSelectedNodeId] = useState<string>("")
   const [connected, setConnected] = useState(false)
   const [batchCommand, setBatchCommand] = useState("")
@@ -41,6 +44,8 @@ function TerminalPage() {
     }
   }, [])
 
+  const terminalTheme: TerminalTheme = theme === "light" ? lightTerminalTheme : darkTerminalTheme
+
   const handleConnect = () => {
     if (!selectedNodeId || !terminalRef.current) return
 
@@ -52,10 +57,7 @@ function TerminalPage() {
       cursorBlink: true,
       fontSize: 14,
       fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
-      theme: {
-        background: "#1e1e2e",
-        foreground: "#cdd6f4",
-      },
+      theme: terminalTheme,
     })
 
     const fitAddon = new FitAddon()
@@ -96,6 +98,14 @@ function TerminalPage() {
 
     termRef.current = term
   }
+
+  // Keep an open terminal in sync when the app theme switches.
+  useEffect(() => {
+    if (termRef.current) {
+      termRef.current.options.theme = terminalTheme
+      fitRef.current?.fit()
+    }
+  }, [terminalTheme])
 
   const handleDisconnect = () => {
     if (wsRef.current) {
@@ -169,7 +179,7 @@ function TerminalPage() {
               ) : (
                 <div
                   ref={terminalRef}
-                  className="h-80 w-full overflow-hidden rounded bg-[#1e1e2e]"
+                  className="h-80 w-full overflow-hidden rounded bg-background"
                 />
               )}
             </CardContent>

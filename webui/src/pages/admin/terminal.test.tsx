@@ -13,8 +13,10 @@ const terminal = vi.hoisted(() => ({
 
 vi.mock("@/hooks/use-api")
 vi.mock("@/lib/api", () => ({ executeBatchCommand: vi.fn() }))
+vi.mock("@/context/theme", () => ({ useTheme: () => ({ theme: "dark", toggleTheme: vi.fn() }) }))
 vi.mock("@xterm/xterm", () => ({
   Terminal: class {
+    options: Record<string, unknown> = {}
     dispose = terminal.dispose
     loadAddon = terminal.loadAddon
     open = terminal.open
