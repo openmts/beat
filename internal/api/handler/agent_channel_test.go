@@ -48,6 +48,15 @@ func (f *fakeChannelOps) CompleteAgentTask(_ context.Context, taskID string, sta
 	return f.completeErr
 }
 
+func (f *fakeChannelOps) RefreshCustomMetrics(_ context.Context, nodeID string) (*model.AgentTask, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.registerErr != nil {
+		return nil, f.registerErr
+	}
+	return &model.AgentTask{ID: "refresh-" + nodeID, NodeID: nodeID, Type: model.AgentTaskCustomMetricRegister, Status: model.AgentTaskStatusPending}, nil
+}
+
 func agentChannelRequest(t *testing.T, nodeID string) *http.Request {
 	t.Helper()
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/agents/ws", nil)

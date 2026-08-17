@@ -21,6 +21,7 @@ import {
   ActivityIcon,
   Settings2Icon,
   ShieldCheckIcon,
+  GaugeIcon,
 } from "lucide-react"
 import { useLocale } from "@/context/locale"
 import { useSiteSettings } from "@/context/site-settings"
@@ -51,6 +52,11 @@ const navItems = [
     labelKey: "terminal.title",
     icon: TerminalIcon,
     to: "/admin/terminal",
+  },
+  {
+    labelKey: "custom_metric.title",
+    icon: GaugeIcon,
+    to: "/admin/custom-metrics",
   },
   {
     labelKey: "alert.manage",

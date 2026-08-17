@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"log/slog"
+	"math"
 	"net/http"
 	"strings"
 	"time"
@@ -214,11 +215,12 @@ func (h *NodeHandler) HandleNodeReport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		Name    string             `json:"name"`
-		Host    string             `json:"host"`
-		Port    int                `json:"port"`
-		System  model.SystemInfo   `json:"system"`
-		Metrics *model.NodeMetrics `json:"metrics"`
+		Name          string             `json:"name"`
+		Host          string             `json:"host"`
+		Port          int                `json:"port"`
+		System        model.SystemInfo   `json:"system"`
+		Metrics       *model.NodeMetrics `json:"metrics"`
+		CustomMetrics map[string]float64 `json:"custom_metrics"`
 	}
 	if err := ParseJSON(r, &body); err != nil {
 		JSONError(w, http.StatusBadRequest, "invalid request body")
@@ -270,7 +272,35 @@ func (h *NodeHandler) HandleNodeReport(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	for name, value := range body.CustomMetrics {
+		if !isValidCustomMetricName(name) || !isFiniteMetricValue(value) {
+			JSONError(w, http.StatusBadRequest, "invalid custom metrics")
+			return
+		}
+		if err := h.mtsStore.WriteMetric(r.Context(), node.ID, model.CustomMetricPrefix+name, value, model.NowUTC()); err != nil {
+			JSONError(w, http.StatusInternalServerError, "failed to store custom metric")
+			return
+		}
+	}
+
 	JSONResponse(w, http.StatusCreated, node)
+}
+
+func isValidCustomMetricName(name string) bool {
+	if name == "" || len(name) > 100 {
+		return false
+	}
+	for _, r := range name {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_' || r == '.' || r == '-' {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+func isFiniteMetricValue(value float64) bool {
+	return !math.IsNaN(value) && !math.IsInf(value, 0)
 }
 
 func (h *NodeHandler) HandleGetNodeMetrics(w http.ResponseWriter, r *http.Request) {

@@ -21,11 +21,12 @@ const (
 )
 
 type NodeReport struct {
-	Name    string            `json:"name"`
-	Host    string            `json:"host"`
-	Port    int               `json:"port"`
-	System  model.SystemInfo  `json:"system"`
-	Metrics model.NodeMetrics `json:"metrics"`
+	Name          string             `json:"name"`
+	Host          string             `json:"host"`
+	Port          int                `json:"port"`
+	System        model.SystemInfo   `json:"system"`
+	Metrics       model.NodeMetrics  `json:"metrics"`
+	CustomMetrics map[string]float64 `json:"custom_metrics,omitempty"`
 }
 
 type HTTPReporter struct {
@@ -50,10 +51,13 @@ func NewHTTPReporter(config Config) (*HTTPReporter, error) {
 	}, nil
 }
 
-func (r *HTTPReporter) Report(ctx context.Context, metrics model.NodeMetrics) (string, error) {
+func (r *HTTPReporter) Report(ctx context.Context, metrics model.NodeMetrics, customMetrics map[string]float64) (string, error) {
 	report := r.report
 	report.System = metrics.SystemInfo
 	report.Metrics = metrics
+	if len(customMetrics) > 0 {
+		report.CustomMetrics = customMetrics
+	}
 	body, err := json.Marshal(report)
 	if err != nil {
 		return "", fmt.Errorf("encode node report: %w", err)

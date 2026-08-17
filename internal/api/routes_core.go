@@ -78,11 +78,17 @@ func (r *Router) registerNodeAndGroupRoutes(api *http.ServeMux) {
 	if r.agentTasks != nil {
 		channelService := service.NewAgentChannelService(r.agentTasks)
 		hub := service.NewAgentHub()
+		if r.customMetrics != nil {
+			channelService = channelService.WithCustomMetrics(r.customMetrics)
+		}
 		nodeHandler = nodeHandler.WithTaskEnqueuer(channelService).WithAgentHub(hub)
 		channelHandler := handler.NewAgentChannelHandler(channelService, hub)
 		api.Handle("GET /api/v1/agents/ws", r.agent(
 			http.HandlerFunc(channelHandler.HandleAgentWebSocket), bodyNodeName("name"),
 		))
+		if r.customMetrics != nil {
+			r.registerCustomMetricRoutes(api, channelService, hub)
+		}
 	}
 	groupHandler := handler.NewGroupHandler(r.groupStore)
 	api.HandleFunc("GET /api/v1/nodes", nodeHandler.HandleListNodes)
@@ -105,4 +111,19 @@ func (r *Router) registerNodeAndGroupRoutes(api *http.ServeMux) {
 	api.Handle("DELETE /api/v1/groups/{id}", r.admin(http.HandlerFunc(groupHandler.HandleDeleteGroup)))
 	api.Handle("PUT /api/v1/groups/sort", r.admin(http.HandlerFunc(groupHandler.HandleUpdateSortOrder)))
 	api.Handle("PUT /api/v1/groups/{id}/default", r.admin(http.HandlerFunc(groupHandler.HandleSetDefaultGroup)))
+}
+
+func (r *Router) registerCustomMetricRoutes(
+	api *http.ServeMux,
+	channelService *service.AgentChannelService,
+	hub *service.AgentHub,
+) {
+	dispatcher := service.NewCustomMetricDispatchService(channelService, hub)
+	customMetricHandler := handler.NewCustomMetricHandler(r.customMetrics, dispatcher)
+	api.Handle("GET /api/v1/custom-metrics", r.admin(http.HandlerFunc(customMetricHandler.HandleList)))
+	api.Handle("POST /api/v1/custom-metrics", r.admin(http.HandlerFunc(customMetricHandler.HandleCreate)))
+	api.Handle("PUT /api/v1/custom-metrics/{id}", r.admin(http.HandlerFunc(customMetricHandler.HandleUpdate)))
+	api.Handle("DELETE /api/v1/custom-metrics/{id}", r.admin(http.HandlerFunc(customMetricHandler.HandleDelete)))
+	api.Handle("GET /api/v1/custom-metrics/{id}/nodes", r.admin(http.HandlerFunc(customMetricHandler.HandleListMetricNodes)))
+	api.Handle("PUT /api/v1/custom-metrics/{id}/nodes", r.admin(http.HandlerFunc(customMetricHandler.HandleSetMetricNodes)))
 }

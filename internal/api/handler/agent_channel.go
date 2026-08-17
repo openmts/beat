@@ -24,6 +24,9 @@ type AgentChannelOperations interface {
 	EnqueueAuthorizedKeyTask(context.Context, string, string) (*model.AgentTask, error)
 	RegisterAgent(context.Context, string) ([]model.AgentTask, error)
 	CompleteAgentTask(context.Context, string, string, string) error
+	// RefreshCustomMetrics enqueues a registration task so the agent rebuilds
+	// its local custom metric registry on every (re)connect.
+	RefreshCustomMetrics(context.Context, string) (*model.AgentTask, error)
 }
 
 type AgentChannelHandler struct {
@@ -94,6 +97,13 @@ func (h *AgentChannelHandler) serveConnection(ctx context.Context, nodeID string
 	}
 	for _, task := range pending {
 		if err := wrapped.WriteTask(ctx, task); err != nil {
+			return
+		}
+	}
+	// Re-sync the custom metric registry on every connect so agents that
+	// restarted (or lost the earlier registration task) rebuild their state.
+	if task, err := h.operations.RefreshCustomMetrics(ctx, nodeID); err == nil && task != nil {
+		if err := wrapped.WriteTask(ctx, *task); err != nil {
 			return
 		}
 	}

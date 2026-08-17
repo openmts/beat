@@ -4,6 +4,7 @@ import Groups from "@/pages/admin/groups"
 import Nodes from "@/pages/admin/nodes"
 import SSHKeys from "@/pages/admin/ssh-keys"
 import Terminal from "@/pages/admin/terminal"
+import CustomMetrics from "@/pages/admin/custom-metrics"
 import Alerts from "@/pages/admin/alerts"
 import Network from "@/pages/admin/network"
 import Settings from "@/pages/admin/settings"
@@ -31,6 +32,7 @@ function AdminAccess() {
         <Route path="nodes" element={<Nodes />} />
         <Route path="ssh-keys" element={<SSHKeys />} />
         <Route path="terminal" element={<Terminal />} />
+        <Route path="custom-metrics" element={<CustomMetrics />} />
         <Route path="alerts" element={<Alerts />} />
         <Route path="network" element={<Network />} />
         <Route path="settings" element={<Settings />} />

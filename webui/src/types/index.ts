@@ -367,3 +367,22 @@ export type {
   AuthState,
   TOTPSetup,
 } from "@/types/security"
+
+export interface CustomMetric {
+  id: string
+  name: string
+  shell_command: string
+  interval_seconds: number
+  description: string
+  enabled: boolean
+  created_at: string
+  updated_at: string
+}
+
+export interface CustomMetricPayload {
+  name: string
+  shell_command: string
+  interval_seconds: number
+  description?: string
+  enabled?: boolean
+}

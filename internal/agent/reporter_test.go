@@ -61,7 +61,7 @@ func TestHTTPReporter(t *testing.T) {
 		MemoryUsed: 400, MemoryTotal: 800,
 		DiskUsed: 40, DiskTotal: 100,
 	}
-	assigned, err := reporter.Report(context.Background(), metrics)
+	assigned, err := reporter.Report(context.Background(), metrics, nil)
 	if err != nil {
 		t.Fatalf("report: %v", err)
 	}
@@ -82,7 +82,7 @@ func TestHTTPReporterErrors(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create reporter: %v", err)
 	}
-	if _, err := reporter.Report(context.Background(), model.NodeMetrics{}); err == nil || !strings.Contains(err.Error(), "401") {
+	if _, err := reporter.Report(context.Background(), model.NodeMetrics{}, nil); err == nil || !strings.Contains(err.Error(), "401") {
 		t.Fatalf("error = %v, want status error", err)
 	}
 	if _, err := NewHTTPReporter(Config{ServerURL: "://invalid"}); err == nil {
@@ -104,7 +104,7 @@ func TestHTTPReporterTransportAndBodyErrors(t *testing.T) {
 	reporter.client.Transport = roundTripperFunc(func(*http.Request) (*http.Response, error) {
 		return nil, errors.New("send failed")
 	})
-	if _, err := reporter.Report(context.Background(), model.NodeMetrics{}); err == nil || !strings.Contains(err.Error(), "send") {
+	if _, err := reporter.Report(context.Background(), model.NodeMetrics{}, nil); err == nil || !strings.Contains(err.Error(), "send") {
 		t.Fatalf("error = %v, want send error", err)
 	}
 
@@ -123,7 +123,7 @@ func TestHTTPReporterTransportAndBodyErrors(t *testing.T) {
 					StatusCode: tt.statusCode, Body: errorReader{}, Header: make(http.Header),
 				}, nil
 			})
-			_, err := reporter.Report(context.Background(), model.NodeMetrics{})
+			_, err := reporter.Report(context.Background(), model.NodeMetrics{}, nil)
 			if err == nil || !strings.Contains(err.Error(), tt.want) {
 				t.Fatalf("error = %v, want containing %q", err, tt.want)
 			}

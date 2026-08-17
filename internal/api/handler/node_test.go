@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/beat/backend/internal/api/middleware"
 	"github.com/beat/backend/internal/model"
@@ -664,4 +665,58 @@ func TestHandleUpdateNodeEnqueueFailureLogged(t *testing.T) {
 	if enqueuer.count() != 1 {
 		t.Fatalf("enqueue calls = %d, want 1", enqueuer.count())
 	}
+}
+
+func TestHandleNodeReportCustomMetrics(t *testing.T) {
+	s, mtsStore := setupNodeTestDB(t)
+	ctx := context.Background()
+	nodeStore := store.NewNodeStore(s.DB)
+	h := NewNodeHandler(nodeStore, mtsStore)
+	disableFK(t, s.DB)
+
+	node, err := nodeStore.UpsertNode(ctx, "custom-metrics-node", "10.0.0.9", 22)
+	if err != nil {
+		t.Fatalf("upsert node: %v", err)
+	}
+	body := `{"name":"custom-metrics-node","host":"10.0.0.9","port":22,
+		"custom_metrics":{"http_latency":12.5,"disk_io":42}}`
+	req := agentReportRequest(t, nodeStore, "custom-metrics-node", body)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	h.HandleNodeReport(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+	if err := mtsStore.Flush(ctx); err != nil {
+		t.Fatalf("flush: %v", err)
+	}
+	now := time.Now().UTC()
+	points, err := mtsStore.QueryMetrics(ctx, []string{"custom_http_latency", "custom_disk_io"}, now.Add(-time.Hour), now, node.ID)
+	if err != nil {
+		t.Fatalf("query metrics: %v", err)
+	}
+	if len(points["custom_http_latency"]) == 0 || len(points["custom_disk_io"]) == 0 {
+		t.Fatalf("points = %#v, want custom metrics stored with prefix", points)
+	}
+	if points["custom_http_latency"][0].Value != 12.5 || points["custom_disk_io"][0].Value != 42 {
+		t.Fatalf("points = %#v", points)
+	}
+}
+
+func TestHandleNodeReportInvalidCustomMetricName(t *testing.T) {
+	s, mtsStore := setupNodeTestDB(t)
+	ctx := context.Background()
+	nodeStore := store.NewNodeStore(s.DB)
+	h := NewNodeHandler(nodeStore, mtsStore)
+	disableFK(t, s.DB)
+
+	body := `{"name":"bad-custom","host":"10.0.0.9","port":22,"custom_metrics":{"bad name":1}}`
+	req := agentReportRequest(t, nodeStore, "bad-custom", body)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	h.HandleNodeReport(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("invalid name status = %d, want 400", w.Code)
+	}
+	_ = ctx
 }

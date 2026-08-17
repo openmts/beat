@@ -12,8 +12,12 @@ type MetricsCollector interface {
 	Collect(context.Context) (model.NodeMetrics, error)
 }
 
+type CustomMetricSampler interface {
+	Sample(context.Context) map[string]float64
+}
+
 type MetricsReporter interface {
-	Report(context.Context, model.NodeMetrics) (string, error)
+	Report(context.Context, model.NodeMetrics, map[string]float64) (string, error)
 }
 
 // SelfHealer repairs locally detectable drift, such as a missing authorized key.
@@ -22,19 +26,21 @@ type SelfHealer interface {
 }
 
 type Runner struct {
-	interval   time.Duration
-	collector  MetricsCollector
-	reporter   MetricsReporter
-	selfHealer SelfHealer
-	onError    func(error)
+	interval      time.Duration
+	collector     MetricsCollector
+	customSampler CustomMetricSampler
+	reporter      MetricsReporter
+	selfHealer    SelfHealer
+	onError       func(error)
 }
 
 type RunnerOptions struct {
-	Interval   time.Duration
-	Collector  MetricsCollector
-	Reporter   MetricsReporter
-	SelfHealer SelfHealer
-	OnError    func(error)
+	Interval      time.Duration
+	Collector     MetricsCollector
+	CustomSampler CustomMetricSampler
+	Reporter      MetricsReporter
+	SelfHealer    SelfHealer
+	OnError       func(error)
 }
 
 func NewRunner(options RunnerOptions) *Runner {
@@ -43,8 +49,8 @@ func NewRunner(options RunnerOptions) *Runner {
 	}
 	return &Runner{
 		interval: options.Interval, collector: options.Collector,
-		reporter: options.Reporter, selfHealer: options.SelfHealer,
-		onError: options.OnError,
+		customSampler: options.CustomSampler, reporter: options.Reporter,
+		selfHealer: options.SelfHealer, onError: options.OnError,
 	}
 }
 
@@ -72,7 +78,11 @@ func (r *Runner) report(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("collect metrics: %w", err)
 	}
-	assignedKey, err := r.reporter.Report(ctx, metrics)
+	var custom map[string]float64
+	if r.customSampler != nil {
+		custom = r.customSampler.Sample(ctx)
+	}
+	assignedKey, err := r.reporter.Report(ctx, metrics, custom)
 	if err != nil {
 		return fmt.Errorf("report metrics: %w", err)
 	}

@@ -25,6 +25,7 @@ type Router struct {
 	networkTaskStore  *store.NetworkTaskStore
 	siteSettingsStore *store.SiteSettingsStore
 	agentTasks        *store.AgentTaskStore
+	customMetrics     *store.CustomMetricStore
 	delivery          *notification.Service
 	trafficReports    handler.TrafficReportOperations
 	maintenance       handler.MaintenanceOperations
@@ -71,6 +72,12 @@ func WithTerminalOperations(terminal handler.TerminalOperations) RouterOption {
 func WithAgentTaskStore(agentTasks *store.AgentTaskStore) RouterOption {
 	return func(router *Router) {
 		router.agentTasks = agentTasks
+	}
+}
+
+func WithCustomMetricStore(customMetrics *store.CustomMetricStore) RouterOption {
+	return func(router *Router) {
+		router.customMetrics = customMetrics
 	}
 }
 

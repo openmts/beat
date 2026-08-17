@@ -43,6 +43,7 @@ type serverStores struct {
 	admins             *store.AdminStore
 	backups            *store.BackupStore
 	agentTasks         *store.AgentTaskStore
+	customMetrics      *store.CustomMetricStore
 }
 
 type serverServices struct {
@@ -140,7 +141,8 @@ func openServerStores(ctx context.Context, dbPath, mtsPath string) (*serverStore
 		trafficReports: store.NewTrafficReportScheduleStore(database),
 		networkTasks:   store.NewNetworkTaskStore(database), siteSettings: store.NewSiteSettingsStore(database),
 		maintenanceSetting: store.NewMaintenanceSettingsStore(database), admins: store.NewAdminStore(database),
-		backups: store.NewBackupStore(database), agentTasks: store.NewAgentTaskStore(database)}, nil
+		backups: store.NewBackupStore(database), agentTasks: store.NewAgentTaskStore(database),
+		customMetrics: store.NewCustomMetricStore(database)}, nil
 }
 
 func newServerServices(
@@ -209,7 +211,8 @@ func buildHTTPHandler(config httpHandlerConfig) (http.Handler, *alerter.Alerter)
 		api.WithSiteSettingsStore(config.stores.siteSettings), api.WithNotificationService(config.services.delivery),
 		api.WithTrafficReportService(config.services.trafficReports), api.WithMaintenanceService(config.services.maintenance),
 		api.WithAdminSecurity(config.services.security), api.WithBackupService(config.services.backups),
-		api.WithAgentTaskStore(config.stores.agentTasks))
+		api.WithAgentTaskStore(config.stores.agentTasks),
+		api.WithCustomMetricStore(config.stores.customMetrics))
 	mux := http.NewServeMux()
 	mux.Handle("/api/v1/", router.ServeHandler())
 	mux.Handle("/ws", websocket.NewHandler(hub))

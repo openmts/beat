@@ -307,3 +307,33 @@ func TestRouterHealthEndpoint(t *testing.T) {
 		t.Errorf("expected status 404 for /api/v1/health (not registered), got %d", w.Code)
 	}
 }
+
+func TestRouterWithAgentTaskAndCustomMetrics(t *testing.T) {
+	sqliteStore, err := store.NewSQLiteStore("file::memory:?cache=shared")
+	if err != nil {
+		t.Fatalf("create test database: %v", err)
+	}
+	t.Cleanup(func() { _ = sqliteStore.Close() })
+	nodeStore := store.NewNodeStore(sqliteStore.DB)
+	groupStore := store.NewGroupStore(sqliteStore.DB)
+	sshKeyStore := store.NewSSHKeyStore(sqliteStore.DB)
+	alertRuleStore := store.NewAlertRuleStore(sqliteStore.DB)
+	alertChannelStore := store.NewAlertChannelStore(sqliteStore.DB)
+	alertEventStore := store.NewAlertEventStore(sqliteStore.DB)
+
+	router := NewRouter(nodeStore, groupStore, sshKeyStore, alertRuleStore, alertChannelStore, alertEventStore, nil,
+		WithAgentTaskStore(store.NewAgentTaskStore(sqliteStore.DB)),
+		WithCustomMetricStore(store.NewCustomMetricStore(sqliteStore.DB)),
+	)
+	if router.agentTasks == nil || router.customMetrics == nil {
+		t.Fatal("agent task or custom metric store not set on router")
+	}
+
+	// Custom metric routes are registered; without auth configured they pass through.
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/custom-metrics", nil)
+	w := httptest.NewRecorder()
+	router.ServeHandler().ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Errorf("custom-metrics status = %d, want 200", w.Code)
+	}
+}

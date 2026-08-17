@@ -18,6 +18,8 @@ import type {
   SiteSettings,
   MaintenanceOverview,
   MaintenanceSettings,
+  CustomMetric,
+  CustomMetricPayload,
 } from "@/types"
 export { api }
 
@@ -309,5 +311,34 @@ export async function executeBatchCommand(
     node_ids: nodeIds,
     command,
   })
+  return res.data
+}
+
+export async function listCustomMetrics(): Promise<CustomMetric[]> {
+  const res = await api.get<CustomMetric[]>("/custom-metrics")
+  return res.data
+}
+
+export async function createCustomMetric(data: CustomMetricPayload): Promise<CustomMetric> {
+  const res = await api.post<CustomMetric>("/custom-metrics", data)
+  return res.data
+}
+
+export async function updateCustomMetric(id: string, data: CustomMetricPayload): Promise<CustomMetric> {
+  const res = await api.put<CustomMetric>(`/custom-metrics/${id}`, data)
+  return res.data
+}
+
+export async function deleteCustomMetric(id: string): Promise<void> {
+  await api.delete(`/custom-metrics/${id}`)
+}
+
+export async function listCustomMetricNodes(metricId: string): Promise<string[]> {
+  const res = await api.get<string[]>(`/custom-metrics/${metricId}/nodes`)
+  return res.data
+}
+
+export async function setCustomMetricNodes(metricId: string, nodeIds: string[]): Promise<string[]> {
+  const res = await api.put<string[]>(`/custom-metrics/${metricId}/nodes`, { node_ids: nodeIds })
   return res.data
 }

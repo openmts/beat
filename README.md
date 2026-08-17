@@ -208,6 +208,20 @@ reconnecting.
   still contains the node's assigned key and re-installs it if it was removed
   externally, so a lost key self-heals automatically.
 
+## Custom metrics
+
+Custom metrics let operators collect arbitrary numeric values by running a
+shell command on nodes.
+
+- Define a metric with a name and a shell command whose stdout prints a single
+  number, plus a collection interval (5s–24h).
+- Bind metrics to nodes. The server sends a `custom_metric_register` task over
+  the agent channel (and on every reconnect), so the agent registers and
+  periodically runs the commands.
+- Collected values are reported with the heartbeat and stored under the
+  `custom_<name>` measurement, viewable through the node metrics API and the
+  custom metrics page.
+
 ## Development
 
 Run the frontend development server:

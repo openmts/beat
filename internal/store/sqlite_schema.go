@@ -115,4 +115,17 @@ var platformSchemaStatements = []string{
 		FOREIGN KEY(node_id) REFERENCES nodes(id) ON DELETE CASCADE
 	)`,
 	`CREATE INDEX IF NOT EXISTS idx_agent_tasks_pending ON agent_tasks(node_id, status)`,
+	`CREATE TABLE IF NOT EXISTS custom_metrics (
+		id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE CHECK(length(name) BETWEEN 1 AND 100),
+		shell_command TEXT NOT NULL CHECK(length(CAST(shell_command AS BLOB)) BETWEEN 1 AND 2048),
+		interval_seconds INTEGER NOT NULL CHECK(interval_seconds BETWEEN 5 AND 86400),
+		description TEXT NOT NULL DEFAULT '', enabled INTEGER NOT NULL DEFAULT 1 CHECK(enabled IN (0, 1)),
+		created_at DATETIME NOT NULL, updated_at DATETIME NOT NULL
+	)`,
+	`CREATE TABLE IF NOT EXISTS custom_metric_nodes (
+		metric_id TEXT NOT NULL, node_id TEXT NOT NULL, PRIMARY KEY(metric_id, node_id),
+		FOREIGN KEY(metric_id) REFERENCES custom_metrics(id) ON DELETE CASCADE,
+		FOREIGN KEY(node_id) REFERENCES nodes(id) ON DELETE CASCADE
+	)`,
+	`CREATE INDEX IF NOT EXISTS idx_custom_metric_nodes_node ON custom_metric_nodes(node_id, metric_id)`,
 }

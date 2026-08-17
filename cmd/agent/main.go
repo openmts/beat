@@ -53,10 +53,13 @@ func run(ctx context.Context, configPath string) error {
 		return err
 	}
 	collector := agent.NewCollector(agent.SystemSampler{}, agentNow)
+	registry := agent.NewCustomMetricRegistry()
 	runner := agent.NewRunner(agent.RunnerOptions{
-		Interval: config.ReportInterval, Collector: collector, Reporter: reporter,
-		SelfHealer: agent.NewAuthorizedKeySelfHealer(""),
-		OnError:    func(runErr error) { slog.Error("agent report failed", "error", runErr) },
+		Interval: config.ReportInterval, Collector: collector,
+		CustomSampler: agent.NewCustomMetricCollector(registry),
+		Reporter:      reporter,
+		SelfHealer:    agent.NewAuthorizedKeySelfHealer(""),
+		OnError:       func(runErr error) { slog.Error("agent report failed", "error", runErr) },
 	})
 	networkClient, err := agent.NewNetworkHTTPClient(config)
 	if err != nil {
@@ -66,7 +69,8 @@ func run(ctx context.Context, configPath string) error {
 		Client: networkClient, Prober: agent.NewNetworkProber(),
 		OnError: func(runErr error) { slog.Error("network probe failed", "error", runErr) },
 	})
-	channel, err := agent.NewChannel(config.ServerURL, config.AgentToken, agent.NewAuthorizedKeyExecutor(""))
+	channel, err := agent.NewChannel(config.ServerURL, config.AgentToken,
+		agent.NewMultiTaskExecutor(agent.NewAuthorizedKeyExecutor(""), registry))
 	if err != nil {
 		return err
 	}
