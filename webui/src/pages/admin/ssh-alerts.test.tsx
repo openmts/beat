@@ -308,6 +308,38 @@ describe("alerts", () => {
     expect(messageFromError(new Error("known"))).toBe("known")
     expect(messageFromError("unknown")).toBe("The request failed")
   })
+
+  it("acknowledges and resolves alert events", async () => {
+    let current: Array<Record<string, string | number | null>> = [{
+      id: "e1", rule_id: "r1", node_id: "n1", message: "high", value: 91,
+      status: "triggered", triggered_at: "2026-01-01T00:00:00Z", acknowledged_at: null, resolved_at: null,
+    }, {
+      id: "e2", rule_id: "r1", node_id: "n1", message: "handling", value: 30,
+      status: "acknowledged", triggered_at: "2026-01-01T00:00:00Z", acknowledged_at: "2026-01-01T00:01:00Z", resolved_at: null,
+    }]
+    vi.mocked(hooks.useAlertEvents).mockReturnValue(state(current) as never)
+    vi.mocked(api.acknowledgeAlertEvent).mockImplementation(async (id) => {
+      current = current.map((e) => e.id === id ? { ...e, status: "acknowledged", acknowledged_at: "2026-01-01T00:02:00Z" } : e)
+      return current.find((e) => e.id === id)! as never
+    })
+    vi.mocked(api.resolveAlertEvent).mockImplementation(async (id) => {
+      current = current.map((e) => e.id === id ? { ...e, status: "resolved", resolved_at: "2026-01-01T00:03:00Z" } : e)
+      return current.find((e) => e.id === id)! as never
+    })
+    vi.mocked(hooks.useAlertEvents).mockReturnValue(state(current) as never)
+
+    const { rerender } = view(<AlertEventsPanel />)
+    // e1 (triggered) shows Acknowledge; e2 (acknowledged) shows Resolve.
+    expect(screen.getByText("Acknowledge")).toBeInTheDocument()
+    expect(screen.getByText("Resolve")).toBeInTheDocument()
+    expect(screen.getAllByText("Acknowledged").length).toBeGreaterThan(0)
+
+    fireEvent.click(screen.getByText("Acknowledge"))
+    await waitFor(() => expect(api.acknowledgeAlertEvent).toHaveBeenCalledWith("e1"))
+    rerender(<LocaleProvider><MemoryRouter><AlertEventsPanel /></MemoryRouter></LocaleProvider>)
+    fireEvent.click(screen.getByText("Resolve"))
+    await waitFor(() => expect(api.resolveAlertEvent).toHaveBeenCalledWith("e2"))
+  })
 })
 
 describe("alert metric options with custom metrics", () => {

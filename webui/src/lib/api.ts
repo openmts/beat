@@ -267,6 +267,16 @@ export async function listAlertEvents(): Promise<AlertEvent[]> {
   return res.data
 }
 
+export async function acknowledgeAlertEvent(id: string): Promise<AlertEvent> {
+  const res = await api.put<AlertEvent>(`/alerts/events/${id}/acknowledge`)
+  return res.data
+}
+
+export async function resolveAlertEvent(id: string): Promise<AlertEvent> {
+  const res = await api.put<AlertEvent>(`/alerts/events/${id}/resolve`)
+  return res.data
+}
+
 export async function listTrafficReportSchedules(): Promise<TrafficReportSchedule[]> {
   const res = await api.get<TrafficReportSchedule[]>("/alerts/traffic-reports")
   return res.data

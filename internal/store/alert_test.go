@@ -2,8 +2,11 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"testing"
 	"time"
+
+	_ "modernc.org/sqlite"
 
 	"github.com/beat/backend/internal/model"
 )
@@ -507,5 +510,139 @@ func TestUpdateEvent(t *testing.T) {
 	}
 	if events[0].Status != model.AlertStatusResolved {
 		t.Errorf("expected status %q, got %q", model.AlertStatusResolved, events[0].Status)
+	}
+}
+
+func TestAcknowledgeEventLifecycle(t *testing.T) {
+	store := setupTestDB(t)
+	ctx := context.Background()
+	eventStore := NewAlertEventStore(store.DB)
+
+	now := model.NowUTC()
+	event := &model.AlertEvent{
+		ID: "ack-event", RuleID: "rule-1", NodeID: "node-1",
+		Message: "CPU high", Value: 95.5, Status: model.AlertStatusTriggered,
+		TriggeredAt: now,
+	}
+	if err := eventStore.CreateEvent(ctx, event); err != nil {
+		t.Fatalf("create event: %v", err)
+	}
+
+	// GetActiveEvent returns triggered events.
+	active, err := eventStore.GetActiveEvent(ctx, "rule-1", "node-1")
+	if err != nil {
+		t.Fatalf("get active: %v", err)
+	}
+	if active == nil || active.Status != model.AlertStatusTriggered {
+		t.Fatalf("active = %#v", active)
+	}
+
+	// Acknowledge the event.
+	event.Status = model.AlertStatusAcknowledged
+	ackAt := now.Add(time.Minute)
+	event.AcknowledgedAt = &ackAt
+	if err := eventStore.UpdateEvent(ctx, event); err != nil {
+		t.Fatalf("update/ack: %v", err)
+	}
+
+	// GetActiveEvent must still return acknowledged events (no re-trigger).
+	active, err = eventStore.GetActiveEvent(ctx, "rule-1", "node-1")
+	if err != nil {
+		t.Fatalf("get active after ack: %v", err)
+	}
+	if active == nil || active.Status != model.AlertStatusAcknowledged {
+		t.Fatalf("active after ack = %#v", active)
+	}
+	if active.AcknowledgedAt == nil || !active.AcknowledgedAt.Equal(ackAt) {
+		t.Fatalf("acknowledged_at = %#v", active.AcknowledgedAt)
+	}
+
+	// Resolve the event.
+	event.Status = model.AlertStatusResolved
+	resAt := now.Add(2 * time.Minute)
+	event.ResolvedAt = &resAt
+	if err := eventStore.UpdateEvent(ctx, event); err != nil {
+		t.Fatalf("update/resolve: %v", err)
+	}
+	// Resolved events are no longer active.
+	active, err = eventStore.GetActiveEvent(ctx, "rule-1", "node-1")
+	if err != nil {
+		t.Fatalf("get active after resolve: %v", err)
+	}
+	if active != nil {
+		t.Fatalf("active after resolve = %#v, want none", active)
+	}
+}
+
+func TestGetEventByID(t *testing.T) {
+	store := setupTestDB(t)
+	ctx := context.Background()
+	eventStore := NewAlertEventStore(store.DB)
+
+	event := &model.AlertEvent{
+		ID: "by-id", RuleID: "rule-1", NodeID: "node-1",
+		Message: "hi", Value: 1, Status: model.AlertStatusTriggered,
+		TriggeredAt: model.NowUTC(),
+	}
+	if err := eventStore.CreateEvent(ctx, event); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	got, err := eventStore.GetEventByID(ctx, "by-id")
+	if err != nil {
+		t.Fatalf("get by id: %v", err)
+	}
+	if got == nil || got.ID != "by-id" {
+		t.Fatalf("got = %#v", got)
+	}
+	missing, err := eventStore.GetEventByID(ctx, "nope")
+	if err != nil {
+		t.Fatalf("get missing: %v", err)
+	}
+	if missing != nil {
+		t.Fatalf("missing = %#v, want nil", missing)
+	}
+}
+
+func TestApplyAlertEventAcknowledgementIdempotent(t *testing.T) {
+	store := setupTestDB(t)
+	ctx := context.Background()
+	// The baseline schema already has acknowledged_at; applying the migration
+	// again must be a no-op.
+	if err := applyAlertEventAcknowledgement(ctx, store.DB); err != nil {
+		t.Fatalf("apply migration: %v", err)
+	}
+	var count int
+	if err := store.DB.QueryRowContext(ctx,
+		"SELECT COUNT(*) FROM pragma_table_info('alert_events') WHERE name = 'acknowledged_at'",
+	).Scan(&count); err != nil {
+		t.Fatalf("check column: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("acknowledged_at column count = %d, want 1", count)
+	}
+}
+
+func TestApplyAlertEventAcknowledgementAddsColumn(t *testing.T) {
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	// Create an old-style alert_events table without acknowledged_at.
+	if _, err := db.Exec(`CREATE TABLE alert_events (
+		id TEXT PRIMARY KEY, rule_id TEXT NOT NULL, node_id TEXT NOT NULL, message TEXT,
+		value REAL, status TEXT NOT NULL, triggered_at DATETIME NOT NULL, resolved_at DATETIME
+	)`); err != nil {
+		t.Fatalf("create old table: %v", err)
+	}
+	if err := applyAlertEventAcknowledgement(context.Background(), db); err != nil {
+		t.Fatalf("apply migration: %v", err)
+	}
+	var count int
+	if err := db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('alert_events') WHERE name = 'acknowledged_at'").Scan(&count); err != nil {
+		t.Fatalf("check column: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("acknowledged_at column count = %d, want 1", count)
 	}
 }

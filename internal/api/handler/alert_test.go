@@ -354,3 +354,201 @@ func TestHandleListAlertEvents(t *testing.T) {
 		t.Errorf("expected status 200, got %d", w.Code)
 	}
 }
+
+func TestHandleAcknowledgeAlertEvent(t *testing.T) {
+	s := setupTestDB(t)
+	ctx := context.Background()
+	eventStore := store.NewAlertEventStore(s.DB)
+	h := NewAlertHandler(store.NewAlertRuleStore(s.DB), store.NewAlertChannelStore(s.DB), eventStore)
+
+	event := &model.AlertEvent{
+		ID: "ev-ack", RuleID: "rule-1", NodeID: "node-1",
+		Message: "CPU high", Value: 90, Status: model.AlertStatusTriggered,
+		TriggeredAt: model.NowUTC(),
+	}
+	_ = eventStore.CreateEvent(ctx, event)
+
+	req := httptest.NewRequest(http.MethodPut, "/api/alerts/events/ev-ack/acknowledge", nil)
+	req.SetPathValue("id", "ev-ack")
+	w := httptest.NewRecorder()
+	h.HandleAcknowledgeAlertEvent(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+	got, _ := eventStore.GetEventByID(ctx, "ev-ack")
+	if got.Status != model.AlertStatusAcknowledged || got.AcknowledgedAt == nil {
+		t.Fatalf("after ack = %s, ack_at = %#v", got.Status, got.AcknowledgedAt)
+	}
+}
+
+func TestHandleAcknowledgeAlertEventWrongState(t *testing.T) {
+	s := setupTestDB(t)
+	ctx := context.Background()
+	eventStore := store.NewAlertEventStore(s.DB)
+	h := NewAlertHandler(store.NewAlertRuleStore(s.DB), store.NewAlertChannelStore(s.DB), eventStore)
+
+	now := model.NowUTC()
+	// Already acknowledged.
+	_ = eventStore.CreateEvent(ctx, &model.AlertEvent{
+		ID: "ev-1", RuleID: "rule-1", NodeID: "node-1", Status: model.AlertStatusAcknowledged,
+		TriggeredAt: now, AcknowledgedAt: &now,
+	})
+	// Already resolved.
+	_ = eventStore.CreateEvent(ctx, &model.AlertEvent{
+		ID: "ev-2", RuleID: "rule-2", NodeID: "node-1", Status: model.AlertStatusResolved,
+		TriggeredAt: now, ResolvedAt: &now,
+	})
+	for _, id := range []string{"ev-1", "ev-2", "missing"} {
+		req := httptest.NewRequest(http.MethodPut, "/api/alerts/events/"+id+"/acknowledge", nil)
+		req.SetPathValue("id", id)
+		w := httptest.NewRecorder()
+		h.HandleAcknowledgeAlertEvent(w, req)
+		if id == "missing" {
+			if w.Code != http.StatusNotFound {
+				t.Fatalf("missing ack status = %d, want 404", w.Code)
+			}
+			continue
+		}
+		if w.Code != http.StatusConflict {
+			t.Fatalf("ack %s status = %d, want 409", id, w.Code)
+		}
+	}
+}
+
+func TestHandleResolveAlertEvent(t *testing.T) {
+	s := setupTestDB(t)
+	ctx := context.Background()
+	eventStore := store.NewAlertEventStore(s.DB)
+	h := NewAlertHandler(store.NewAlertRuleStore(s.DB), store.NewAlertChannelStore(s.DB), eventStore)
+
+	now := model.NowUTC()
+	_ = eventStore.CreateEvent(ctx, &model.AlertEvent{
+		ID: "ev-r", RuleID: "rule-1", NodeID: "node-1", Status: model.AlertStatusAcknowledged,
+		TriggeredAt: now, AcknowledgedAt: &now,
+	})
+	req := httptest.NewRequest(http.MethodPut, "/api/alerts/events/ev-r/resolve", nil)
+	req.SetPathValue("id", "ev-r")
+	w := httptest.NewRecorder()
+	h.HandleResolveAlertEvent(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+	got, _ := eventStore.GetEventByID(ctx, "ev-r")
+	if got.Status != model.AlertStatusResolved || got.ResolvedAt == nil {
+		t.Fatalf("after resolve = %s, resolved_at = %#v", got.Status, got.ResolvedAt)
+	}
+}
+
+func TestHandleResolveAlertEventWrongState(t *testing.T) {
+	s := setupTestDB(t)
+	ctx := context.Background()
+	eventStore := store.NewAlertEventStore(s.DB)
+	h := NewAlertHandler(store.NewAlertRuleStore(s.DB), store.NewAlertChannelStore(s.DB), eventStore)
+
+	now := model.NowUTC()
+	// Triggered events cannot be directly resolved (must acknowledge first).
+	_ = eventStore.CreateEvent(ctx, &model.AlertEvent{
+		ID: "ev-t", RuleID: "rule-t", NodeID: "node-1", Status: model.AlertStatusTriggered,
+		TriggeredAt: now,
+	})
+	_ = eventStore.CreateEvent(ctx, &model.AlertEvent{
+		ID: "ev-res", RuleID: "rule-x", NodeID: "node-1", Status: model.AlertStatusResolved,
+		TriggeredAt: now, ResolvedAt: &now,
+	})
+	for _, id := range []string{"ev-t", "ev-res"} {
+		req := httptest.NewRequest(http.MethodPut, "/api/alerts/events/"+id+"/resolve", nil)
+		req.SetPathValue("id", id)
+		w := httptest.NewRecorder()
+		h.HandleResolveAlertEvent(w, req)
+		if w.Code != http.StatusConflict {
+			t.Fatalf("resolve %s status = %d, want 409", id, w.Code)
+		}
+	}
+}
+
+func TestHandleAcknowledgePushesNotification(t *testing.T) {
+	s := setupTestDB(t)
+	ctx := context.Background()
+	eventStore := store.NewAlertEventStore(s.DB)
+	// Enabled webhook channel so notifyAcknowledgment sends a delivery.
+	channelStore := store.NewAlertChannelStore(s.DB)
+	_, _ = channelStore.CreateAlertChannel(ctx, &model.AlertChannel{
+		Name: "Hook", ChannelType: "webhook", Config: `{"url":"https://example.com/hook"}`, Enabled: true,
+	})
+	h := NewAlertHandler(store.NewAlertRuleStore(s.DB), channelStore, eventStore)
+
+	_ = eventStore.CreateEvent(ctx, &model.AlertEvent{
+		ID: "ev-n", RuleID: "rule-1", NodeID: "node-1",
+		Message: "CPU high", Value: 90, Status: model.AlertStatusTriggered,
+		TriggeredAt: model.NowUTC(),
+	})
+	req := httptest.NewRequest(http.MethodPut, "/api/alerts/events/ev-n/acknowledge", nil)
+	req.SetPathValue("id", "ev-n")
+	w := httptest.NewRecorder()
+	h.HandleAcknowledgeAlertEvent(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+	got, _ := eventStore.GetEventByID(ctx, "ev-n")
+	if got.Status != model.AlertStatusAcknowledged {
+		t.Fatalf("status = %s", got.Status)
+	}
+}
+
+func TestHandleResolvePushesNotification(t *testing.T) {
+	s := setupTestDB(t)
+	ctx := context.Background()
+	eventStore := store.NewAlertEventStore(s.DB)
+	channelStore := store.NewAlertChannelStore(s.DB)
+	_, _ = channelStore.CreateAlertChannel(ctx, &model.AlertChannel{
+		Name: "Hook", ChannelType: "webhook", Config: `{"url":"https://example.com/hook"}`, Enabled: true,
+	})
+	h := NewAlertHandler(store.NewAlertRuleStore(s.DB), channelStore, eventStore)
+
+	now := model.NowUTC()
+	_ = eventStore.CreateEvent(ctx, &model.AlertEvent{
+		ID: "ev-rn", RuleID: "rule-1", NodeID: "node-1", Status: model.AlertStatusAcknowledged,
+		TriggeredAt: now, AcknowledgedAt: &now,
+	})
+	req := httptest.NewRequest(http.MethodPut, "/api/alerts/events/ev-rn/resolve", nil)
+	req.SetPathValue("id", "ev-rn")
+	w := httptest.NewRecorder()
+	h.HandleResolveAlertEvent(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+	got, _ := eventStore.GetEventByID(ctx, "ev-rn")
+	if got.Status != model.AlertStatusResolved || got.ResolvedAt == nil {
+		t.Fatalf("after resolve = %s", got.Status)
+	}
+}
+
+func TestHandleAcknowledgeEventStoreError(t *testing.T) {
+	s := setupTestDB(t)
+	_ = s.Close()
+	eventStore := store.NewAlertEventStore(s.DB)
+	h := NewAlertHandler(store.NewAlertRuleStore(s.DB), store.NewAlertChannelStore(s.DB), eventStore)
+
+	req := httptest.NewRequest(http.MethodPut, "/api/alerts/events/x/acknowledge", nil)
+	req.SetPathValue("id", "x")
+	w := httptest.NewRecorder()
+	h.HandleAcknowledgeAlertEvent(w, req)
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500", w.Code)
+	}
+}
+
+func TestHandleResolveEventStoreError(t *testing.T) {
+	s := setupTestDB(t)
+	_ = s.Close()
+	eventStore := store.NewAlertEventStore(s.DB)
+	h := NewAlertHandler(store.NewAlertRuleStore(s.DB), store.NewAlertChannelStore(s.DB), eventStore)
+
+	req := httptest.NewRequest(http.MethodPut, "/api/alerts/events/x/resolve", nil)
+	req.SetPathValue("id", "x")
+	w := httptest.NewRecorder()
+	h.HandleResolveAlertEvent(w, req)
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500", w.Code)
+	}
+}

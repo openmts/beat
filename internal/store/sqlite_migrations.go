@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-const currentSchemaVersion = 3
+const currentSchemaVersion = 4
 
 type sqliteMigration struct {
 	version int
@@ -19,6 +19,25 @@ var sqliteMigrations = []sqliteMigration{
 	{version: 1, name: "application_schema_baseline", apply: applyApplicationSchema},
 	{version: 2, name: "agent_task_channel", apply: applyAgentTaskChannel},
 	{version: 3, name: "custom_metric_tasks", apply: applyCustomMetricTasks},
+	{version: 4, name: "alert_event_acknowledgement", apply: applyAlertEventAcknowledgement},
+}
+
+func applyAlertEventAcknowledgement(ctx context.Context, db schemaExecutor) error {
+	// Add the acknowledged_at column if it does not already exist.
+	var count int
+	if err := db.QueryRowContext(ctx,
+		"SELECT COUNT(*) FROM pragma_table_info('alert_events') WHERE name = 'acknowledged_at'",
+	).Scan(&count); err != nil {
+		return err
+	}
+	if count == 0 {
+		if _, err := db.ExecContext(ctx,
+			"ALTER TABLE alert_events ADD COLUMN acknowledged_at DATETIME",
+		); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func applyCustomMetricTasks(ctx context.Context, db schemaExecutor) error {

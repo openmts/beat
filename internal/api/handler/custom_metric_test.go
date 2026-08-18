@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -186,5 +187,68 @@ func TestCustomMetricHandlerUpdateMissing(t *testing.T) {
 	h.HandleUpdate(w, req)
 	if w.Code != http.StatusNotFound {
 		t.Fatalf("update missing status = %d", w.Code)
+	}
+}
+
+func TestCustomMetricHandlerDispatchOnUpdate(t *testing.T) {
+	h, metricStore, dispatcher, s := setupCustomMetricHandler(t)
+	nodeStore := store.NewNodeStore(s.DB)
+	node, err := nodeStore.UpsertNode(context.Background(), "dispatch-node", "127.0.0.1", 22)
+	if err != nil {
+		t.Fatalf("upsert node: %v", err)
+	}
+	metric, err := metricStore.Create(context.Background(), model.CustomMetric{
+		Name: "latency", ShellCommand: "echo 5", IntervalSeconds: 15, Enabled: true,
+	})
+	if err != nil {
+		t.Fatalf("create metric: %v", err)
+	}
+	if err := metricStore.SetMetricNodes(context.Background(), metric.ID, []string{node.ID}); err != nil {
+		t.Fatalf("set metric nodes: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/custom-metrics/"+metric.ID, strings.NewReader(
+		`{"name":"latency","shell_command":"echo 9","interval_seconds":30,"description":"","enabled":true}`,
+	))
+	req.SetPathValue("id", metric.ID)
+	w := httptest.NewRecorder()
+	h.HandleUpdate(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("update status = %d, body = %s", w.Code, w.Body.String())
+	}
+	if dispatcher.count() != 1 {
+		t.Fatalf("dispatch calls = %d, want 1", dispatcher.count())
+	}
+}
+
+func TestCustomMetricHandlerDispatchNodeError(t *testing.T) {
+	h, metricStore, dispatcher, s := setupCustomMetricHandler(t)
+	nodeStore := store.NewNodeStore(s.DB)
+	node, err := nodeStore.UpsertNode(context.Background(), "err-node", "127.0.0.1", 22)
+	if err != nil {
+		t.Fatalf("upsert node: %v", err)
+	}
+	metric, err := metricStore.Create(context.Background(), model.CustomMetric{
+		Name: "latency", ShellCommand: "echo 5", IntervalSeconds: 15, Enabled: true,
+	})
+	if err != nil {
+		t.Fatalf("create metric: %v", err)
+	}
+	if err := metricStore.SetMetricNodes(context.Background(), metric.ID, []string{node.ID}); err != nil {
+		t.Fatalf("set metric nodes: %v", err)
+	}
+	dispatcher.err = errors.New("register failed")
+
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/custom-metrics/"+metric.ID, strings.NewReader(
+		`{"name":"latency","shell_command":"echo 9","interval_seconds":30,"description":"","enabled":true}`,
+	))
+	req.SetPathValue("id", metric.ID)
+	w := httptest.NewRecorder()
+	h.HandleUpdate(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("update status = %d", w.Code)
+	}
+	if dispatcher.count() != 1 {
+		t.Fatalf("dispatch calls = %d, want 1", dispatcher.count())
 	}
 }

@@ -35,6 +35,8 @@ func (r *Router) registerAlertRoutes(api *http.ServeMux) {
 	api.Handle("DELETE /api/v1/alerts/channels/{id}", r.admin(http.HandlerFunc(alertHandler.HandleDeleteAlertChannel)))
 	api.Handle("POST /api/v1/alerts/channels/{id}/test", r.admin(http.HandlerFunc(alertHandler.HandleTestAlertChannel)))
 	api.Handle("GET /api/v1/alerts/events", r.admin(http.HandlerFunc(alertHandler.HandleListAlertEvents)))
+	api.Handle("PUT /api/v1/alerts/events/{id}/acknowledge", r.admin(http.HandlerFunc(alertHandler.HandleAcknowledgeAlertEvent)))
+	api.Handle("PUT /api/v1/alerts/events/{id}/resolve", r.admin(http.HandlerFunc(alertHandler.HandleResolveAlertEvent)))
 	if r.trafficReports == nil {
 		return
 	}

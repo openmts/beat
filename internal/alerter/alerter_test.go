@@ -1102,3 +1102,82 @@ func TestEvaluateCustomMetricRuleNoData(t *testing.T) {
 		t.Fatalf("expected no event without custom metric data, got %#v", ev)
 	}
 }
+
+func TestEvaluateRulesDoesNotAutoResolveAcknowledged(t *testing.T) {
+	node := model.Node{ID: "node-1", Name: "node-1"}
+	rule := model.AlertRule{
+		ID: "rule-1", Name: "High CPU", Metric: "cpu",
+		Operator: "gt", Threshold: 80, Duration: 0,
+		Severity: model.AlertSeverityWarning,
+	}
+	eventStore := &mockAlertEventStore{}
+	now := time.Now()
+	_ = eventStore.CreateEvent(context.Background(), &model.AlertEvent{
+		ID: "event-1", RuleID: rule.ID, NodeID: node.ID,
+		Status: model.AlertStatusAcknowledged, TriggeredAt: now,
+		AcknowledgedAt: &now,
+	})
+
+	a := New(
+		&mockAlertRuleStore{rules: []model.AlertRule{rule}},
+		eventStore,
+		&mockAlertChannelStore{},
+		// Metric below threshold, so triggered events would auto-resolve.
+		&mockMTSStore{metrics: map[string]map[string]float64{"node-1": {"cpu": 50}}},
+		&mockNodeStore{nodes: []model.Node{node}},
+	)
+
+	stateKey := rule.ID + ":" + node.ID
+	a.mu.Lock()
+	a.states[stateKey] = &ruleState{active: true}
+	a.mu.Unlock()
+
+	if err := a.evaluateRules(context.Background()); err != nil {
+		t.Fatalf("evaluate: %v", err)
+	}
+
+	ev, _ := eventStore.GetActiveEvent(context.Background(), rule.ID, node.ID)
+	if ev == nil {
+		t.Fatal("acknowledged event must not be auto-resolved")
+	}
+	if ev.Status != model.AlertStatusAcknowledged {
+		t.Fatalf("status = %s, want acknowledged", ev.Status)
+	}
+}
+
+func TestEvaluateRulesDoesNotRetriggerAcknowledged(t *testing.T) {
+	node := model.Node{ID: "node-1", Name: "node-1"}
+	rule := model.AlertRule{
+		ID: "rule-1", Name: "High Custom", Metric: "custom_load_seconds",
+		Operator: "gt", Threshold: 0.5, Duration: 0,
+		Severity: model.AlertSeverityWarning,
+	}
+	eventStore := &mockAlertEventStore{}
+	now := time.Now()
+	_ = eventStore.CreateEvent(context.Background(), &model.AlertEvent{
+		ID: "event-1", RuleID: rule.ID, NodeID: node.ID,
+		Status: model.AlertStatusAcknowledged, TriggeredAt: now,
+		AcknowledgedAt: &now,
+	})
+
+	// Metric still above threshold; engine must not create a duplicate event.
+	a := New(
+		&mockAlertRuleStore{rules: []model.AlertRule{rule}},
+		eventStore,
+		&mockAlertChannelStore{},
+		&mockMTSStore{metrics: map[string]map[string]float64{"node-1": {"custom_load_seconds": 1.2}}},
+		&mockNodeStore{nodes: []model.Node{node}},
+	)
+
+	if err := a.evaluateRules(context.Background()); err != nil {
+		t.Fatalf("evaluate: %v", err)
+	}
+
+	ev, _ := eventStore.GetActiveEvent(context.Background(), rule.ID, node.ID)
+	if ev == nil {
+		t.Fatal("acknowledged event should remain active")
+	}
+	if ev.Status != model.AlertStatusAcknowledged || ev.ID != "event-1" {
+		t.Fatalf("event = %s %s, want original acknowledged event", ev.Status, ev.ID)
+	}
+}

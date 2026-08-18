@@ -18,8 +18,9 @@ const (
 type AlertStatus string
 
 const (
-	AlertStatusTriggered AlertStatus = "triggered"
-	AlertStatusResolved  AlertStatus = "resolved"
+	AlertStatusTriggered    AlertStatus = "triggered"
+	AlertStatusAcknowledged AlertStatus = "acknowledged"
+	AlertStatusResolved     AlertStatus = "resolved"
 )
 
 type AlertRule struct {
@@ -54,14 +55,15 @@ type AlertDeliveryStatus struct {
 }
 
 type AlertEvent struct {
-	ID          string      `json:"id"`
-	RuleID      string      `json:"rule_id"`
-	NodeID      string      `json:"node_id"`
-	Message     string      `json:"message"`
-	Value       float64     `json:"value"`
-	Status      AlertStatus `json:"status"`
-	TriggeredAt time.Time   `json:"triggered_at"`
-	ResolvedAt  *time.Time  `json:"resolved_at"`
+	ID             string      `json:"id"`
+	RuleID         string      `json:"rule_id"`
+	NodeID         string      `json:"node_id"`
+	Message        string      `json:"message"`
+	Value          float64     `json:"value"`
+	Status         AlertStatus `json:"status"`
+	TriggeredAt    time.Time   `json:"triggered_at"`
+	AcknowledgedAt *time.Time  `json:"acknowledged_at,omitempty"`
+	ResolvedAt     *time.Time  `json:"resolved_at"`
 
 	// RuleName, NodeName, Metric and Severity carry extra context for
 	// notification templates. They are populated at delivery time and are not

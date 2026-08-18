@@ -35,7 +35,7 @@ var platformSchemaStatements = []string{
 	)`,
 	`CREATE TABLE IF NOT EXISTS alert_events (
 		id TEXT PRIMARY KEY, rule_id TEXT NOT NULL, node_id TEXT NOT NULL, message TEXT,
-		value REAL, status TEXT NOT NULL, triggered_at DATETIME NOT NULL, resolved_at DATETIME
+		value REAL, status TEXT NOT NULL, triggered_at DATETIME NOT NULL, acknowledged_at DATETIME, resolved_at DATETIME
 	)`,
 	`CREATE TABLE IF NOT EXISTS traffic_report_schedules (
 		id TEXT PRIMARY KEY, name TEXT NOT NULL, cadence TEXT NOT NULL CHECK(cadence IN ('daily', 'weekly', 'monthly')),

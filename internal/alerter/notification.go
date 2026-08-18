@@ -53,6 +53,11 @@ func (a *Alerter) resolveAlert(
 	if activeEvent == nil {
 		return nil
 	}
+	// Acknowledged events are only cleared manually by the operator, never
+	// automatically when the metric recovers.
+	if activeEvent.Status == model.AlertStatusAcknowledged {
+		return nil
+	}
 	now := a.now()
 	activeEvent.Status = model.AlertStatusResolved
 	activeEvent.ResolvedAt = &now

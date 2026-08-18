@@ -95,6 +95,12 @@ the same enabled channels receive both triggered and resolved notifications.
 Alert rules can target custom metrics by selecting a custom metric name; the
 custom metric value (measured by the agent) is evaluated against the rule's
 threshold.
+Alert events follow an SRE acknowledgement and resolution flow: a triggered
+event can be acknowledged (moved to `acknowledged`) to signal that an operator
+is handling it, and an `acknowledged` event is resolved manually. Acknowledged
+events are not re-triggered while the condition persists and are not
+auto-resolved when the metric recovers; acknowledgement and resolution both
+push a notification to the enabled channels.
 The admin alert page supports webhook, Telegram Bot API, and SMTP email
 channels. Each channel can be test-sent before use and shows its latest delivery
 result. Channels can define a custom push template using `{{rule}}`, `{{node}}`,

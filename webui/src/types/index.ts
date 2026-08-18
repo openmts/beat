@@ -196,6 +196,7 @@ export interface AlertEvent {
   value: number
   status: string
   triggered_at: string
+  acknowledged_at: string | null
   resolved_at: string | null
 }
 

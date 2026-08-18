@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"log/slog"
 	"net/http"
 
 	"github.com/beat/backend/internal/model"
@@ -149,4 +150,82 @@ func (h *AlertHandler) HandleListAlertEvents(w http.ResponseWriter, r *http.Requ
 	}
 
 	JSONResponse(w, http.StatusOK, events)
+}
+
+// HandleAcknowledgeAlertEvent transitions a triggered event to acknowledged.
+func (h *AlertHandler) HandleAcknowledgeAlertEvent(w http.ResponseWriter, r *http.Request) {
+	event, err := h.alertEventStore.GetEventByID(r.Context(), r.PathValue("id"))
+	if err != nil {
+		JSONError(w, http.StatusInternalServerError, "failed to get alert event")
+		return
+	}
+	if event == nil {
+		JSONError(w, http.StatusNotFound, "alert event not found")
+		return
+	}
+	if event.Status != model.AlertStatusTriggered {
+		JSONError(w, http.StatusConflict, "only triggered events can be acknowledged")
+		return
+	}
+	now := model.NowUTC()
+	event.Status = model.AlertStatusAcknowledged
+	event.AcknowledgedAt = &now
+	if err := h.alertEventStore.UpdateEvent(r.Context(), event); err != nil {
+		JSONError(w, http.StatusInternalServerError, "failed to acknowledge alert event")
+		return
+	}
+	h.notifyAcknowledgment(r, event, "acknowledged")
+	JSONResponse(w, http.StatusOK, event)
+}
+
+// HandleResolveAlertEvent transitions an acknowledged event to resolved.
+func (h *AlertHandler) HandleResolveAlertEvent(w http.ResponseWriter, r *http.Request) {
+	event, err := h.alertEventStore.GetEventByID(r.Context(), r.PathValue("id"))
+	if err != nil {
+		JSONError(w, http.StatusInternalServerError, "failed to get alert event")
+		return
+	}
+	if event == nil {
+		JSONError(w, http.StatusNotFound, "alert event not found")
+		return
+	}
+	if event.Status != model.AlertStatusAcknowledged {
+		JSONError(w, http.StatusConflict, "only acknowledged events can be resolved")
+		return
+	}
+	now := model.NowUTC()
+	event.Status = model.AlertStatusResolved
+	event.ResolvedAt = &now
+	if err := h.alertEventStore.UpdateEvent(r.Context(), event); err != nil {
+		JSONError(w, http.StatusInternalServerError, "failed to resolve alert event")
+		return
+	}
+	h.notifyAcknowledgment(r, event, "resolved")
+	JSONResponse(w, http.StatusOK, event)
+}
+
+// notifyAcknowledgment pushes an acknowledgement or resolution notification to
+// all enabled channels. Delivery failures are logged but do not fail the state
+// change.
+func (h *AlertHandler) notifyAcknowledgment(r *http.Request, event *model.AlertEvent, kind string) {
+	channels, err := h.alertChannelStore.ListEnabledChannels(r.Context())
+	if err != nil {
+		slog.WarnContext(r.Context(), "list enabled channels for alert ack", "error", err)
+		return
+	}
+	message := "alert acknowledged"
+	if kind == "resolved" {
+		message = "alert resolved"
+	}
+	event.Message = message
+	if kind == "resolved" {
+		now := model.NowUTC()
+		event.ResolvedAt = &now
+	}
+	for _, channel := range channels {
+		if _, err := h.delivery.Send(r.Context(), &channel, event); err != nil {
+			slog.WarnContext(r.Context(), "alert ack notification failed",
+				"channel_id", channel.ID, "channel_type", channel.ChannelType, "error", err)
+		}
+	}
 }

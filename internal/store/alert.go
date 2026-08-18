@@ -120,7 +120,7 @@ func NewAlertEventStore(db *sql.DB) *AlertEventStore {
 
 func (s *AlertEventStore) ListAlertEvents(ctx context.Context) ([]model.AlertEvent, error) {
 	rows, err := s.db.QueryContext(ctx,
-		"SELECT id, rule_id, node_id, message, value, status, triggered_at, resolved_at FROM alert_events ORDER BY triggered_at DESC",
+		"SELECT id, rule_id, node_id, message, value, status, triggered_at, acknowledged_at, resolved_at FROM alert_events ORDER BY triggered_at DESC",
 	)
 	if err != nil {
 		return nil, fmt.Errorf("querying alert events: %w", err)
@@ -130,9 +130,12 @@ func (s *AlertEventStore) ListAlertEvents(ctx context.Context) ([]model.AlertEve
 	events := []model.AlertEvent{}
 	for rows.Next() {
 		var e model.AlertEvent
-		var resolvedAt sql.NullTime
-		if err := rows.Scan(&e.ID, &e.RuleID, &e.NodeID, &e.Message, &e.Value, &e.Status, &e.TriggeredAt, &resolvedAt); err != nil {
+		var ackAt, resolvedAt sql.NullTime
+		if err := rows.Scan(&e.ID, &e.RuleID, &e.NodeID, &e.Message, &e.Value, &e.Status, &e.TriggeredAt, &ackAt, &resolvedAt); err != nil {
 			return nil, fmt.Errorf("scanning alert event: %w", err)
+		}
+		if ackAt.Valid {
+			e.AcknowledgedAt = &ackAt.Time
 		}
 		if resolvedAt.Valid {
 			e.ResolvedAt = &resolvedAt.Time
@@ -148,8 +151,8 @@ func (s *AlertEventStore) ListAlertEvents(ctx context.Context) ([]model.AlertEve
 
 func (s *AlertEventStore) CreateEvent(ctx context.Context, event *model.AlertEvent) error {
 	_, err := s.db.ExecContext(ctx,
-		"INSERT INTO alert_events (id, rule_id, node_id, message, value, status, triggered_at, resolved_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-		event.ID, event.RuleID, event.NodeID, event.Message, event.Value, event.Status, event.TriggeredAt, event.ResolvedAt,
+		"INSERT INTO alert_events (id, rule_id, node_id, message, value, status, triggered_at, acknowledged_at, resolved_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		event.ID, event.RuleID, event.NodeID, event.Message, event.Value, event.Status, event.TriggeredAt, event.AcknowledgedAt, event.ResolvedAt,
 	)
 	if err != nil {
 		return fmt.Errorf("inserting alert event: %w", err)
@@ -159,16 +162,19 @@ func (s *AlertEventStore) CreateEvent(ctx context.Context, event *model.AlertEve
 
 func (s *AlertEventStore) GetActiveEvent(ctx context.Context, ruleID, nodeID string) (*model.AlertEvent, error) {
 	var e model.AlertEvent
-	var resolvedAt sql.NullTime
+	var ackAt, resolvedAt sql.NullTime
 	err := s.db.QueryRowContext(ctx,
-		"SELECT id, rule_id, node_id, message, value, status, triggered_at, resolved_at FROM alert_events WHERE rule_id = ? AND node_id = ? AND status = ? LIMIT 1",
-		ruleID, nodeID, model.AlertStatusTriggered,
-	).Scan(&e.ID, &e.RuleID, &e.NodeID, &e.Message, &e.Value, &e.Status, &e.TriggeredAt, &resolvedAt)
+		"SELECT id, rule_id, node_id, message, value, status, triggered_at, acknowledged_at, resolved_at FROM alert_events WHERE rule_id = ? AND node_id = ? AND status IN (?, ?) LIMIT 1",
+		ruleID, nodeID, model.AlertStatusTriggered, model.AlertStatusAcknowledged,
+	).Scan(&e.ID, &e.RuleID, &e.NodeID, &e.Message, &e.Value, &e.Status, &e.TriggeredAt, &ackAt, &resolvedAt)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
 		}
 		return nil, fmt.Errorf("querying active event: %w", err)
+	}
+	if ackAt.Valid {
+		e.AcknowledgedAt = &ackAt.Time
 	}
 	if resolvedAt.Valid {
 		e.ResolvedAt = &resolvedAt.Time
@@ -178,11 +184,33 @@ func (s *AlertEventStore) GetActiveEvent(ctx context.Context, ruleID, nodeID str
 
 func (s *AlertEventStore) UpdateEvent(ctx context.Context, event *model.AlertEvent) error {
 	_, err := s.db.ExecContext(ctx,
-		"UPDATE alert_events SET status = ?, resolved_at = ? WHERE id = ?",
-		event.Status, event.ResolvedAt, event.ID,
+		"UPDATE alert_events SET status = ?, acknowledged_at = ?, resolved_at = ? WHERE id = ?",
+		event.Status, event.AcknowledgedAt, event.ResolvedAt, event.ID,
 	)
 	if err != nil {
 		return fmt.Errorf("updating alert event: %w", err)
 	}
 	return nil
+}
+
+func (s *AlertEventStore) GetEventByID(ctx context.Context, id string) (*model.AlertEvent, error) {
+	var e model.AlertEvent
+	var ackAt, resolvedAt sql.NullTime
+	err := s.db.QueryRowContext(ctx,
+		"SELECT id, rule_id, node_id, message, value, status, triggered_at, acknowledged_at, resolved_at FROM alert_events WHERE id = ?",
+		id,
+	).Scan(&e.ID, &e.RuleID, &e.NodeID, &e.Message, &e.Value, &e.Status, &e.TriggeredAt, &ackAt, &resolvedAt)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("querying alert event: %w", err)
+	}
+	if ackAt.Valid {
+		e.AcknowledgedAt = &ackAt.Time
+	}
+	if resolvedAt.Valid {
+		e.ResolvedAt = &resolvedAt.Time
+	}
+	return &e, nil
 }
