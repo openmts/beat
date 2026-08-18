@@ -38,8 +38,12 @@ func TestRenderTemplateWithPlaceholders(t *testing.T) {
 func TestRenderTemplateFallsBackToDefault(t *testing.T) {
 	event := templateTestEvent()
 	rendered := RenderTemplate("", event)
-	if !strings.Contains(rendered, "Beat alert triggered") {
-		t.Fatalf("default rendered = %q", rendered)
+	// The default template surfaces the formatted event message and timestamp.
+	if !strings.Contains(rendered, event.Message) {
+		t.Fatalf("default rendered = %q, want message %q", rendered, event.Message)
+	}
+	if !strings.Contains(rendered, "2026-08-18T12:00:00Z") {
+		t.Fatalf("default rendered missing time: %q", rendered)
 	}
 }
 

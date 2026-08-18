@@ -284,24 +284,48 @@ func (s *Service) sendEmailText(
 func (s *Service) doHTTP(request *http.Request, channelName string) error {
 	response, err := s.httpClient.Do(request)
 	if err != nil {
-		return fmt.Errorf("%s request failed", channelName)
+		return fmt.Errorf("%s request failed: %w", channelName, err)
 	}
 	defer func() { _ = response.Body.Close() }()
-	_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 64*1024))
+	body, _ := io.ReadAll(io.LimitReader(response.Body, 64*1024))
 	if response.StatusCode >= http.StatusBadRequest {
+		detail := strings.TrimSpace(string(body))
+		if detail != "" {
+			return fmt.Errorf("%s returned status %d: %s", channelName, response.StatusCode, truncate(detail, 512))
+		}
 		return fmt.Errorf("%s returned status %d", channelName, response.StatusCode)
 	}
 	return nil
 }
 
+func truncate(value string, max int) string {
+	runes := []rune(value)
+	if len(runes) <= max {
+		return value
+	}
+	return string(runes[:max]) + "..."
+}
+
+// deliveryText builds a default human-friendly message when no custom template
+// is configured on the channel. It prefers the formatted event message (which
+// already carries severity, rule, metric, node and value) and falls back to a
+// structured summary.
 func deliveryText(event *model.AlertEvent) string {
-	return fmt.Sprintf(
-		"Beat alert %s\nMessage: %s\nRule: %s\nNode: %s\nValue: %.2f\nTime: %s",
-		event.Status,
-		event.Message,
-		event.RuleID,
-		event.NodeID,
-		event.Value,
-		event.TriggeredAt.UTC().Format(time.RFC3339),
-	)
+	body := event.Message
+	if body == "" {
+		rule := event.RuleName
+		if rule == "" {
+			rule = event.RuleID
+		}
+		node := event.NodeName
+		if node == "" {
+			node = event.NodeID
+		}
+		line := fmt.Sprintf("%s: value=%.2f (node %s)", rule, event.Value, node)
+		if severity := event.Severity; severity != "" {
+			line = fmt.Sprintf("[%s] %s", severity, line)
+		}
+		body = line
+	}
+	return fmt.Sprintf("%s\nTime: %s", body, event.TriggeredAt.UTC().Format(time.RFC3339))
 }

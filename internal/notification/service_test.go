@@ -312,3 +312,65 @@ func TestServiceSendWebhookWithCustomHeaders(t *testing.T) {
 		t.Fatal("Content-Type should be set")
 	}
 }
+
+func TestServiceSendWebhookErrorIncludesDetail(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte("invalid signature"))
+	}))
+	t.Cleanup(server.Close)
+
+	service := NewService()
+	channel := &model.AlertChannel{
+		ID: "err", ChannelType: TypeWebhook, Config: `{"url":"` + server.URL + `"}`,
+	}
+	status, err := service.Send(t.Context(), channel, testEvent())
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "400") || !strings.Contains(err.Error(), "invalid signature") {
+		t.Fatalf("error = %v, want status 400 and body detail", err)
+	}
+	if status.State != DeliveryFailed || status.Message != err.Error() {
+		t.Fatalf("status = %#v, want failed with detail", status)
+	}
+}
+
+func TestServiceSendWebhookTransportErrorIncludesCause(t *testing.T) {
+	service := NewService()
+	// Unreachable address forces a transport error.
+	channel := &model.AlertChannel{
+		ID: "conn", ChannelType: TypeWebhook, Config: `{"url":"http://127.0.0.1:1"}`,
+	}
+	_, err := service.Send(t.Context(), channel, testEvent())
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "webhook request failed") {
+		t.Fatalf("error = %v, want webhook request failed prefix", err)
+	}
+}
+
+func TestDeliveryTextFallsBackToStructuredSummary(t *testing.T) {
+	event := &model.AlertEvent{
+		RuleID: "mock-rule", NodeID: "mock-node", Value: 42,
+		Status: model.AlertStatusTriggered, TriggeredAt: model.NowUTC(),
+	}
+	text := deliveryText(event)
+	if !strings.Contains(text, "mock-rule") || !strings.Contains(text, "mock-node") ||
+		!strings.Contains(text, "42.00") {
+		t.Fatalf("text = %q, want structured summary", text)
+	}
+}
+
+func TestDeliveryTextIncludesTimeAndSeverity(t *testing.T) {
+	event := &model.AlertEvent{
+		RuleName: "High CPU", NodeName: "web-01", Value: 95,
+		Severity: model.AlertSeverityCritical, TriggeredAt: time.Date(2026, 8, 18, 12, 0, 0, 0, time.UTC),
+	}
+	text := deliveryText(event)
+	if !strings.Contains(text, "[critical]") || !strings.Contains(text, "High CPU") ||
+		!strings.Contains(text, "web-01") || !strings.Contains(text, "2026-08-18T12:00:00Z") {
+		t.Fatalf("text = %q", text)
+	}
+}
