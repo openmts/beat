@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -218,5 +219,67 @@ func testEvent() *model.AlertEvent {
 	return &model.AlertEvent{
 		ID: "event", RuleID: "rule", NodeID: "node", Message: "test alert",
 		Value: 95, Status: model.AlertStatusTriggered, TriggeredAt: model.NowUTC(),
+	}
+}
+
+func TestServiceSendWebhookWithTemplate(t *testing.T) {
+	var received string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		received = string(body)
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	t.Cleanup(server.Close)
+
+	service := NewService()
+	channel := &model.AlertChannel{
+		ID: "tmpl", ChannelType: TypeWebhook,
+		Config: `{"url":"` + server.URL + `","template":"alert [{{severity}}] {{rule}} node={{node}} {{metric}}={{value}} {{status}}"}`,
+	}
+	rich := &model.AlertEvent{
+		ID: "web", RuleID: "rule", NodeID: "node", Message: "test alert",
+		Value: 95, Status: model.AlertStatusTriggered, TriggeredAt: model.NowUTC(),
+		RuleName: "High CPU", NodeName: "web-01", Metric: "cpu",
+		Severity: model.AlertSeverityCritical,
+	}
+	if _, err := service.Send(t.Context(), channel, rich); err != nil {
+		t.Fatalf("send: %v", err)
+	}
+	want := "alert [critical] High CPU node=web-01 cpu=95.00 triggered"
+	if received != want {
+		t.Fatalf("received = %q, want %q", received, want)
+	}
+}
+
+func TestServiceSendTelegramTemplate(t *testing.T) {
+	var received struct {
+		ChatID string `json:"chat_id"`
+		Text   string `json:"text"`
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&received); err != nil {
+			t.Errorf("decode telegram: %v", err)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(server.Close)
+
+	service := NewService()
+	service.telegramBaseURL = server.URL
+	channel := &model.AlertChannel{
+		ID: "tg", ChannelType: TypeTelegram,
+		Config: `{"bot_token":"tok","chat_id":"42","template":"{{rule}}: {{metric}}={{value}}"}`,
+	}
+	rich := &model.AlertEvent{
+		ID: "echo", RuleID: "rule", NodeID: "node", Message: "test alert",
+		Value: 95, Status: model.AlertStatusTriggered, TriggeredAt: model.NowUTC(),
+		RuleName: "High CPU", NodeName: "web-01", Metric: "cpu",
+		Severity: model.AlertSeverityCritical,
+	}
+	if _, err := service.Send(t.Context(), channel, rich); err != nil {
+		t.Fatalf("send: %v", err)
+	}
+	if received.Text != "High CPU: cpu=95.00" {
+		t.Fatalf("text = %q", received.Text)
 	}
 }

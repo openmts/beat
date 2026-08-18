@@ -6,8 +6,11 @@ export const severityColors: Record<string, "default" | "destructive" | "seconda
 
 export const availabilityMetric = "heartbeat_age_seconds"
 
-export function buildAlertMetricOptions(t: (key: string) => string) {
-  return [
+export function buildAlertMetricOptions(
+  t: (key: string) => string,
+  customMetrics: string[] = [],
+) {
+  const options = [
     { label: t("alert.metric.cpu"), value: "cpu" },
     { label: t("alert.metric.memory"), value: "memory" },
     { label: t("alert.metric.disk"), value: "disk" },
@@ -21,6 +24,13 @@ export function buildAlertMetricOptions(t: (key: string) => string) {
     { label: t("alert.metric.traffic_usage"), value: "traffic_usage_percent" },
     { label: t("alert.metric.availability"), value: availabilityMetric },
   ]
+  for (const name of customMetrics) {
+    const value = `custom_${name}`
+    if (!options.some((option) => option.value === value)) {
+      options.push({ label: name, value })
+    }
+  }
+  return options
 }
 
 export function isAvailabilityMetric(metric: string) {

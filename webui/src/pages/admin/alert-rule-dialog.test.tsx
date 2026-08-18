@@ -46,6 +46,7 @@ function view(props: Partial<{
   editing: boolean
   form: AlertRuleForm
   loading: boolean
+  metricOptions: Array<{ label: string; value: string }>
   onOpenChange: (open: boolean) => void
   onChange: (form: AlertRuleForm) => void
   onSave: () => void
@@ -58,6 +59,10 @@ function view(props: Partial<{
       editing={props.editing ?? false}
       form={props.form ?? baseForm}
       loading={props.loading ?? false}
+      metricOptions={props.metricOptions ?? [
+        { label: "CPU", value: "cpu" },
+        { label: "Availability", value: "heartbeat_age_seconds" },
+      ]}
       onOpenChange={props.onOpenChange ?? (() => undefined)}
       onChange={onChange}
       onSave={props.onSave ?? (() => undefined)}

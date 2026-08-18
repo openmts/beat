@@ -1,5 +1,5 @@
 import { useState } from "react"
-import { useAlertRules } from "@/hooks/use-api"
+import { useAlertRules, useCustomMetrics } from "@/hooks/use-api"
 import * as api from "@/lib/api"
 import { useLocale } from "@/context/locale"
 import { Alert, AlertDescription } from "@/components/ui/alert"
@@ -22,6 +22,7 @@ import {
 
 function AlertRulesPanel() {
   const { data: rules, loading, error, refresh } = useAlertRules()
+  const { data: customMetrics } = useCustomMetrics()
   const { t } = useLocale()
   const [dialogOpen, setDialogOpen] = useState(false)
   const [editing, setEditing] = useState<AlertRule | null>(null)
@@ -37,7 +38,8 @@ function AlertRulesPanel() {
     duration: 300,
     severity: "warning",
   })
-  const metricOptions = buildAlertMetricOptions(t)
+  const customMetricNames = (customMetrics ?? []).map((m) => m.name)
+  const metricOptions = buildAlertMetricOptions(t, customMetricNames)
   const metricLabels = new Map(metricOptions.map((option) => [option.value, option.label]))
 
   const resetForm = () => setForm({
@@ -206,6 +208,7 @@ function AlertRulesPanel() {
         editing={editing !== null}
         form={form}
         loading={actionLoading}
+        metricOptions={metricOptions}
         onOpenChange={setDialogOpen}
         onChange={setForm}
         onSave={handleSave}

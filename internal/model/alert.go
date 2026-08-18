@@ -62,4 +62,12 @@ type AlertEvent struct {
 	Status      AlertStatus `json:"status"`
 	TriggeredAt time.Time   `json:"triggered_at"`
 	ResolvedAt  *time.Time  `json:"resolved_at"`
+
+	// RuleName, NodeName, Metric and Severity carry extra context for
+	// notification templates. They are populated at delivery time and are not
+	// persisted.
+	RuleName string        `json:"rule_name,omitempty"`
+	NodeName string        `json:"node_name,omitempty"`
+	Metric   string        `json:"metric,omitempty"`
+	Severity AlertSeverity `json:"severity,omitempty"`
 }

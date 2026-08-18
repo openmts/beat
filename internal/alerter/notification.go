@@ -27,6 +27,8 @@ func (a *Alerter) triggerAlert(
 		ID: uuid.New().String(), RuleID: rule.ID, NodeID: node.ID,
 		Message: formatAlertMessage(rule, node, value), Value: value,
 		Status: model.AlertStatusTriggered, TriggeredAt: a.now(),
+		RuleName: rule.Name, NodeName: node.Name, Metric: rule.Metric,
+		Severity: rule.Severity,
 	}
 	if err := a.alertEventStore.CreateEvent(ctx, event); err != nil {
 		return fmt.Errorf("create event: %w", err)
@@ -60,6 +62,10 @@ func (a *Alerter) resolveAlert(
 	recovery := *activeEvent
 	recovery.Message = formatRecoveryMessage(rule, node, value)
 	recovery.Value = value
+	recovery.RuleName = rule.Name
+	recovery.NodeName = node.Name
+	recovery.Metric = rule.Metric
+	recovery.Severity = rule.Severity
 	if err := a.pushToChannels(ctx, &recovery); err != nil {
 		return fmt.Errorf("push recovery to channels: %w", err)
 	}

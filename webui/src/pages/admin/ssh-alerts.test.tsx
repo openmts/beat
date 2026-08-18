@@ -7,7 +7,7 @@ import Alerts from "@/pages/admin/alerts"
 import AlertRulesPanel from "@/pages/admin/alert-rules-panel"
 import AlertChannelsPanel from "@/pages/admin/alert-channels-panel"
 import AlertEventsPanel from "@/pages/admin/alert-events-panel"
-import { isValidWebhookURL, messageFromError } from "@/pages/admin/alert-utils"
+import { buildAlertMetricOptions, isValidWebhookURL, messageFromError } from "@/pages/admin/alert-utils"
 import * as hooks from "@/hooks/use-api"
 import * as api from "@/lib/api"
 
@@ -70,6 +70,7 @@ describe("SSH keys", () => {
   beforeEach(() => {
     vi.resetAllMocks()
     vi.mocked(hooks.useSSHKeys).mockReturnValue(state([key]) as never)
+    vi.mocked(hooks.useCustomMetrics).mockReturnValue(state([]) as never)
     Object.defineProperty(navigator, "clipboard", {
       configurable: true,
       value: { writeText: vi.fn().mockResolvedValue(undefined) },
@@ -153,6 +154,7 @@ describe("SSH keys", () => {
 describe("alerts", () => {
   beforeEach(() => {
     vi.resetAllMocks()
+    vi.mocked(hooks.useCustomMetrics).mockReturnValue(state([]) as never)
     vi.mocked(hooks.useAlertRules).mockReturnValue(state([rule]) as never)
     vi.mocked(hooks.useAlertChannels).mockReturnValue(state([channel]) as never)
     vi.mocked(hooks.useAlertEvents).mockReturnValue(state([{
@@ -305,5 +307,23 @@ describe("alerts", () => {
     expect(isValidWebhookURL("bad")).toBe(false)
     expect(messageFromError(new Error("known"))).toBe("known")
     expect(messageFromError("unknown")).toBe("The request failed")
+  })
+})
+
+describe("alert metric options with custom metrics", () => {
+  it("appends custom metrics to the built-in metric options", () => {
+    const t = (key: string) => key
+    const options = buildAlertMetricOptions(t, ["http_latency", "disk_io"])
+    const values = options.map((option) => option.value)
+    expect(values).toContain("cpu")
+    expect(values).toContain("custom_http_latency")
+    expect(values).toContain("custom_disk_io")
+    expect(values).toContain("heartbeat_age_seconds")
+  })
+
+  it("deduplicates custom metrics already present", () => {
+    const t = (key: string) => key
+    const options = buildAlertMetricOptions(t, ["cpu"])
+    expect(options.filter((option) => option.value === "custom_cpu")).toHaveLength(1)
   })
 })

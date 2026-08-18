@@ -52,4 +52,35 @@ describe("alert channel config", () => {
     expect(alertChannelFormError(email, false)).toBe("alert.smtp_password_required")
     expect(alertChannelFormError(email, true)).toBeNull()
   })
+
+  it("serializes and restores custom push templates", () => {
+    const webhook = {
+      ...emptyAlertChannelForm(), name: "Webhook", channelType: "webhook" as const,
+      webhookURL: "https://example.com/hook", template: "[{{severity}}] {{rule}}",
+    }
+    const serialized = serializeAlertChannelConfig(webhook)
+    expect(JSON.parse(serialized)).toMatchObject({
+      url: "https://example.com/hook", template: "[{{severity}}] {{rule}}",
+    })
+    const restored = alertChannelFormFrom({
+      id: "w", name: "Webhook", channel_type: "webhook", config: serialized,
+      enabled: true, created_at: "", updated_at: "",
+    })
+    expect(restored.template).toBe("[{{severity}}] {{rule}}")
+
+    const telegram = {
+      ...emptyAlertChannelForm(), name: "Telegram", channelType: "telegram" as const,
+      chatID: "42", template: "node {{node}}",
+    }
+    expect(JSON.parse(serializeAlertChannelConfig(telegram))).toMatchObject({
+      chat_id: "42", template: "node {{node}}",
+    })
+
+    const plainWebhook = {
+      ...emptyAlertChannelForm(), name: "Webhook", channelType: "webhook" as const,
+      webhookURL: "https://example.com/hook", template: "",
+    }
+    const plain = JSON.parse(serializeAlertChannelConfig(plainWebhook))
+    expect(plain.template).toBeUndefined()
+  })
 })

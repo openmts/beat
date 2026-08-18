@@ -6,7 +6,6 @@ import { Input } from "@/components/ui/input"
 import { useLocale } from "@/context/locale"
 import {
   availabilityRuleDefaults,
-  buildAlertMetricOptions,
   buildAlertOperatorOptions,
   buildAlertSeverityOptions,
   isAvailabilityMetric,
@@ -27,6 +26,7 @@ interface AlertRuleDialogProps {
   editing: boolean
   form: AlertRuleForm
   loading: boolean
+  metricOptions: Array<{ label: string; value: string }>
   onOpenChange: (open: boolean) => void
   onChange: (form: AlertRuleForm) => void
   onSave: () => void
@@ -37,13 +37,13 @@ export function AlertRuleDialog({
   editing,
   form,
   loading,
+  metricOptions,
   onOpenChange,
   onChange,
   onSave,
 }: AlertRuleDialogProps) {
   const { t } = useLocale()
   const availability = isAvailabilityMetric(form.metric)
-  const metricOptions = buildAlertMetricOptions(t)
   const operatorOptions = buildAlertOperatorOptions(t("alert.greater_than"), t("alert.less_than"))
   const severityOptions = buildAlertSeverityOptions(t("alert.critical"), t("alert.warning"), t("alert.info"))
 

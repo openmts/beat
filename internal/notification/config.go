@@ -22,12 +22,15 @@ const (
 
 type WebhookConfig struct {
 	URL string `json:"url"`
+	// Template is an optional message template rendered when a trigger fires.
+	Template string `json:"template,omitempty"`
 }
 
 type TelegramConfig struct {
 	BotToken    string `json:"bot_token"`
 	ChatID      string `json:"chat_id"`
 	HasBotToken bool   `json:"has_bot_token,omitempty"`
+	Template    string `json:"template,omitempty"`
 }
 
 type EmailConfig struct {
@@ -39,6 +42,7 @@ type EmailConfig struct {
 	To          []string `json:"to"`
 	Security    string   `json:"security"`
 	HasPassword bool     `json:"has_password,omitempty"`
+	Template    string   `json:"template,omitempty"`
 }
 
 func NormalizeConfig(channelType, raw, existing string) (string, error) {

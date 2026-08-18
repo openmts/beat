@@ -15,15 +15,18 @@ export interface AlertChannelFormState {
   smtpFrom: string
   smtpTo: string
   smtpSecurity: EmailSecurity
+  template: string
 }
 
 interface WebhookConfig {
   url?: string
+  template?: string
 }
 
 interface TelegramConfig {
   bot_token?: string
   chat_id?: string
+  template?: string
 }
 
 interface EmailConfig {
@@ -34,6 +37,7 @@ interface EmailConfig {
   from?: string
   to?: string[]
   security?: EmailSecurity
+  template?: string
 }
 
 export function emptyAlertChannelForm(): AlertChannelFormState {
@@ -50,17 +54,21 @@ export function emptyAlertChannelForm(): AlertChannelFormState {
     smtpFrom: "",
     smtpTo: "",
     smtpSecurity: "starttls",
+    template: "",
   }
 }
 
 export function alertChannelFormFrom(channel: AlertChannel): AlertChannelFormState {
   const form = { ...emptyAlertChannelForm(), name: channel.name, channelType: channel.channel_type }
   if (channel.channel_type === "webhook") {
-    form.webhookURL = parseWebhook(channel.config)
+    const config = parseWebhookConfig(channel.config)
+    form.webhookURL = config.url ?? ""
+    form.template = config.template ?? ""
   } else if (channel.channel_type === "telegram") {
     const config = parseJSON<TelegramConfig>(channel.config)
     form.botToken = config.bot_token ?? ""
     form.chatID = config.chat_id ?? ""
+    form.template = config.template ?? ""
   } else {
     const config = parseJSON<EmailConfig>(channel.config)
     form.smtpHost = config.host ?? ""
@@ -70,18 +78,23 @@ export function alertChannelFormFrom(channel: AlertChannel): AlertChannelFormSta
     form.smtpFrom = config.from ?? ""
     form.smtpTo = config.to?.join(", ") ?? ""
     form.smtpSecurity = config.security ?? "starttls"
+    form.template = config.template ?? ""
   }
   return form
 }
 
 export function serializeAlertChannelConfig(form: AlertChannelFormState): string {
   if (form.channelType === "webhook") {
-    return JSON.stringify({ url: form.webhookURL.trim() })
+    const config: Record<string, string> = { url: form.webhookURL.trim() }
+    if (form.template.trim()) config.template = form.template.trim()
+    return JSON.stringify(config)
   }
   if (form.channelType === "telegram") {
-    return JSON.stringify({ bot_token: form.botToken.trim(), chat_id: form.chatID.trim() })
+    const config: Record<string, string> = { bot_token: form.botToken.trim(), chat_id: form.chatID.trim() }
+    if (form.template.trim()) config.template = form.template.trim()
+    return JSON.stringify(config)
   }
-  return JSON.stringify({
+  const config: Record<string, unknown> = {
     host: form.smtpHost.trim(),
     port: Number(form.smtpPort),
     username: form.smtpUsername.trim(),
@@ -89,7 +102,9 @@ export function serializeAlertChannelConfig(form: AlertChannelFormState): string
     from: form.smtpFrom.trim(),
     to: splitRecipients(form.smtpTo),
     security: form.smtpSecurity,
-  })
+  }
+  if (form.template.trim()) config.template = form.template.trim()
+  return JSON.stringify(config)
 }
 
 export function alertChannelFormError(
@@ -116,9 +131,11 @@ export function alertChannelFormError(
   return null
 }
 
-function parseWebhook(raw: string) {
-  if (raw.startsWith("http://") || raw.startsWith("https://")) return raw
-  return parseJSON<WebhookConfig>(raw).url ?? ""
+function parseWebhookConfig(raw: string): WebhookConfig {
+  if (raw.startsWith("http://") || raw.startsWith("https://")) {
+    return { url: raw }
+  }
+  return parseJSON<WebhookConfig>(raw)
 }
 
 function parseJSON<T>(raw: string): T {

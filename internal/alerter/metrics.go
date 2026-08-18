@@ -3,6 +3,8 @@ package alerter
 import (
 	"context"
 	"fmt"
+	"strings"
+	"time"
 
 	"github.com/beat/backend/internal/model"
 )
@@ -18,12 +20,35 @@ func (a *Alerter) metricValue(
 	case model.MetricTrafficUsagePercent:
 		return a.trafficUsagePercent(ctx, node)
 	}
+	if strings.HasPrefix(metric, model.CustomMetricPrefix) {
+		return a.customMetricValue(ctx, metric, node)
+	}
 	latest, err := a.mtsStore.QueryLatest(ctx, node.ID)
 	if err != nil {
 		return 0, false, err
 	}
 	value, found := latest[metric]
 	return value, found, nil
+}
+
+// customMetricValue queries the most recent custom metric sample for a node.
+func (a *Alerter) customMetricValue(
+	ctx context.Context,
+	metric string,
+	node *model.Node,
+) (float64, bool, error) {
+	now := a.now()
+	start := now.Add(-1 * time.Hour)
+	points, err := a.mtsStore.QueryMetrics(ctx, []string{metric}, start, now, node.ID)
+	if err != nil {
+		return 0, false, err
+	}
+	series := points[metric]
+	if len(series) == 0 {
+		return 0, false, nil
+	}
+	latest := series[len(series)-1]
+	return latest.Value, true, nil
 }
 
 func (a *Alerter) heartbeatAgeSeconds(node *model.Node) (float64, bool, error) {

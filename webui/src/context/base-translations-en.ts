@@ -100,6 +100,8 @@ export const baseTranslationsEn: Record<string, string> = {
   "alert.smtp_from": "Sender address",
   "alert.smtp_to": "Recipients",
   "alert.secret_unchanged": "Leave blank to keep the current credential.",
+  "alert.template": "Push template",
+  "alert.template_hint": "Use {{rule}}, {{node}}, {{metric}}, {{severity}}, {{value}}, {{status}}, {{time}} and {{message}}. Leave empty for the default message.",
   "alert.delivery": "Last delivery",
   "alert.test_send": "Test",
   "alert.never_delivered": "Not sent yet",

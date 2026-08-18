@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react"
 import type {
 	  AlertChannel, AlertEvent, AlertRule, Group, MetricDataPoint,
 	  MetricsSnapshot, Node, SSHKey,
-	  ManagedNode, TrafficReportSchedule,
+	  ManagedNode, TrafficReportSchedule, CustomMetric,
 } from "@/types"
 import * as api from "@/lib/api"
 
@@ -142,6 +142,11 @@ export function useSSHKeys() {
 export function useAlertRules() {
   const fetcher = useCallback(() => api.listAlertRules(), [])
   return useApiList<AlertRule>(fetcher)
+}
+
+export function useCustomMetrics() {
+  const fetcher = useCallback(() => api.listCustomMetrics(), [])
+  return useApiList<CustomMetric>(fetcher)
 }
 
 export function useAlertChannels() {

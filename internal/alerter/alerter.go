@@ -9,6 +9,7 @@ import (
 
 	"github.com/beat/backend/internal/model"
 	"github.com/beat/backend/internal/notification"
+	"github.com/beat/backend/internal/store"
 )
 
 const (
@@ -40,6 +41,13 @@ type deliveryService interface {
 
 type mtsStore interface {
 	QueryLatest(ctx context.Context, nodeID string) (map[string]float64, error)
+	QueryMetrics(
+		ctx context.Context,
+		metrics []string,
+		start time.Time,
+		end time.Time,
+		nodeID string,
+	) (map[string][]store.TimePoint, error)
 	QueryTrafficUsage(
 		ctx context.Context,
 		nodeID string,

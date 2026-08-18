@@ -152,7 +152,35 @@ func (s *Service) dispatchMessage(
 }
 
 func (s *Service) sendWebhook(ctx context.Context, raw string, event *model.AlertEvent) error {
+	config, err := parseWebhookConfig(raw)
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(config.Template) != "" {
+		return s.sendWebhookText(ctx, raw, RenderTemplate(config.Template, event))
+	}
 	return s.sendWebhookPayload(ctx, raw, event)
+}
+
+func parseWebhookConfig(raw string) (WebhookConfig, error) {
+	var config WebhookConfig
+	if err := json.Unmarshal([]byte(raw), &config); err != nil {
+		return config, fmt.Errorf("decode webhook config: %w", err)
+	}
+	return config, nil
+}
+
+func (s *Service) sendWebhookText(ctx context.Context, raw string, text string) error {
+	config, err := parseWebhookConfig(raw)
+	if err != nil {
+		return err
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, config.URL, strings.NewReader(text))
+	if err != nil {
+		return errors.New("create webhook request failed")
+	}
+	request.Header.Set("Content-Type", "text/plain")
+	return s.doHTTP(request, "webhook")
 }
 
 func (s *Service) sendWebhookPayload(ctx context.Context, raw string, payloadValue any) error {
@@ -173,7 +201,11 @@ func (s *Service) sendWebhookPayload(ctx context.Context, raw string, payloadVal
 }
 
 func (s *Service) sendTelegram(ctx context.Context, raw string, event *model.AlertEvent) error {
-	return s.sendTelegramText(ctx, raw, deliveryText(event))
+	config, err := parseTelegramConfig(raw)
+	if err != nil {
+		return err
+	}
+	return s.sendTelegramText(ctx, raw, RenderTemplate(config.Template, event))
 }
 
 func (s *Service) sendTelegramText(ctx context.Context, raw string, text string) error {
@@ -198,8 +230,28 @@ func (s *Service) sendTelegramText(ctx context.Context, raw string, text string)
 }
 
 func (s *Service) sendEmail(ctx context.Context, raw string, event *model.AlertEvent) error {
+	config, err := parseEmailConfig(raw)
+	if err != nil {
+		return err
+	}
 	subject := fmt.Sprintf("[Beat] Alert %s", event.Status)
-	return s.sendEmailText(ctx, raw, subject, deliveryText(event))
+	return s.sendEmailText(ctx, raw, subject, RenderTemplate(config.Template, event))
+}
+
+func parseTelegramConfig(raw string) (TelegramConfig, error) {
+	var config TelegramConfig
+	if err := json.Unmarshal([]byte(raw), &config); err != nil {
+		return config, fmt.Errorf("decode Telegram config: %w", err)
+	}
+	return config, nil
+}
+
+func parseEmailConfig(raw string) (EmailConfig, error) {
+	var config EmailConfig
+	if err := json.Unmarshal([]byte(raw), &config); err != nil {
+		return config, fmt.Errorf("decode email config: %w", err)
+	}
+	return config, nil
 }
 
 func (s *Service) sendEmailText(

@@ -92,9 +92,15 @@ suppress duplicate notifications while a threshold remains exceeded.
 Alert rules can also target Agent heartbeat age. Nodes become offline after 90
 seconds without a report, availability rules add a configurable debounce, and
 the same enabled channels receive both triggered and resolved notifications.
+Alert rules can target custom metrics by selecting a custom metric name; the
+custom metric value (measured by the agent) is evaluated against the rule's
+threshold.
 The admin alert page supports webhook, Telegram Bot API, and SMTP email
 channels. Each channel can be test-sent before use and shows its latest delivery
-result. Telegram and SMTP secrets are currently plaintext in the existing
+result. Channels can define a custom push template using `{{rule}}`, `{{node}}`,
+`{{metric}}`, `{{severity}}`, `{{value}}`, `{{status}}`, `{{time}}` and
+`{{message}}` placeholders; leaving the template empty uses the default message.
+Telegram and SMTP secrets are currently plaintext in the existing
 SQLite channel config but are never returned by management APIs; leaving a
 secret blank while editing keeps the stored value. Delivery status is runtime
 state and resets when the server restarts. The reviewed encrypted replacement is

@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Field, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
+import { Textarea } from "@/components/ui/textarea"
 import {
   Select,
   SelectContent,
@@ -137,6 +138,17 @@ export default function AlertChannelDialog({
               updateSecurity={updateSecurity}
             />
           )}
+          <Field>
+            <FieldLabel htmlFor="channel-template">{t("alert.template")}</FieldLabel>
+            <Textarea
+              id="channel-template"
+              value={form.template}
+              rows={3}
+              placeholder="[{{severity}}] {{rule}} on {{node}}: {{metric}}={{value}}"
+              onChange={(event) => update("template", event.target.value)}
+            />
+            <FieldDescription>{t("alert.template_hint")}</FieldDescription>
+          </Field>
         </FieldGroup>
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>{t("app.cancel")}</Button>

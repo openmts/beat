@@ -110,6 +110,28 @@ func (m *mockMTSStore) QueryLatest(_ context.Context, nodeID string) (map[string
 	return m.metrics[nodeID], nil
 }
 
+func (m *mockMTSStore) QueryMetrics(
+	_ context.Context,
+	metrics []string,
+	start time.Time,
+	end time.Time,
+	nodeID string,
+) (map[string][]beatstore.TimePoint, error) {
+	result := make(map[string][]beatstore.TimePoint, len(metrics))
+	nodeMetrics := m.metrics[nodeID]
+	for _, metric := range metrics {
+		value, found := nodeMetrics[metric]
+		if !found {
+			continue
+		}
+		result[metric] = []beatstore.TimePoint{{
+			Timestamp: end,
+			Value:     value,
+		}}
+	}
+	return result, nil
+}
+
 func (m *mockMTSStore) QueryTrafficUsage(
 	_ context.Context,
 	nodeID string,
@@ -1019,5 +1041,64 @@ func TestStartContextCancellation(t *testing.T) {
 	case <-done:
 	case <-time.After(2 * time.Second):
 		t.Error("alerter did not stop on context cancellation")
+	}
+}
+
+func TestEvaluateCustomMetricRule(t *testing.T) {
+	node := model.Node{ID: "node-1", Name: "node-1", Status: model.NodeStatusOnline}
+	rule := model.AlertRule{
+		ID: "rule-1", Name: "High custom latency", Metric: "custom_http_latency",
+		Operator: "gt", Threshold: 100, Duration: 0,
+		Severity: model.AlertSeverityWarning,
+	}
+	eventStore := &mockAlertEventStore{}
+
+	a := New(
+		&mockAlertRuleStore{rules: []model.AlertRule{rule}},
+		eventStore,
+		&mockAlertChannelStore{},
+		&mockMTSStore{metrics: map[string]map[string]float64{
+			"node-1": {"cpu": 50, "custom_http_latency": 250},
+		}},
+		&mockNodeStore{nodes: []model.Node{node}},
+	)
+
+	err := a.evaluateRules(context.Background())
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	ev, _ := eventStore.GetActiveEvent(context.Background(), rule.ID, node.ID)
+	if ev == nil {
+		t.Fatal("expected custom metric alert event to be created")
+	}
+	if ev.Value != 250 {
+		t.Errorf("expected value 250, got %v", ev.Value)
+	}
+	if ev.Metric != "custom_http_latency" {
+		t.Errorf("expected metric custom_http_latency, got %s", ev.Metric)
+	}
+}
+
+func TestEvaluateCustomMetricRuleNoData(t *testing.T) {
+	node := model.Node{ID: "node-1", Name: "node-1", Status: model.NodeStatusOnline}
+	rule := model.AlertRule{
+		ID: "rule-1", Name: "Custom latency", Metric: "custom_http_latency",
+		Operator: "gt", Threshold: 100, Duration: 0,
+		Severity: model.AlertSeverityWarning,
+	}
+	eventStore := &mockAlertEventStore{}
+	a := New(
+		&mockAlertRuleStore{rules: []model.AlertRule{rule}},
+		eventStore,
+		&mockAlertChannelStore{},
+		&mockMTSStore{metrics: map[string]map[string]float64{"node-1": {"cpu": 50}}},
+		&mockNodeStore{nodes: []model.Node{node}},
+	)
+	if err := a.evaluateRules(context.Background()); err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	ev, _ := eventStore.GetActiveEvent(context.Background(), rule.ID, node.ID)
+	if ev != nil {
+		t.Fatalf("expected no event without custom metric data, got %#v", ev)
 	}
 }
