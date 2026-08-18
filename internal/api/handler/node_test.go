@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -719,4 +720,78 @@ func TestHandleNodeReportInvalidCustomMetricName(t *testing.T) {
 		t.Fatalf("invalid name status = %d, want 400", w.Code)
 	}
 	_ = ctx
+}
+
+func TestHandleGetNodeCustomMetrics(t *testing.T) {
+	s, mtsStore := setupNodeTestDB(t)
+	ctx := context.Background()
+	nodeStore := store.NewNodeStore(s.DB)
+	customStore := store.NewCustomMetricStore(s.DB)
+	h := NewNodeHandler(nodeStore, mtsStore).WithCustomMetrics(customStore)
+
+	node, err := nodeStore.UpsertNode(ctx, "custom-metrics-node", "10.0.0.9", 22)
+	if err != nil {
+		t.Fatalf("upsert node: %v", err)
+	}
+	metric, err := customStore.Create(ctx, model.CustomMetric{
+		Name: "http_latency", ShellCommand: "echo 5", IntervalSeconds: 15, Enabled: true,
+	})
+	if err != nil {
+		t.Fatalf("create metric: %v", err)
+	}
+	if err := customStore.SetMetricNodes(ctx, metric.ID, []string{node.ID}); err != nil {
+		t.Fatalf("set metric nodes: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/nodes/"+node.ID+"/custom-metrics", nil)
+	req.SetPathValue("id", node.ID)
+	w := httptest.NewRecorder()
+	h.HandleGetNodeCustomMetrics(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+	var metrics []customMetricNodeResponse
+	// decode from envelope
+	var envelope Response
+	if err := json.Unmarshal(w.Body.Bytes(), &envelope); err != nil {
+		t.Fatalf("decode envelope: %v", err)
+	}
+	raw, _ := json.Marshal(envelope.Data)
+	if err := json.Unmarshal(raw, &metrics); err != nil {
+		t.Fatalf("decode metrics: %v", err)
+	}
+	if len(metrics) != 1 || metrics[0].Name != "http_latency" {
+		t.Fatalf("metrics = %#v", metrics)
+	}
+}
+
+func TestHandleGetNodeCustomMetricsUnavailable(t *testing.T) {
+	s, mtsStore := setupNodeTestDB(t)
+	ctx := context.Background()
+	nodeStore := store.NewNodeStore(s.DB)
+	h := NewNodeHandler(nodeStore, mtsStore) // no custom metrics store
+	node, err := nodeStore.UpsertNode(ctx, "no-custom-node", "10.0.0.9", 22)
+	if err != nil {
+		t.Fatalf("upsert node: %v", err)
+	}
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/nodes/"+node.ID+"/custom-metrics", nil)
+	req.SetPathValue("id", node.ID)
+	w := httptest.NewRecorder()
+	h.HandleGetNodeCustomMetrics(w, req)
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503", w.Code)
+	}
+}
+
+func TestHandleGetNodeCustomMetricsNotFound(t *testing.T) {
+	s, mtsStore := setupNodeTestDB(t)
+	nodeStore := store.NewNodeStore(s.DB)
+	h := NewNodeHandler(nodeStore, mtsStore)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/nodes/nonexistent/custom-metrics", nil)
+	req.SetPathValue("id", "nonexistent")
+	w := httptest.NewRecorder()
+	h.HandleGetNodeCustomMetrics(w, req)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404", w.Code)
+	}
 }

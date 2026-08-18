@@ -43,6 +43,7 @@ export const baseTranslationsEn: Record<string, string> = {
   "node.add": "Add Node",
   "node.delete": "Delete Node",
   "node.metrics": "Metrics",
+  "node.custom_metrics": "Custom Metrics",
   "node.cpu": "CPU",
   "node.cores": "cores",
   "node.memory": "Memory",

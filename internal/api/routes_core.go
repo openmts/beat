@@ -82,6 +82,9 @@ func (r *Router) registerNodeAndGroupRoutes(api *http.ServeMux) {
 			channelService = channelService.WithCustomMetrics(r.customMetrics)
 		}
 		nodeHandler = nodeHandler.WithTaskEnqueuer(channelService).WithAgentHub(hub)
+		if r.customMetrics != nil {
+			nodeHandler = nodeHandler.WithCustomMetrics(r.customMetrics)
+		}
 		channelHandler := handler.NewAgentChannelHandler(channelService, hub)
 		api.Handle("GET /api/v1/agents/ws", r.agent(
 			http.HandlerFunc(channelHandler.HandleAgentWebSocket), bodyNodeName("name"),
@@ -105,6 +108,7 @@ func (r *Router) registerNodeAndGroupRoutes(api *http.ServeMux) {
 		http.HandlerFunc(nodeHandler.HandleNodeReport), bodyNodeName("name"),
 	))
 	api.HandleFunc("GET /api/v1/nodes/{id}/metrics", nodeHandler.HandleGetNodeMetrics)
+	api.HandleFunc("GET /api/v1/nodes/{id}/custom-metrics", nodeHandler.HandleGetNodeCustomMetrics)
 	api.HandleFunc("GET /api/v1/groups", groupHandler.HandleListGroups)
 	api.Handle("POST /api/v1/groups", r.admin(http.HandlerFunc(groupHandler.HandleCreateGroup)))
 	api.Handle("PUT /api/v1/groups/{id}", r.admin(http.HandlerFunc(groupHandler.HandleUpdateGroup)))

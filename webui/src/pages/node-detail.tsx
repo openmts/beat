@@ -13,7 +13,7 @@ import { PublicFooter } from "@/components/public-footer"
 import { MetricsChart } from "@/components/metrics-chart"
 import { TrafficUsage } from "@/components/traffic-usage"
 import { useLocale } from "@/context/locale"
-import { useNode, useNodeMetrics } from "@/hooks/use-api"
+import { useNode, useNodeMetrics, useNodeCustomMetrics } from "@/hooks/use-api"
 import { formatBytes, formatDuration, formatMetricValue } from "@/lib/metric-format"
 import type { Node } from "@/types"
 
@@ -25,6 +25,17 @@ const RANGE_HOURS: Record<TimeRange, number> = {
   "24h": 24,
   "7d": 168,
 }
+
+const CUSTOM_METRIC_COLORS = [
+  "#7c3aed",
+  "#e11d48",
+  "#0891b2",
+  "#ca8a04",
+  "#dc2626",
+  "#9333ea",
+  "#0284c7",
+  "#16a34a",
+]
 
 const CHART_CONFIGS = [
   { key: "cpu", titleKey: "metrics.cpu", color: "#2563eb", valueFormat: "percent" },
@@ -47,6 +58,8 @@ function NodeDetail() {
   const { data: node, loading: nodeLoading, error: nodeError } = useNode(id)
   const hours = RANGE_HOURS[timeRange]
   const metricsState = useNodeMetrics(id, undefined, hours)
+  const customMetricsState = useNodeCustomMetrics(id)
+  const customMetricNames = customMetricsState.data?.map((m) => `custom_${m.name}`) ?? []
 
   return (
     <div className="flex min-h-svh flex-col">
@@ -71,7 +84,7 @@ function NodeDetail() {
         ) : null}
       </header>
       <main className="container-page safe-pb flex-1 py-4 sm:py-6">
-        <ErrorAlerts nodeError={nodeError} metricsError={metricsState.error} />
+        <ErrorAlerts nodeError={nodeError} metricsError={metricsState.error} customMetricsError={customMetricsState.error} />
         {nodeLoading ? (
           <div className="space-y-4">
             <Skeleton className="h-40 w-full" />
@@ -113,14 +126,44 @@ function NodeDetail() {
             />
           ))}
         </div>
+        {customMetricNames.length > 0 && (
+          <>
+            <div className="mb-3 mt-8 flex items-center gap-2">
+              <h2 className="text-sm font-medium text-muted-foreground">{t("node.custom_metrics")}</h2>
+              <Badge variant="secondary">{customMetricNames.length}</Badge>
+            </div>
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+              {customMetricsState.data?.map((metric, index) => (
+                <MetricsChart
+                  key={metric.id}
+                  data={metricsState.data?.[`custom_${metric.name}`]}
+                  title={metric.name}
+                  color={CUSTOM_METRIC_COLORS[index % CUSTOM_METRIC_COLORS.length]}
+                  valueFormat="number"
+                  from={metricsState.from}
+                  to={metricsState.to}
+                  rangeHours={hours}
+                />
+              ))}
+            </div>
+          </>
+        )}
       </main>
       <PublicFooter />
     </div>
   )
 }
 
-function ErrorAlerts({ nodeError, metricsError }: { nodeError: string | null; metricsError: string | null }) {
-  const errors = [nodeError, metricsError].filter((error): error is string => error !== null)
+function ErrorAlerts({
+  nodeError,
+  metricsError,
+  customMetricsError,
+}: {
+  nodeError: string | null
+  metricsError: string | null
+  customMetricsError: string | null
+}) {
+  const errors = [nodeError, metricsError, customMetricsError].filter((error): error is string => error !== null)
   return errors.length > 0 ? (
     <div className="mb-4 flex flex-col gap-2">
       {errors.map((error) => (

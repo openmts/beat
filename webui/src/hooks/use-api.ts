@@ -217,3 +217,32 @@ export function useNodeMetrics(
 
   return { ...state, ...domain, refresh: fetch }
 }
+
+export function useNodeCustomMetrics(id: string | undefined) {
+  const [state, setState] = useState<ApiState<api.NodeCustomMetric[]>>({
+    data: null,
+    loading: Boolean(id),
+    error: null,
+  })
+
+  const fetch = useCallback(async () => {
+    if (!id) {
+      setState({ data: null, loading: false, error: null })
+      return
+    }
+    setState((prev) => ({ ...prev, loading: true, error: null }))
+    try {
+      const data = await api.listNodeCustomMetrics(id)
+      setState({ data, loading: false, error: null })
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Unknown error"
+      setState({ data: null, loading: false, error: message })
+    }
+  }, [id])
+
+  useEffect(() => {
+    void fetch()
+  }, [fetch, id])
+
+  return { ...state, refresh: fetch }
+}

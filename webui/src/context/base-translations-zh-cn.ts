@@ -43,6 +43,7 @@ export const baseTranslationsZhCN: Record<string, string> = {
   "node.add": "添加节点",
   "node.delete": "删除节点",
   "node.metrics": "指标",
+  "node.custom_metrics": "自定义指标",
   "node.cpu": "CPU",
   "node.cores": "核",
   "node.memory": "内存",

@@ -338,6 +338,17 @@ export async function listCustomMetricNodes(metricId: string): Promise<string[]>
   return res.data
 }
 
+export interface NodeCustomMetric {
+  id: string
+  name: string
+  interval_seconds: number
+}
+
+export async function listNodeCustomMetrics(nodeId: string): Promise<NodeCustomMetric[]> {
+  const res = await api.get<NodeCustomMetric[]>(`/nodes/${nodeId}/custom-metrics`)
+  return res.data
+}
+
 export async function setCustomMetricNodes(metricId: string, nodeIds: string[]): Promise<string[]> {
   const res = await api.put<string[]>(`/custom-metrics/${metricId}/nodes`, { node_ids: nodeIds })
   return res.data

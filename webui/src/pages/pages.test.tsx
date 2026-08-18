@@ -44,6 +44,7 @@ describe("public pages", () => {
     vi.mocked(hooks.useGroups).mockReturnValue(hookState() as never)
     vi.mocked(hooks.useNode).mockReturnValue(hookState({ data: nodeWithTraffic() }) as never)
     vi.mocked(hooks.useNodeMetrics).mockReturnValue(hookState({ data: {} }) as never)
+    vi.mocked(hooks.useNodeCustomMetrics).mockReturnValue(hookState({ data: [] }) as never)
     site.showNetworkQuality = true
   })
 
@@ -91,6 +92,20 @@ describe("public pages", () => {
     expect(screen.getByText("25 GiB / 100 GiB")).toBeInTheDocument()
     fireEvent.click(screen.getByText("6h"))
     expect(hooks.useNodeMetrics).toHaveBeenLastCalledWith("node", undefined, 6)
+  })
+
+  it("renders custom metrics after built-in metrics on node detail", () => {
+    const builtIn = hookState({ data: { cpu: [{ timestamp: 1, value: 10 }], custom_http_latency: [{ timestamp: 1, value: 12.5 }] } })
+    vi.mocked(hooks.useNode).mockReturnValue(hookState({ data: nodeWithTraffic() }) as never)
+    vi.mocked(hooks.useNodeMetrics).mockReturnValue(builtIn as never)
+    vi.mocked(hooks.useNodeCustomMetrics).mockReturnValue(
+      hookState({ data: [{ id: "m1", name: "http_latency", interval_seconds: 10 }] }) as never,
+    )
+    render(<Providers><Routes><Route path="/node/:id" element={<NodeDetail />} /></Routes></Providers>)
+    // Custom metrics section renders the metric chart alongside built-in ones.
+    expect(screen.getByText("Custom Metrics")).toBeInTheDocument()
+    expect(screen.getByTestId("chart-http_latency")).toBeInTheDocument()
+    expect(screen.getByTestId("chart-CPU Usage")).toBeInTheDocument()
   })
 
   it("renders node resource cards, runtime stats, and tags", () => {

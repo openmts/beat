@@ -20,6 +20,7 @@ type NodeHandler struct {
 	settingsStore *store.SiteSettingsStore
 	taskEnqueuer  AgentTaskEnqueuer
 	agentHub      *service.AgentHub
+	customMetrics *store.CustomMetricStore
 }
 
 // AgentTaskEnqueuer queues agent tasks for a node.
@@ -46,6 +47,11 @@ func (h *NodeHandler) WithTaskEnqueuer(enqueuer AgentTaskEnqueuer) *NodeHandler 
 
 func (h *NodeHandler) WithAgentHub(hub *service.AgentHub) *NodeHandler {
 	h.agentHub = hub
+	return h
+}
+
+func (h *NodeHandler) WithCustomMetrics(store *store.CustomMetricStore) *NodeHandler {
+	h.customMetrics = store
 	return h
 }
 
@@ -301,6 +307,44 @@ func isValidCustomMetricName(name string) bool {
 
 func isFiniteMetricValue(value float64) bool {
 	return !math.IsNaN(value) && !math.IsInf(value, 0)
+}
+
+// HandleGetNodeCustomMetrics returns the enabled custom metrics bound to a node.
+func (h *NodeHandler) HandleGetNodeCustomMetrics(w http.ResponseWriter, r *http.Request) {
+	nodeID := r.PathValue("id")
+	node, err := h.nodeStore.GetPublicNode(r.Context(), nodeID)
+	if err != nil {
+		JSONError(w, http.StatusInternalServerError, "failed to get node")
+		return
+	}
+	if node == nil {
+		JSONError(w, http.StatusNotFound, "node not found")
+		return
+	}
+	if h.customMetrics == nil {
+		JSONError(w, http.StatusServiceUnavailable, "custom metrics are unavailable")
+		return
+	}
+	metrics, err := h.customMetrics.ListEnabledForNode(r.Context(), nodeID)
+	if err != nil {
+		JSONError(w, http.StatusInternalServerError, "failed to list custom metrics")
+		return
+	}
+	response := make([]customMetricNodeResponse, 0, len(metrics))
+	for _, metric := range metrics {
+		response = append(response, customMetricNodeResponse{
+			ID:              metric.ID,
+			Name:            metric.Name,
+			IntervalSeconds: metric.IntervalSeconds,
+		})
+	}
+	JSONResponse(w, http.StatusOK, response)
+}
+
+type customMetricNodeResponse struct {
+	ID              string `json:"id"`
+	Name            string `json:"name"`
+	IntervalSeconds int    `json:"interval_seconds"`
 }
 
 func (h *NodeHandler) HandleGetNodeMetrics(w http.ResponseWriter, r *http.Request) {
