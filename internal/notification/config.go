@@ -31,6 +31,7 @@ type WebhookConfig struct {
 type TelegramConfig struct {
 	BotToken    string `json:"bot_token"`
 	ChatID      string `json:"chat_id"`
+	ParseMode   string `json:"parse_mode,omitempty"`
 	HasBotToken bool   `json:"has_bot_token,omitempty"`
 	Template    string `json:"template,omitempty"`
 }

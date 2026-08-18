@@ -9,6 +9,7 @@ export interface AlertChannelFormState {
   webhookHeaders: string
   botToken: string
   chatID: string
+  telegramParseMode: string
   smtpHost: string
   smtpPort: string
   smtpUsername: string
@@ -28,6 +29,7 @@ interface WebhookConfig {
 interface TelegramConfig {
   bot_token?: string
   chat_id?: string
+  parse_mode?: string
   template?: string
 }
 
@@ -50,6 +52,7 @@ export function emptyAlertChannelForm(): AlertChannelFormState {
     webhookHeaders: "",
     botToken: "",
     chatID: "",
+    telegramParseMode: "",
     smtpHost: "",
     smtpPort: "587",
     smtpUsername: "",
@@ -72,6 +75,7 @@ export function alertChannelFormFrom(channel: AlertChannel): AlertChannelFormSta
     const config = parseJSON<TelegramConfig>(channel.config)
     form.botToken = config.bot_token ?? ""
     form.chatID = config.chat_id ?? ""
+    form.telegramParseMode = config.parse_mode ?? ""
     form.template = config.template ?? ""
   } else {
     const config = parseJSON<EmailConfig>(channel.config)
@@ -97,6 +101,7 @@ export function serializeAlertChannelConfig(form: AlertChannelFormState): string
   }
   if (form.channelType === "telegram") {
     const config: Record<string, string> = { bot_token: form.botToken.trim(), chat_id: form.chatID.trim() }
+    if (form.telegramParseMode.trim()) config.parse_mode = form.telegramParseMode.trim()
     if (form.template.trim()) config.template = form.template.trim()
     return JSON.stringify(config)
   }

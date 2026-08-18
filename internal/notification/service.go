@@ -143,7 +143,7 @@ func (s *Service) dispatchMessage(
 	case TypeWebhook:
 		return s.sendWebhookPayload(ctx, normalized, message)
 	case TypeTelegram:
-		return s.sendTelegramText(ctx, normalized, message.Text)
+		return s.sendTelegramText(ctx, normalized, message.Text, "")
 	case TypeEmail:
 		return s.sendEmailText(ctx, normalized, message.Subject, message.Text)
 	default:
@@ -219,23 +219,31 @@ func (s *Service) sendTelegram(ctx context.Context, raw string, event *model.Ale
 	if err != nil {
 		return err
 	}
-	return s.sendTelegramText(ctx, raw, RenderTemplate(config.Template, event))
+	text := RenderTemplate(config.Template, event)
+	if config.ParseMode == "MarkdownV2" {
+		text = RenderTemplateWith(config.Template, event, EscapeMarkdownV2)
+	}
+	return s.sendTelegramText(ctx, raw, text, config.ParseMode)
 }
 
-func (s *Service) sendTelegramText(ctx context.Context, raw string, text string) error {
+func (s *Service) sendTelegramText(ctx context.Context, raw string, text string, parseMode string) error {
 	var config TelegramConfig
 	if err := json.Unmarshal([]byte(raw), &config); err != nil {
 		return fmt.Errorf("decode Telegram config: %w", err)
 	}
-	payload, err := json.Marshal(map[string]string{
+	payload := map[string]any{
 		"chat_id": config.ChatID,
 		"text":    text,
-	})
+	}
+	if parseMode != "" {
+		payload["parse_mode"] = parseMode
+	}
+	encoded, err := json.Marshal(payload)
 	if err != nil {
 		return fmt.Errorf("encode Telegram payload: %w", err)
 	}
 	endpoint := strings.TrimRight(s.telegramBaseURL, "/") + "/bot" + config.BotToken + "/sendMessage"
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(payload))
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(encoded))
 	if err != nil {
 		return errors.New("create Telegram request failed")
 	}

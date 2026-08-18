@@ -47,6 +47,12 @@ export default function AlertChannelDialog({
     { value: "tls", label: "TLS" },
     { value: "none", label: t("alert.smtp_none") },
   ]
+  const parseModeItems = [
+    { value: "", label: "Plain text" },
+    { value: "HTML", label: "HTML" },
+    { value: "Markdown", label: "Markdown" },
+    { value: "MarkdownV2", label: "MarkdownV2" },
+  ]
   const update = <K extends keyof AlertChannelFormState>(key: K, value: AlertChannelFormState[K]) => {
     setForm((current) => ({ ...current, [key]: value }))
   }
@@ -139,6 +145,24 @@ export default function AlertChannelDialog({
                   value={form.chatID}
                   onChange={(event) => update("chatID", event.target.value)}
                 />
+              </Field>
+              <Field>
+                <FieldLabel htmlFor="telegram-parse-mode">{t("alert.parse_mode")}</FieldLabel>
+                <Select
+                  items={parseModeItems}
+                  value={form.telegramParseMode}
+                  onValueChange={(value) => update("telegramParseMode", value ?? "")}
+                >
+                  <SelectTrigger id="telegram-parse-mode" className="w-full"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectGroup>
+                      {parseModeItems.map((item) => (
+                        <SelectItem key={item.value} value={item.value}>{item.label}</SelectItem>
+                      ))}
+                    </SelectGroup>
+                  </SelectContent>
+                </Select>
+                <FieldDescription>{t("alert.parse_mode_hint")}</FieldDescription>
               </Field>
             </>
           )}

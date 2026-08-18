@@ -54,3 +54,36 @@ func TestRenderTemplateReplacesUnknownVariablesAsLiteral(t *testing.T) {
 		t.Fatalf("rendered = %q", rendered)
 	}
 }
+
+func TestEscapeMarkdownV2(t *testing.T) {
+	got := EscapeMarkdownV2("node-a.example.com (web)")
+	want := `node\-a\.example\.com \(web\)`
+	if got != want {
+		t.Fatalf("EscapeMarkdownV2 = %q, want %q", got, want)
+	}
+	if EscapeMarkdownV2("plain") != "plain" {
+		t.Fatal("plain text should be unchanged")
+	}
+}
+
+func TestRenderTemplateWithEscapesDynamicValues(t *testing.T) {
+	event := templateTestEvent()
+	// mock-rule value contains a dot to exercise escaping
+	rich := *event
+	rich.RuleName = "high.cpu"
+	rich.NodeName = "web-01.example"
+	rich.Message = "value=12.5"
+	rendered := RenderTemplateWith("{{rule}} {{node}} {{value}} {{message}}", &rich, EscapeMarkdownV2)
+	want := `high\.cpu web\-01\.example 95\.00 value\=12\.5`
+	if rendered != want {
+		t.Fatalf("rendered = %q, want %q", rendered, want)
+	}
+}
+
+func TestRenderTemplateWithNilEscape(t *testing.T) {
+	event := templateTestEvent()
+	rendered := RenderTemplateWith("{{rule}}-{{metric}}", event, nil)
+	if rendered != "High CPU-cpu" {
+		t.Fatalf("rendered = %q", rendered)
+	}
+}

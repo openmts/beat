@@ -104,6 +104,8 @@ export const baseTranslationsEn: Record<string, string> = {
   "alert.template_hint": "Use {{rule}}, {{node}}, {{metric}}, {{severity}}, {{value}}, {{status}}, {{time}} and {{message}}. Leave empty for the default message.",
   "alert.webhook_headers": "Custom headers",
   "alert.webhook_headers_hint": "One header per line in \"Key: value\" format.",
+  "alert.parse_mode": "Parse mode",
+  "alert.parse_mode_hint": "Format for the push message. MarkdownV2 escapes dynamic values automatically.",
   "alert.delivery": "Last delivery",
   "alert.test_send": "Test",
   "alert.never_delivered": "Not sent yet",

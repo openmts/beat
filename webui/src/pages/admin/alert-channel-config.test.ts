@@ -116,4 +116,29 @@ describe("alert channel config", () => {
     expect(headersFromString("A: 1\nB: 2\n\nbadline")).toEqual({ A: "1", B: "2" })
     expect(headersFromString("")).toEqual({})
   })
+
+  it("serializes telegram parse mode", () => {
+    const form = {
+      ...emptyAlertChannelForm(), name: "TG", channelType: "telegram" as const,
+      chatID: "42", telegramParseMode: "MarkdownV2", template: "{{rule}}",
+    }
+    const serialized = JSON.parse(serializeAlertChannelConfig(form))
+    expect(serialized.parse_mode).toBe("MarkdownV2")
+    expect(serialized.template).toBe("{{rule}}")
+
+    const restored = alertChannelFormFrom({
+      id: "t", name: "TG", channel_type: "telegram", config: JSON.stringify(serialized),
+      enabled: true, created_at: "", updated_at: "",
+    })
+    expect(restored.telegramParseMode).toBe("MarkdownV2")
+  })
+
+  it("omits telegram parse mode when empty", () => {
+    const form = {
+      ...emptyAlertChannelForm(), name: "TG", channelType: "telegram" as const,
+      chatID: "42", telegramParseMode: "",
+    }
+    const serialized = JSON.parse(serializeAlertChannelConfig(form))
+    expect(serialized.parse_mode).toBeUndefined()
+  })
 })

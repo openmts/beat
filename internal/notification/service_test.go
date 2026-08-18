@@ -374,3 +374,41 @@ func TestDeliveryTextIncludesTimeAndSeverity(t *testing.T) {
 		t.Fatalf("text = %q", text)
 	}
 }
+
+func TestServiceSendTelegramMarkdownV2(t *testing.T) {
+	var received struct {
+		ChatID    string `json:"chat_id"`
+		Text      string `json:"text"`
+		ParseMode string `json:"parse_mode"`
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&received); err != nil {
+			t.Errorf("decode telegram: %v", err)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(server.Close)
+
+	service := NewService()
+	service.telegramBaseURL = server.URL
+	rich := &model.AlertEvent{
+		ID: "e", RuleID: "rule", NodeID: "node", Message: "high",
+		Value: 95, Status: model.AlertStatusTriggered, TriggeredAt: model.NowUTC(),
+		RuleName: "high.cpu", NodeName: "web-01", Metric: "cpu_used",
+		Severity: model.AlertSeverityWarning,
+	}
+	channel := &model.AlertChannel{
+		ID: "tg-md", ChannelType: TypeTelegram,
+		Config: `{"bot_token":"tok","chat_id":"42","parse_mode":"MarkdownV2","template":"*{{rule}}* {{node}} {{value}}"}`,
+	}
+	if _, err := service.Send(t.Context(), channel, rich); err != nil {
+		t.Fatalf("send: %v", err)
+	}
+	if received.ParseMode != "MarkdownV2" {
+		t.Fatalf("parse_mode = %q", received.ParseMode)
+	}
+	// Dynamic value rule (high.cpu) is escaped, literal markup (*) is preserved.
+	if received.Text != `*high\.cpu* web\-01 95\.00` {
+		t.Fatalf("text = %q", received.Text)
+	}
+}

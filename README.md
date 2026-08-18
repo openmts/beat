@@ -102,6 +102,9 @@ result. Channels can define a custom push template using `{{rule}}`, `{{node}}`,
 `{{message}}` placeholders; leaving the template empty uses the default message.
 Webhook channels can also set custom HTTP headers (one `Key: value` per line)
 for authentication or routing, such as `Authorization` or `X-Api-Key`.
+Telegram channels can pick a parse mode (`HTML`, `Markdown` or `MarkdownV2`);
+dynamic placeholder values are escaped for `MarkdownV2` so characters like `.`
+or `_` in rule or node names do not break message parsing.
 Telegram and SMTP secrets are currently plaintext in the existing
 SQLite channel config but are never returned by management APIs; leaving a
 secret blank while editing keeps the stored value. Delivery status is runtime
