@@ -102,6 +102,8 @@ export const baseTranslationsZhCN: Record<string, string> = {
   "alert.secret_unchanged": "留空则保留当前凭据。",
   "alert.template": "推送模板",
   "alert.template_hint": "可使用 {{rule}}、{{node}}、{{metric}}、{{severity}}、{{value}}、{{status}}、{{time}}、{{message}} 占位符。留空则使用默认消息。",
+  "alert.webhook_headers": "自定义请求头",
+  "alert.webhook_headers_hint": "每行一个请求头，格式为“Key: value”。",
   "alert.delivery": "最近投递",
   "alert.test_send": "测试",
   "alert.never_delivered": "尚未投递",

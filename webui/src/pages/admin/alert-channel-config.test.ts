@@ -3,6 +3,8 @@ import {
   alertChannelFormError,
   alertChannelFormFrom,
   emptyAlertChannelForm,
+  headersFromString,
+  headersToString,
   serializeAlertChannelConfig,
 } from "@/pages/admin/alert-channel-config"
 
@@ -82,5 +84,36 @@ describe("alert channel config", () => {
     }
     const plain = JSON.parse(serializeAlertChannelConfig(plainWebhook))
     expect(plain.template).toBeUndefined()
+  })
+
+  it("round-trips webhook custom headers", () => {
+    const form = {
+      ...emptyAlertChannelForm(), name: "Hook", channelType: "webhook" as const,
+      webhookURL: "https://example.com/hook",
+      webhookHeaders: "Authorization: Bearer token\nX-Custom: abc",
+    }
+    const serialized = JSON.parse(serializeAlertChannelConfig(form))
+    expect(serialized.headers).toEqual({
+      Authorization: "Bearer token",
+      "X-Custom": "abc",
+    })
+    const restored = alertChannelFormFrom({
+      id: "w", name: "Hook", channel_type: "webhook", config: JSON.stringify(serialized),
+      enabled: true, created_at: "", updated_at: "",
+    })
+    expect(restored.webhookHeaders).toBe("Authorization: Bearer token\nX-Custom: abc")
+  })
+
+  it("omits headers when empty and parses helpers", () => {
+    const form = {
+      ...emptyAlertChannelForm(), name: "Hook", channelType: "webhook" as const,
+      webhookURL: "https://example.com/hook", webhookHeaders: "  \n",
+    }
+    const serialized = JSON.parse(serializeAlertChannelConfig(form))
+    expect(serialized.headers).toBeUndefined()
+
+    expect(headersToString({ A: "1" })).toBe("A: 1")
+    expect(headersFromString("A: 1\nB: 2\n\nbadline")).toEqual({ A: "1", B: "2" })
+    expect(headersFromString("")).toEqual({})
   })
 })

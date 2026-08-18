@@ -180,13 +180,14 @@ func (s *Service) sendWebhookText(ctx context.Context, raw string, text string) 
 		return errors.New("create webhook request failed")
 	}
 	request.Header.Set("Content-Type", "text/plain")
+	applyWebhookHeaders(request, config.Headers)
 	return s.doHTTP(request, "webhook")
 }
 
 func (s *Service) sendWebhookPayload(ctx context.Context, raw string, payloadValue any) error {
-	var config WebhookConfig
-	if err := json.Unmarshal([]byte(raw), &config); err != nil {
-		return fmt.Errorf("decode webhook config: %w", err)
+	config, err := parseWebhookConfig(raw)
+	if err != nil {
+		return err
 	}
 	payload, err := json.Marshal(payloadValue)
 	if err != nil {
@@ -197,7 +198,20 @@ func (s *Service) sendWebhookPayload(ctx context.Context, raw string, payloadVal
 		return errors.New("create webhook request failed")
 	}
 	request.Header.Set("Content-Type", "application/json")
+	applyWebhookHeaders(request, config.Headers)
 	return s.doHTTP(request, "webhook")
+}
+
+// applyWebhookHeaders adds custom headers to a webhook request. Content-Type is
+// preserved unless a custom header explicitly overrides it.
+func applyWebhookHeaders(request *http.Request, headers map[string]string) {
+	for key, value := range headers {
+		key = strings.TrimSpace(key)
+		if key == "" {
+			continue
+		}
+		request.Header.Set(key, value)
+	}
 }
 
 func (s *Service) sendTelegram(ctx context.Context, raw string, event *model.AlertEvent) error {

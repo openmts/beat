@@ -6,6 +6,7 @@ export interface AlertChannelFormState {
   name: string
   channelType: AlertChannelType
   webhookURL: string
+  webhookHeaders: string
   botToken: string
   chatID: string
   smtpHost: string
@@ -21,6 +22,7 @@ export interface AlertChannelFormState {
 interface WebhookConfig {
   url?: string
   template?: string
+  headers?: Record<string, string>
 }
 
 interface TelegramConfig {
@@ -45,6 +47,7 @@ export function emptyAlertChannelForm(): AlertChannelFormState {
     name: "",
     channelType: "webhook",
     webhookURL: "",
+    webhookHeaders: "",
     botToken: "",
     chatID: "",
     smtpHost: "",
@@ -64,6 +67,7 @@ export function alertChannelFormFrom(channel: AlertChannel): AlertChannelFormSta
     const config = parseWebhookConfig(channel.config)
     form.webhookURL = config.url ?? ""
     form.template = config.template ?? ""
+    form.webhookHeaders = headersToString(config.headers)
   } else if (channel.channel_type === "telegram") {
     const config = parseJSON<TelegramConfig>(channel.config)
     form.botToken = config.bot_token ?? ""
@@ -85,8 +89,10 @@ export function alertChannelFormFrom(channel: AlertChannel): AlertChannelFormSta
 
 export function serializeAlertChannelConfig(form: AlertChannelFormState): string {
   if (form.channelType === "webhook") {
-    const config: Record<string, string> = { url: form.webhookURL.trim() }
+    const config: Record<string, unknown> = { url: form.webhookURL.trim() }
     if (form.template.trim()) config.template = form.template.trim()
+    const headers = headersFromString(form.webhookHeaders)
+    if (Object.keys(headers).length > 0) config.headers = headers
     return JSON.stringify(config)
   }
   if (form.channelType === "telegram") {
@@ -161,4 +167,25 @@ function validEmail(value: string) {
 
 function splitRecipients(value: string) {
   return value.split(/[\n,]/).map((item) => item.trim()).filter(Boolean)
+}
+
+// headersToString converts a headers object to multi-line "Key: value" text.
+export function headersToString(headers?: Record<string, string>): string {
+  if (!headers) return ""
+  return Object.entries(headers)
+    .map(([key, value]) => `${key}: ${value}`)
+    .join("\n")
+}
+
+// headersFromString parses multi-line "Key: value" text into a headers object.
+export function headersFromString(value: string): Record<string, string> {
+  const headers: Record<string, string> = {}
+  for (const line of value.split("\n")) {
+    const index = line.indexOf(":")
+    if (index <= 0) continue
+    const key = line.slice(0, index).trim()
+    const headerValue = line.slice(index + 1).trim()
+    if (key && headerValue !== "") headers[key] = headerValue
+  }
+  return headers
 }

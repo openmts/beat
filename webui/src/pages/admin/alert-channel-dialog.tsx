@@ -95,16 +95,29 @@ export default function AlertChannelDialog({
             </Select>
           </Field>
           {form.channelType === "webhook" && (
-            <Field>
-              <FieldLabel htmlFor="webhook-url">{t("alert.webhook_url")}</FieldLabel>
-              <Input
-                id="webhook-url"
-                type="url"
-                value={form.webhookURL}
-                placeholder="https://example.com/alerts"
-                onChange={(event) => update("webhookURL", event.target.value)}
-              />
-            </Field>
+            <>
+              <Field>
+                <FieldLabel htmlFor="webhook-url">{t("alert.webhook_url")}</FieldLabel>
+                <Input
+                  id="webhook-url"
+                  type="url"
+                  value={form.webhookURL}
+                  placeholder="https://example.com/alerts"
+                  onChange={(event) => update("webhookURL", event.target.value)}
+                />
+              </Field>
+              <Field>
+                <FieldLabel htmlFor="webhook-headers">{t("alert.webhook_headers")}</FieldLabel>
+                <Textarea
+                  id="webhook-headers"
+                  value={form.webhookHeaders}
+                  rows={3}
+                  placeholder={"Authorization: Bearer token\nX-Custom: value"}
+                  onChange={(event) => update("webhookHeaders", event.target.value)}
+                />
+                <FieldDescription>{t("alert.webhook_headers_hint")}</FieldDescription>
+              </Field>
+            </>
           )}
           {form.channelType === "telegram" && (
             <>

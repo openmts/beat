@@ -102,6 +102,8 @@ export const baseTranslationsEn: Record<string, string> = {
   "alert.secret_unchanged": "Leave blank to keep the current credential.",
   "alert.template": "Push template",
   "alert.template_hint": "Use {{rule}}, {{node}}, {{metric}}, {{severity}}, {{value}}, {{status}}, {{time}} and {{message}}. Leave empty for the default message.",
+  "alert.webhook_headers": "Custom headers",
+  "alert.webhook_headers_hint": "One header per line in \"Key: value\" format.",
   "alert.delivery": "Last delivery",
   "alert.test_send": "Test",
   "alert.never_delivered": "Not sent yet",

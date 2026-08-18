@@ -283,3 +283,32 @@ func TestServiceSendTelegramTemplate(t *testing.T) {
 		t.Fatalf("text = %q", received.Text)
 	}
 }
+
+func TestServiceSendWebhookWithCustomHeaders(t *testing.T) {
+	var gotHeaders http.Header
+	var gotBody map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotHeaders = r.Header
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(server.Close)
+
+	service := NewService()
+	channel := &model.AlertChannel{
+		ID: "hdr", ChannelType: TypeWebhook,
+		Config: `{"url":"` + server.URL + `","headers":{"Authorization":"Bearer secret","X-Custom":"abc"}}`,
+	}
+	if _, err := service.Send(t.Context(), channel, testEvent()); err != nil {
+		t.Fatalf("send: %v", err)
+	}
+	if got := gotHeaders.Get("Authorization"); got != "Bearer secret" {
+		t.Fatalf("Authorization = %q", got)
+	}
+	if got := gotHeaders.Get("X-Custom"); got != "abc" {
+		t.Fatalf("X-Custom = %q", got)
+	}
+	if gotHeaders.Get("Content-Type") == "" {
+		t.Fatal("Content-Type should be set")
+	}
+}

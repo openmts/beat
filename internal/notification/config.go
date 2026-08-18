@@ -24,6 +24,8 @@ type WebhookConfig struct {
 	URL string `json:"url"`
 	// Template is an optional message template rendered when a trigger fires.
 	Template string `json:"template,omitempty"`
+	// Headers are extra HTTP headers sent with the webhook request.
+	Headers map[string]string `json:"headers,omitempty"`
 }
 
 type TelegramConfig struct {

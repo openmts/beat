@@ -100,6 +100,8 @@ channels. Each channel can be test-sent before use and shows its latest delivery
 result. Channels can define a custom push template using `{{rule}}`, `{{node}}`,
 `{{metric}}`, `{{severity}}`, `{{value}}`, `{{status}}`, `{{time}}` and
 `{{message}}` placeholders; leaving the template empty uses the default message.
+Webhook channels can also set custom HTTP headers (one `Key: value` per line)
+for authentication or routing, such as `Authorization` or `X-Api-Key`.
 Telegram and SMTP secrets are currently plaintext in the existing
 SQLite channel config but are never returned by management APIs; leaving a
 secret blank while editing keeps the stored value. Delivery status is runtime
