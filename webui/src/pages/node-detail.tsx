@@ -57,9 +57,11 @@ function NodeDetail() {
   const [timeRange, setTimeRange] = useState<TimeRange>("1h")
   const { data: node, loading: nodeLoading, error: nodeError } = useNode(id)
   const hours = RANGE_HOURS[timeRange]
-  const metricsState = useNodeMetrics(id, undefined, hours)
   const customMetricsState = useNodeCustomMetrics(id)
   const customMetricNames = customMetricsState.data?.map((m) => `custom_${m.name}`) ?? []
+  const builtInKeys = CHART_CONFIGS.map((c) => c.key)
+  const requestedMetrics = [...builtInKeys, ...customMetricNames]
+  const metricsState = useNodeMetrics(id, requestedMetrics, hours)
 
   return (
     <div className="flex min-h-svh flex-col">

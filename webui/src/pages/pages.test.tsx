@@ -91,7 +91,11 @@ describe("public pages", () => {
     expect(screen.getByRole("link", { name: "Back" })).toHaveAttribute("href", "/")
     expect(screen.getByText("25 GiB / 100 GiB")).toBeInTheDocument()
     fireEvent.click(screen.getByText("6h"))
-    expect(hooks.useNodeMetrics).toHaveBeenLastCalledWith("node", undefined, 6)
+    expect(hooks.useNodeMetrics).toHaveBeenLastCalledWith(
+      "node",
+      expect.arrayContaining(["cpu", "memory"]),
+      6,
+    )
   })
 
   it("renders custom metrics after built-in metrics on node detail", () => {
@@ -106,6 +110,12 @@ describe("public pages", () => {
     expect(screen.getByText("Custom Metrics")).toBeInTheDocument()
     expect(screen.getByTestId("chart-http_latency")).toBeInTheDocument()
     expect(screen.getByTestId("chart-CPU Usage")).toBeInTheDocument()
+    // The metrics request must include the custom metric so its data is fetched.
+    expect(hooks.useNodeMetrics).toHaveBeenLastCalledWith(
+      "node",
+      expect.arrayContaining(["custom_http_latency"]),
+      expect.any(Number),
+    )
   })
 
   it("renders node resource cards, runtime stats, and tags", () => {
