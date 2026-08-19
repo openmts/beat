@@ -1,10 +1,11 @@
 import type { Dispatch, SetStateAction } from "react"
-import { LoaderCircleIcon } from "lucide-react"
+import { LoaderCircleIcon, WandSparklesIcon } from "lucide-react"
 import { useLocale } from "@/context/locale"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Field, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
+import { Separator } from "@/components/ui/separator"
 import { Textarea } from "@/components/ui/textarea"
 import {
   Select,
@@ -16,6 +17,28 @@ import {
 } from "@/components/ui/select"
 import type { AlertChannelType } from "@/types"
 import type { AlertChannelFormState, EmailSecurity } from "@/pages/admin/alert-channel-config"
+
+// Supported template placeholders shown to the user when editing a template.
+const templateVariables: Array<{ token: string; labelKey: string }> = [
+  { token: "{{rule}}", labelKey: "alert.template_var_rule" },
+  { token: "{{node}}", labelKey: "alert.template_var_node" },
+  { token: "{{metric}}", labelKey: "alert.template_var_metric" },
+  { token: "{{severity}}", labelKey: "alert.template_var_severity" },
+  { token: "{{value}}", labelKey: "alert.template_var_value" },
+  { token: "{{status}}", labelKey: "alert.template_var_status" },
+  { token: "{{time}}", labelKey: "alert.template_var_time" },
+  { token: "{{message}}", labelKey: "alert.template_var_message" },
+]
+
+// A common, production-style alert template users can insert as a starting point.
+const commonAlertTemplate = [
+  "🔴 [{{severity}}] {{rule}}",
+  "Metric: {{metric}}",
+  "Node: {{node}}",
+  "Value: {{value}}",
+  "Status: {{status}}",
+  "Time: {{time}}",
+].join("\n")
 
 interface AlertChannelDialogProps {
   open: boolean
@@ -186,6 +209,31 @@ export default function AlertChannelDialog({
             />
             <FieldDescription>{t("alert.template_hint")}</FieldDescription>
           </Field>
+          <div className="flex flex-col gap-2 rounded-lg border p-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <span className="text-sm font-medium">{t("alert.template_placeholders")}</span>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => update("template", commonAlertTemplate)}
+              >
+                <WandSparklesIcon data-icon="inline-start" />
+                {t("alert.template_use_common")}
+              </Button>
+            </div>
+            <Separator />
+            <ul className="grid grid-cols-1 gap-x-6 gap-y-1 sm:grid-cols-2">
+              {templateVariables.map((variable) => (
+                <li key={variable.token} className="flex items-baseline gap-2 text-xs">
+                  <code className="shrink-0 rounded bg-muted px-1 py-0.5 font-mono">{variable.token}</code>
+                  <span className="text-muted-foreground">{t(variable.labelKey)}</span>
+                </li>
+              ))}
+            </ul>
+            <pre className="mt-1 overflow-x-auto rounded bg-muted p-2 text-xs text-muted-foreground">
+              {t("alert.template_common_example")}
+            </pre>
+          </div>
         </FieldGroup>
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>{t("app.cancel")}</Button>

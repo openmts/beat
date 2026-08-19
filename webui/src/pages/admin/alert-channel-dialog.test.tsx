@@ -94,4 +94,23 @@ describe("AlertChannelDialog", () => {
     fireEvent.change(screen.getByLabelText("Bot token"), { target: { value: "123:abc" } })
     fireEvent.change(screen.getByLabelText("Chat ID"), { target: { value: "99" } })
   })
+
+  it("shows placeholders and inserts the common template", () => {
+    const setForm: Dispatch<SetStateAction<AlertChannelFormState>> = vi.fn() as unknown as Dispatch<SetStateAction<AlertChannelFormState>>
+    render(<LocaleProvider><AlertChannelDialog
+      open editing={false} loading={false} form={emptyAlertChannelForm()}
+      setForm={setForm} onOpenChange={() => undefined} onSave={() => undefined}
+    /></LocaleProvider>)
+    // Placeholder list rendered.
+    expect(screen.getByText("Template placeholders")).toBeInTheDocument()
+    expect(screen.getByText("{{rule}}")).toBeInTheDocument()
+    expect(screen.getByText("{{node}}")).toBeInTheDocument()
+    // Clicking "Use common template" sets the form template.
+    fireEvent.click(screen.getByRole("button", { name: "Use common template" }))
+    expect(setForm).toHaveBeenCalledWith(expect.any(Function))
+    const updater = vi.mocked(setForm).mock.calls[0][0] as (prev: AlertChannelFormState) => AlertChannelFormState
+    const next = updater(emptyAlertChannelForm())
+    expect(next.template).toContain("{{rule}}")
+    expect(next.template).toContain("{{metric}}")
+  })
 })
