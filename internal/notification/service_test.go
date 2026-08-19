@@ -412,3 +412,70 @@ func TestServiceSendTelegramMarkdownV2(t *testing.T) {
 		t.Fatalf("text = %q", received.Text)
 	}
 }
+
+func TestServiceSendWebhookSmartJSONTemplate(t *testing.T) {
+	var gotCT string
+	var gotBody []byte
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotCT = r.Header.Get("Content-Type")
+		buf, _ := io.ReadAll(r.Body)
+		gotBody = buf
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(server.Close)
+
+	service := NewService()
+	channel := &model.AlertChannel{
+		ID: "json-tmpl", ChannelType: TypeWebhook,
+		Config: `{"url":"` + server.URL + `","template":"{\"chat_id\":\"42\",\"text\":\"{{rule}} {{value}}\"}"}`,
+	}
+	rich := &model.AlertEvent{ID: "e", RuleID: "r", NodeID: "n", Message: "m",
+		Value: 95, Status: model.AlertStatusTriggered, TriggeredAt: model.NowUTC(),
+		RuleName: "High CPU", NodeName: "web-01", Metric: "cpu", Severity: model.AlertSeverityWarning,
+	}
+	if _, err := service.Send(t.Context(), channel, rich); err != nil {
+		t.Fatalf("send: %v", err)
+	}
+	// JSON template is detected and sent as application/json.
+	if !strings.Contains(gotCT, "application/json") {
+		t.Fatalf("Content-Type = %q, want json", gotCT)
+	}
+	var parsed map[string]any
+	if err := json.Unmarshal(gotBody, &parsed); err != nil {
+		t.Fatalf("body not valid JSON: %v", err)
+	}
+	if parsed["chat_id"] != "42" || parsed["text"] != "High CPU 95.00" {
+		t.Fatalf("parsed = %#v", parsed)
+	}
+}
+
+func TestServiceSendWebhookTextTemplateAsPlain(t *testing.T) {
+	var gotCT string
+	var gotBody string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotCT = r.Header.Get("Content-Type")
+		buf, _ := io.ReadAll(r.Body)
+		gotBody = string(buf)
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(server.Close)
+
+	service := NewService()
+	channel := &model.AlertChannel{
+		ID: "text-tmpl", ChannelType: TypeWebhook,
+		Config: `{"url":"` + server.URL + `","template":"[{{severity}}] {{rule}} on {{node}}"}`,
+	}
+	rich := &model.AlertEvent{ID: "e", RuleID: "r", NodeID: "n", Message: "m",
+		Value: 95, Status: model.AlertStatusTriggered, TriggeredAt: model.NowUTC(),
+		RuleName: "High CPU", NodeName: "web-01", Metric: "cpu", Severity: model.AlertSeverityWarning,
+	}
+	if _, err := service.Send(t.Context(), channel, rich); err != nil {
+		t.Fatalf("send: %v", err)
+	}
+	if !strings.Contains(gotCT, "text/plain") {
+		t.Fatalf("Content-Type = %q, want text/plain", gotCT)
+	}
+	if gotBody != "[warning] High CPU on web-01" {
+		t.Fatalf("body = %q", gotBody)
+	}
+}

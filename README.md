@@ -108,6 +108,10 @@ result. Channels can define a custom push template using `{{rule}}`, `{{node}}`,
 `{{message}}` placeholders; leaving the template empty uses the default message.
 Webhook channels can also set custom HTTP headers (one `Key: value` per line)
 for authentication or routing, such as `Authorization` or `X-Api-Key`.
+A webhook template is detected as JSON when the rendered template parses as
+valid JSON, and is then sent as an `application/json` body; otherwise it is sent
+as `text/plain`. This lets webhook channels wrap structured services (for
+example a JSON telegram proxy) while still supporting plain text templates.
 Telegram channels can pick a parse mode (`HTML`, `Markdown` or `MarkdownV2`);
 dynamic placeholder values are escaped for `MarkdownV2` so characters like `.`
 or `_` in rule or node names do not break message parsing.

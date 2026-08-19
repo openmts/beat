@@ -157,7 +157,12 @@ func (s *Service) sendWebhook(ctx context.Context, raw string, event *model.Aler
 		return err
 	}
 	if strings.TrimSpace(config.Template) != "" {
-		return s.sendWebhookText(ctx, raw, RenderTemplate(config.Template, event))
+		rendered := RenderTemplate(config.Template, event)
+		contentType := "text/plain"
+		if json.Valid([]byte(rendered)) {
+			contentType = "application/json"
+		}
+		return s.sendWebhookBody(ctx, raw, rendered, contentType)
 	}
 	return s.sendWebhookPayload(ctx, raw, event)
 }
@@ -170,16 +175,16 @@ func parseWebhookConfig(raw string) (WebhookConfig, error) {
 	return config, nil
 }
 
-func (s *Service) sendWebhookText(ctx context.Context, raw string, text string) error {
+func (s *Service) sendWebhookBody(ctx context.Context, raw string, body string, contentType string) error {
 	config, err := parseWebhookConfig(raw)
 	if err != nil {
 		return err
 	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, config.URL, strings.NewReader(text))
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, config.URL, strings.NewReader(body))
 	if err != nil {
 		return errors.New("create webhook request failed")
 	}
-	request.Header.Set("Content-Type", "text/plain")
+	request.Header.Set("Content-Type", contentType)
 	applyWebhookHeaders(request, config.Headers)
 	return s.doHTTP(request, "webhook")
 }
