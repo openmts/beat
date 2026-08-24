@@ -25,6 +25,8 @@ export interface AdminSession {
   ip_address: string
   user_agent: string
   revoked_at: string | null
+  authentication_method?: "local" | "oidc"
+  external_identity_id?: string | null
   current?: boolean
 }
 
@@ -63,4 +65,38 @@ export interface AuditPage {
   total: number
   limit: number
   offset: number
+}
+
+export interface OIDCProviderPublic {
+  id: string
+  slug: string
+  display_name: string
+}
+
+export interface OIDCProvider {
+  id: string
+  slug: string
+  display_name: string
+  issuer_url: string
+  client_id: string
+  client_secret_configured: boolean
+  scopes: string[]
+  enabled: boolean
+  configuration_version: number
+  sort_order: number
+  created_at: string
+  updated_at: string
+}
+
+export interface ExternalIdentity {
+  id: string
+  provider_id: string
+  email: string
+  email_verified: boolean
+  preferred_username?: string
+  display_name?: string
+  last_login_at: string
+  created_at: string
+  updated_at: string
+  provider_name?: string
 }

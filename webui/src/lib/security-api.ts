@@ -6,6 +6,9 @@ import type {
   AdminUser,
   AuditPage,
   AuthState,
+  ExternalIdentity,
+  OIDCProvider,
+  OIDCProviderPublic,
   TOTPSetup,
 } from "@/types/security"
 
@@ -103,4 +106,65 @@ export async function revokeOtherAdminSessions(): Promise<number> {
 
 export async function listAuditEvents(offset = 0): Promise<AuditPage> {
   return (await api.get<AuditPage>("/admin/audit-events", { params: { limit: 50, offset } })).data
+}
+
+export async function listPublicOIDCProviders(): Promise<OIDCProviderPublic[]> {
+  return (await api.get<OIDCProviderPublic[]>("/auth/oidc/providers")).data
+}
+
+export async function beginOIDCLogin(providerId: string, returnPath: string): Promise<string> {
+  return (await api.post<{ authorization_url: string }>(`/auth/oidc/providers/${providerId}/begin`, {
+    return_path: returnPath,
+  })).data.authorization_url
+}
+
+export async function listMyExternalIdentities(): Promise<ExternalIdentity[]> {
+  return (await api.get<ExternalIdentity[]>("/admin/oidc/identities/me")).data
+}
+
+export async function beginOIDCLink(providerId: string, returnPath: string): Promise<string> {
+  return (await api.post<{ authorization_url: string }>(`/admin/oidc/providers/${providerId}/link`, {
+    return_path: returnPath,
+  })).data.authorization_url
+}
+
+export async function unlinkExternalIdentity(id: string): Promise<void> {
+  await api.delete(`/admin/oidc/identities/${id}`)
+}
+
+export async function listAdminOIDCProviders(): Promise<OIDCProvider[]> {
+  return (await api.get<OIDCProvider[]>("/admin/oidc/providers")).data
+}
+
+export async function createOIDCProvider(payload: {
+  slug: string
+  display_name: string
+  issuer_url: string
+  client_id: string
+  client_secret: string
+  scopes: string[]
+  enabled: boolean
+  sort_order: number
+}): Promise<OIDCProvider> {
+  return (await api.post<OIDCProvider>("/admin/oidc/providers", payload)).data
+}
+
+export async function updateOIDCProvider(
+  id: string,
+  payload: {
+    slug: string
+    display_name: string
+    issuer_url: string
+    client_id: string
+    client_secret?: string
+    scopes: string[]
+    enabled: boolean
+    sort_order: number
+  },
+): Promise<OIDCProvider> {
+  return (await api.put<OIDCProvider>(`/admin/oidc/providers/${id}`, payload)).data
+}
+
+export async function deleteOIDCProvider(id: string): Promise<void> {
+  await api.delete(`/admin/oidc/providers/${id}`)
 }

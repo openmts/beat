@@ -19,7 +19,7 @@ import { backupTranslations } from "@/context/backup-translations"
 interface LocaleContextValue {
   locale: Locale
   setLocale: (locale: Locale) => void
-  t: (key: string) => string
+  t: (key: string, params?: Record<string, string | number>) => string
 }
 
 const LocaleContext = createContext<LocaleContextValue | undefined>(undefined)
@@ -32,7 +32,7 @@ export function LocaleProvider({ children }: { children: ReactNode }) {
   })
 
   const t = useCallback(
-    (key: string): string => {
+    (key: string, params?: Record<string, string | number>): string => {
       const catalogs = [
         baseTranslations,
         monitorTranslations,
@@ -47,7 +47,11 @@ export function LocaleProvider({ children }: { children: ReactNode }) {
         .map((catalog) => catalog[locale][key])
         .find((value) => value !== undefined)
 
-      return translation ?? key
+      if (translation === undefined) return key
+      if (!params) return translation
+      return translation.replace(/\{(\w+)\}/g, (placeholder, name) =>
+        String(params[name] ?? placeholder),
+      )
     },
     [locale],
   )

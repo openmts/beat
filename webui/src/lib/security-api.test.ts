@@ -2,10 +2,13 @@ import MockAdapter from "axios-mock-adapter"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
 import { api } from "@/lib/api-client"
 import {
-  beginTOTP, bootstrapAdmin, changeAdminPassword, createAdminUser, deleteAdminUser,
-  disableTOTP, enableTOTP, getAdminSession, getAuthState, listAdminSessions,
-  listAdminUsers, listAuditEvents, loginAdmin, logoutAdmin, reauthenticateAdmin,
-  revokeAdminSession, revokeOtherAdminSessions, updateAdminUser,
+  beginOIDCLink, beginOIDCLogin, beginTOTP, bootstrapAdmin, changeAdminPassword,
+  createAdminUser, createOIDCProvider, deleteAdminUser, deleteOIDCProvider,
+  disableTOTP, enableTOTP, getAdminSession, getAuthState, listAdminOIDCProviders,
+  listAdminSessions, listAdminUsers, listAuditEvents, listMyExternalIdentities,
+  listPublicOIDCProviders, loginAdmin, logoutAdmin, reauthenticateAdmin,
+  revokeAdminSession, revokeOtherAdminSessions, unlinkExternalIdentity,
+  updateAdminUser, updateOIDCProvider,
 } from "@/lib/security-api"
 
 describe("security API", () => {
@@ -62,5 +65,46 @@ describe("security API", () => {
       events: [], total: 0, limit: 50, offset: Number(config.params.offset),
     }])
     expect((await listAuditEvents(50)).offset).toBe(50)
+  })
+})
+
+describe("OIDC security API", () => {
+  let mock: MockAdapter
+  beforeEach(() => { mock = new MockAdapter(api) })
+  afterEach(() => mock.restore())
+
+  it("maps every OIDC request", async () => {
+    mock.onGet("/auth/oidc/providers").reply(200, [{ id: "p1", slug: "issuer", display_name: "IdP" }])
+    expect(await listPublicOIDCProviders()).toEqual([{ id: "p1", slug: "issuer", display_name: "IdP" }])
+
+    mock.onPost("/auth/oidc/providers/p1/begin").reply(200, { authorization_url: "https://idp/auth" })
+    expect(await beginOIDCLogin("p1", "/admin")).toBe("https://idp/auth")
+
+    mock.onGet("/admin/oidc/identities/me").reply(200, [{ id: "id-1", provider_name: "IdP" }])
+    expect((await listMyExternalIdentities())[0].provider_name).toBe("IdP")
+
+    mock.onPost("/admin/oidc/providers/p1/link").reply(200, { authorization_url: "https://idp/link" })
+    expect(await beginOIDCLink("p1", "/admin/security")).toBe("https://idp/link")
+
+    mock.onDelete("/admin/oidc/identities/id-1").reply(204)
+    await unlinkExternalIdentity("id-1")
+
+    mock.onGet("/admin/oidc/providers").reply(200, [{ id: "p1" }])
+    expect(await listAdminOIDCProviders()).toHaveLength(1)
+
+    mock.onPost("/admin/oidc/providers").reply(201, { id: "p1", client_secret_configured: true })
+    expect((await createOIDCProvider({
+      slug: "issuer", display_name: "IdP", issuer_url: "https://idp",
+      client_id: "c", client_secret: "s", scopes: ["openid"], enabled: true, sort_order: 0,
+    })).client_secret_configured).toBe(true)
+
+    mock.onPut("/admin/oidc/providers/p1").reply(200, { id: "p1", enabled: false })
+    expect((await updateOIDCProvider("p1", {
+      slug: "issuer", display_name: "IdP", issuer_url: "https://idp",
+      client_id: "c", client_secret: "s", scopes: ["openid"], enabled: false, sort_order: 0,
+    })).enabled).toBe(false)
+
+    mock.onDelete("/admin/oidc/providers/p1").reply(204)
+    await deleteOIDCProvider("p1")
   })
 })

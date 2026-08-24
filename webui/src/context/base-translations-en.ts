@@ -33,6 +33,8 @@ export const baseTranslationsEn: Record<string, string> = {
   "auth.connect": "Open admin",
   "auth.invalid": "The admin token is invalid",
   "auth.logout": "Sign out",
+  "auth.sign_in_with": "Sign in with {provider}",
+  "auth.oidc_start_failed": "The single sign-on request could not be started",
   "node.name": "Name",
   "node.host": "Host",
   "node.port": "Port",

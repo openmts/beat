@@ -48,9 +48,29 @@ func (r *Router) registerSessionAuthRoutes(api *http.ServeMux) {
 	api.Handle("DELETE /api/v1/admin/sessions/others", r.admin(http.HandlerFunc(authHandler.HandleRevokeOtherSessions)))
 	api.Handle("DELETE /api/v1/admin/sessions/{id}", r.admin(http.HandlerFunc(authHandler.HandleRevokeSession)))
 	api.Handle("GET /api/v1/admin/audit-events", r.admin(http.HandlerFunc(authHandler.HandleAuditEvents)))
+	if r.oidc != nil {
+		r.registerOIDCRoutes(api)
+	}
 	if r.backups != nil {
 		r.registerBackupRoutes(api)
 	}
+}
+
+func (r *Router) registerOIDCRoutes(api *http.ServeMux) {
+	oidcHandler := handler.NewOIDCHandler(r.oidc)
+	api.HandleFunc("GET /api/v1/auth/oidc/providers", oidcHandler.HandleListPublicProviders)
+	api.Handle("POST /api/v1/auth/oidc/providers/{id}/begin",
+		requireSameOrigin(http.HandlerFunc(oidcHandler.HandleBeginLogin)))
+	api.HandleFunc("GET /api/v1/auth/oidc/callback", oidcHandler.HandleCallback)
+	api.Handle("GET /api/v1/admin/oidc/identities/me", r.admin(http.HandlerFunc(oidcHandler.HandleListIdentitiesMe)))
+	api.Handle("POST /api/v1/admin/oidc/providers/{id}/link",
+		r.admin(http.HandlerFunc(oidcHandler.HandleBeginLink)))
+	api.Handle("DELETE /api/v1/admin/oidc/identities/{id}",
+		r.admin(http.HandlerFunc(oidcHandler.HandleUnlink)))
+	api.Handle("GET /api/v1/admin/oidc/providers", r.ownerAdmin(http.HandlerFunc(oidcHandler.HandleListProviders)))
+	api.Handle("POST /api/v1/admin/oidc/providers", r.recentAuthOwnerAdmin(http.HandlerFunc(oidcHandler.HandleCreateProvider)))
+	api.Handle("PUT /api/v1/admin/oidc/providers/{id}", r.recentAuthOwnerAdmin(http.HandlerFunc(oidcHandler.HandleUpdateProvider)))
+	api.Handle("DELETE /api/v1/admin/oidc/providers/{id}", r.recentAuthOwnerAdmin(http.HandlerFunc(oidcHandler.HandleDeleteProvider)))
 }
 
 func (r *Router) registerBackupRoutes(api *http.ServeMux) {

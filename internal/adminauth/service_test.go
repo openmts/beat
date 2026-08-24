@@ -2,6 +2,8 @@ package adminauth
 
 import (
 	"bytes"
+	"context"
+	"crypto/sha256"
 	"errors"
 	"path/filepath"
 	"testing"
@@ -279,4 +281,70 @@ func newTestService(t *testing.T) *Service {
 		t.Fatalf("new authentication service: %v", err)
 	}
 	return service
+}
+
+func TestNow(t *testing.T) {
+	service := newTestService(t)
+	now := service.Now()
+	if now.IsZero() || now.Location() != time.UTC {
+		t.Fatalf("Now = %v", now)
+	}
+}
+
+func TestCreateOIDCSession(t *testing.T) {
+	service := newTestService(t)
+	ctx := context.Background()
+	now := time.Now().UTC()
+	user := &model.AdminUser{
+		ID: "u-oidc", Username: "oidc-user", DisplayName: "OIDC User",
+		Role: model.AdminRoleAdmin, PasswordHash: "hash", Enabled: true,
+		PasswordChangedAt: now, CreatedAt: now, UpdatedAt: now,
+	}
+	if err := service.config.Store.CreateUser(ctx, user); err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+	externalID := "identity-1"
+	result, err := service.CreateOIDCSession(ctx, user.ID, externalID, "127.0.0.1", "agent")
+	if err != nil {
+		t.Fatalf("create oidc session: %v", err)
+	}
+	if result.Token == "" || result.Principal.Session.AuthenticationMethod != model.AuthMethodOIDC {
+		t.Fatalf("oidc session = %#v", result.Principal.Session)
+	}
+	if result.Principal.Session.ExternalIdentityID == nil || *result.Principal.Session.ExternalIdentityID != externalID {
+		t.Fatalf("external identity id = %v", result.Principal.Session.ExternalIdentityID)
+	}
+	session, err := service.config.Store.GetSessionByTokenHash(ctx, sha256Hash([]byte(result.Token)))
+	if err != nil || session == nil || session.AuthenticationMethod != model.AuthMethodOIDC {
+		t.Fatalf("persisted session = %v / %v", session, err)
+	}
+}
+
+func TestCreateOIDCSessionRejectsDisabledUser(t *testing.T) {
+	service := newTestService(t)
+	ctx := context.Background()
+	now := time.Now().UTC()
+	user := &model.AdminUser{
+		ID: "u-disabled", Username: "disabled", DisplayName: "Disabled",
+		Role: model.AdminRoleAdmin, PasswordHash: "hash", Enabled: false,
+		PasswordChangedAt: now, CreatedAt: now, UpdatedAt: now,
+	}
+	if err := service.config.Store.CreateUser(ctx, user); err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+	if _, err := service.CreateOIDCSession(ctx, user.ID, "id", "127.0.0.1", "agent"); !errors.Is(err, ErrInvalidCredentials) {
+		t.Fatalf("disabled user error = %v", err)
+	}
+}
+
+func TestCreateOIDCSessionMissingUser(t *testing.T) {
+	service := newTestService(t)
+	if _, err := service.CreateOIDCSession(context.Background(), "missing", "id", "127.0.0.1", "agent"); !errors.Is(err, ErrInvalidCredentials) {
+		t.Fatalf("missing user error = %v", err)
+	}
+}
+
+func sha256Hash(raw []byte) []byte {
+	digest := sha256.Sum256(raw)
+	return digest[:]
 }

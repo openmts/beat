@@ -134,6 +134,10 @@ func validateExtracted(ctx context.Context, root string) (model.BackupManifest, 
 	if err := validateSQLite(ctx, filepath.Join(root, sqliteEntry)); err != nil {
 		return model.BackupManifest{}, err
 	}
+	if err := validateOIDCCiphertexts(ctx, filepath.Join(root, sqliteEntry),
+		filepath.Join(root, filepath.FromSlash(dataKeyEntry))); err != nil {
+		return model.BackupManifest{}, err
+	}
 	rows, err := validateMetrics(filepath.Join(root, metricsEntry), manifest.SnapshotCutoff.UnixNano())
 	if err != nil {
 		return model.BackupManifest{}, err

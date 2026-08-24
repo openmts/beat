@@ -10,6 +10,7 @@ import (
 	"github.com/beat/backend/internal/api/handler"
 	"github.com/beat/backend/internal/api/middleware"
 	"github.com/beat/backend/internal/notification"
+	"github.com/beat/backend/internal/oidc"
 	"github.com/beat/backend/internal/store"
 )
 
@@ -31,6 +32,7 @@ type Router struct {
 	maintenance       handler.MaintenanceOperations
 	backups           handler.BackupOperations
 	security          *adminauth.Service
+	oidc              *oidc.Service
 	adminToken        string
 	legacyAgentToken  string
 	terminal          handler.TerminalOperations
@@ -120,6 +122,13 @@ func WithBackupService(service handler.BackupOperations) RouterOption {
 func WithAdminSecurity(service *adminauth.Service) RouterOption {
 	return func(router *Router) {
 		router.security = service
+	}
+}
+
+// WithOIDC 注入 OIDC 服务；nil 时跳过 OIDC 路由注册。
+func WithOIDC(service *oidc.Service) RouterOption {
+	return func(router *Router) {
+		router.oidc = service
 	}
 }
 

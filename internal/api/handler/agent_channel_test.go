@@ -185,3 +185,36 @@ func TestAgentChannelHandlerWithAgentIdentity(t *testing.T) {
 		t.Fatalf("status = %d, want 401", recorder.Code)
 	}
 }
+
+func TestAgentWebSocketConnClose(t *testing.T) {
+	ops := &fakeChannelOps{}
+	hub := service.NewAgentHub()
+	handler := NewAgentChannelHandler(ops, hub)
+	conn := dialAgentChannel(t, handler)
+
+	wrapped := &agentWebSocketConn{conn: conn, writeCh: make(chan []byte, 1)}
+	if err := wrapped.Close(); err != nil {
+		t.Fatalf("close wrapped conn: %v", err)
+	}
+}
+
+func TestWriteLoopSendsPingAndData(t *testing.T) {
+	ops := &fakeChannelOps{}
+	hub := service.NewAgentHub()
+	handler := NewAgentChannelHandler(ops, hub)
+	conn := dialAgentChannel(t, handler)
+
+	wrapped := &agentWebSocketConn{conn: conn, writeCh: make(chan []byte, 2)}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		writeLoop(t.Context(), wrapped)
+	}()
+	wrapped.writeCh <- []byte(`{"type":"task"}`)
+	close(wrapped.writeCh)
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("write loop did not stop after close")
+	}
+}

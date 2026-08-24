@@ -80,7 +80,7 @@ generates a replacement when encrypted references or a restore/rotation marker
 exist. Key bytes are never exposed through HTTP, logs, audit, metrics, process
 arguments, or environment templates.
 
-Before `v5`, envelope format 1 introduced by migration `v2` encrypts directly
+Before `v8`, envelope format 1 introduced by migration `v5` encrypts directly
 with this root key and names the root-key fingerprint as its key ID. It is
 accepted only for the registered OIDC resource profiles and is explicitly
 migrated by `v5`.
@@ -138,14 +138,14 @@ pending marker. After root-key initialization and before the HTTP listener or
 workers start, a dedicated coordinator performs secret backfill in immediate
 transactions.
 
-Migration `v2` must extend `secretbox` with the strict compatibility envelope
+Migration `v5` must extend `secretbox` with the strict compatibility envelope
 and resource-bound AAD, encrypt OIDC provider secrets and PKCE verifiers through
 that API, and extend backup validation to authenticate every archived OIDC
 ciphertext with the archived root key. It must never persist those fields in the
 legacy nil-AAD form. Temporary transaction cleanup remains bounded and expired
 transactions may be removed rather than migrated later.
 
-Migration `v5` must:
+Migration `v8` must:
 
 1. create the wrapped data-key registry and one active data key;
 2. convert every durable TOTP ciphertext and every retained `v2` OIDC envelope
@@ -163,7 +163,7 @@ Any parse, encryption, affected-row, commit, or verification error leaves the
 marker incomplete and prevents readiness and serving. Restart resumes from
 durable state without treating a format 2 envelope as legacy plaintext.
 
-Migration `v6` parses each legacy notification configuration, splits canonical
+Migration `v9` parses each legacy notification configuration, splits canonical
 public configuration from the complete secret document, creates immutable
 revision 1, encrypts it with the active data key and channel/revision AAD, clears
 the old plaintext, and marks its own backfill complete in one immediate

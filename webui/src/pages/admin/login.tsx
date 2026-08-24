@@ -1,13 +1,16 @@
-import { useState, type FormEvent } from "react"
-import { KeyRoundIcon, ShieldCheckIcon } from "lucide-react"
+import { useEffect, useState, type FormEvent } from "react"
+import { KeyRoundIcon, LogInIcon, ShieldCheckIcon } from "lucide-react"
 import { useAuth } from "@/context/auth"
 import { useLocale } from "@/context/locale"
 import { useSiteSettings } from "@/context/site-settings"
+import { beginOIDCLogin, listPublicOIDCProviders } from "@/lib/security-api"
+import type { OIDCProviderPublic } from "@/types/security"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Field, FieldGroup, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
+import { Separator } from "@/components/ui/separator"
 
 export default function AdminLogin() {
   const { login, bootstrap, setupRequired } = useAuth()
@@ -21,6 +24,35 @@ export default function AdminLogin() {
   const [needsTOTP, setNeedsTOTP] = useState(false)
   const [error, setError] = useState("")
   const [submitting, setSubmitting] = useState(false)
+  const [providers, setProviders] = useState<OIDCProviderPublic[]>([])
+  const [oidcSubmitting, setOIDCSubmitting] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (setupRequired) return
+    let cancelled = false
+    listPublicOIDCProviders()
+      .then((found) => {
+        if (!cancelled) setProviders(found)
+      })
+      .catch(() => {
+        if (!cancelled) setProviders([])
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [setupRequired])
+
+  const handleOIDCLogin = async (providerId: string) => {
+    setOIDCSubmitting(providerId)
+    setError("")
+    try {
+      const authorizationURL = await beginOIDCLogin(providerId, "/admin")
+      window.location.assign(authorizationURL)
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : t("auth.oidc_start_failed"))
+      setOIDCSubmitting(null)
+    }
+  }
 
   const handleSubmit = async (event: FormEvent) => {
     event.preventDefault()
@@ -106,6 +138,21 @@ export default function AdminLogin() {
                 </Button>
               </FieldGroup>
             </form>
+            {!setupRequired && providers.length > 0 && (
+              <>
+                <Separator className="my-4" />
+                <div className="flex flex-col gap-2">
+                  {providers.map((provider) => (
+                    <Button key={provider.id} type="button" variant="outline" className="w-full"
+                      disabled={oidcSubmitting === provider.id}
+                      onClick={() => void handleOIDCLogin(provider.id)}>
+                      <LogInIcon data-icon="inline-start" />
+                      {t("auth.sign_in_with", { provider: provider.display_name })}
+                    </Button>
+                  ))}
+                </div>
+              </>
+            )}
           </CardContent>
         </Card>
       </div>

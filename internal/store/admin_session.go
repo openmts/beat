@@ -12,16 +12,18 @@ import (
 
 const adminSessionColumns = `id, user_id, token_hash, token_prefix, created_at,
 	last_activity_at, idle_expires_at, absolute_expires_at, reauthenticated_until,
-	ip_address, user_agent, revoked_at`
+	ip_address, user_agent, revoked_at, authentication_method, external_identity_id`
 
 func (store *AdminStore) CreateSession(ctx context.Context, session *model.AdminSession) error {
 	_, err := store.db.ExecContext(ctx, `INSERT INTO admin_sessions (
 		id, user_id, token_hash, token_prefix, created_at, last_activity_at, idle_expires_at,
-		absolute_expires_at, reauthenticated_until, ip_address, user_agent, revoked_at
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, session.ID, session.UserID,
+		absolute_expires_at, reauthenticated_until, ip_address, user_agent, revoked_at,
+		authentication_method, external_identity_id
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, session.ID, session.UserID,
 		session.TokenHash, session.TokenPrefix, session.CreatedAt, session.LastActivityAt,
 		session.IdleExpiresAt, session.AbsoluteExpiresAt, session.ReauthenticatedUntil,
-		session.IPAddress, session.UserAgent, session.RevokedAt)
+		session.IPAddress, session.UserAgent, session.RevokedAt,
+		session.AuthenticationMethod, session.ExternalIdentityID)
 	if err != nil {
 		return fmt.Errorf("create administrator session: %w", err)
 	}
@@ -118,7 +120,8 @@ func scanAdminSession(scanner sessionScanner) (*model.AdminSession, error) {
 	err := scanner.Scan(&session.ID, &session.UserID, &session.TokenHash, &session.TokenPrefix,
 		&session.CreatedAt, &session.LastActivityAt, &session.IdleExpiresAt,
 		&session.AbsoluteExpiresAt, &session.ReauthenticatedUntil, &session.IPAddress,
-		&session.UserAgent, &session.RevokedAt)
+		&session.UserAgent, &session.RevokedAt, &session.AuthenticationMethod,
+		&session.ExternalIdentityID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}

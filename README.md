@@ -44,9 +44,15 @@ The public dashboard and read-only monitoring APIs do not require login. The
 admin panel is available at `/admin`; on a fresh database, use
 `BEAT_ADMIN_TOKEN` once to create the first `owner` account. Normal admin access
 then uses username/password, optional TOTP, and a server-side session carried by
-an HttpOnly SameSite cookie. Terminal WebSockets use the same session and
-same-origin checks; active terminal sessions are tracked server-side, exposed
-as `beat_terminal_sessions_active`, and terminated before storage closes during
+an HttpOnly SameSite cookie. Administrators can additionally link OpenID
+Connect identities: an owner configures providers (issuer, client ID, secret,
+scopes) in `/admin/security`, and any administrator can link their own external
+identity once; login then shows one button per enabled provider. Provider
+secrets and PKCE verifiers are stored as AES-GCM envelopes bound to their
+resource, and provider management, linking, and unlinking require recent local
+reauthentication. Terminal WebSockets use the same session and same-origin
+checks; active terminal sessions are tracked server-side, exposed as
+`beat_terminal_sessions_active`, and terminated before storage closes during
 graceful shutdown. No administrator credential is stored in Web Storage.
 
 `BEAT_TRUSTED_PROXIES` is disabled when empty. Configure it only with the CIDRs

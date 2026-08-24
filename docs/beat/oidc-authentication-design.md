@@ -41,7 +41,7 @@ login; it does not introduce a second session implementation.
    use envelope format 1 and resource-bound AAD from
    [`application-secret-lifecycle-design.md`](./application-secret-lifecycle-design.md).
    This migration extends the existing AES-GCM `secretbox` without creating an
-   OIDC-only cipher; `v5` later converts retained envelopes to wrapped data keys.
+   OIDC-only cipher; `v8` later converts retained envelopes to wrapped data keys.
    Raw state, browser-binding tokens, and nonces are never stored.
 9. Discovery, JWKS, and token calls use bounded, SSRF-resistant HTTP clients;
    the application never uses `http.DefaultClient` for provider traffic.
@@ -153,7 +153,7 @@ destination allowlist rather than weakening the global-address rule.
 
 ## Persistence model
 
-Canonical SQLite migration `v2` adds the following SQLite-owned platform data,
+Canonical SQLite migration `v5` adds the following SQLite-owned platform data,
 as assigned by
 [`commercial-parity-implementation-sequence.md`](./commercial-parity-implementation-sequence.md).
 Metric samples remain exclusively in MTS.
@@ -209,7 +209,7 @@ maintenance scheduler. The table contains no metric data.
 
 ### Session attribution
 
-Migration version 2 also adds `authentication_method` (`local` or `oidc`) and
+Migration version 5 also adds `authentication_method` (`local` or `oidc`) and
 nullable `external_identity_id` to `admin_sessions`. Existing rows default to
 `local`. Session API responses can therefore explain how a session was created
 without exposing provider secrets or tokens.

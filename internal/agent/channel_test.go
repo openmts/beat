@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync"
 	"testing"
@@ -216,4 +217,38 @@ func TestChannelEndpointConversion(t *testing.T) {
 	if got := channel.location.String(); !strings.HasPrefix(got, "wss://beat.example.com/base/api/v1/agents/ws") {
 		t.Fatalf("location = %q", got)
 	}
+}
+
+func TestChannelSetOnErrorHook(t *testing.T) {
+	channel, err := NewChannel("http://server.test", "token", &recordingExecutor{})
+	if err != nil {
+		t.Fatalf("new channel: %v", err)
+	}
+	var called bool
+	channel.SetOnError(func(error) { called = true })
+	channel.SetOnError(func(error) { called = false })
+	_ = called
+}
+
+func TestSendOutgoingWriteError(t *testing.T) {
+	server := httptest.NewServer(websocket.Server{
+		Handler: websocket.Handler(func(conn *websocket.Conn) {
+			<-time.After(5 * time.Second)
+			_ = conn.Close()
+		}),
+	})
+	defer server.Close()
+
+	location := &url.URL{Scheme: "ws", Host: strings.TrimPrefix(server.URL, "http://")}
+	conn, err := websocket.DialConfig(&websocket.Config{
+		Location: location, Origin: location, Version: websocket.ProtocolVersionHybi13,
+	})
+	if err != nil {
+		t.Fatalf("dial websocket: %v", err)
+	}
+	_ = conn.Close()
+	if err := sendOutgoing(conn, map[string]string{"type": "pong"}); err == nil {
+		t.Fatal("send on closed connection must fail")
+	}
+	_ = conn.Close()
 }

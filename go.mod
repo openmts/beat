@@ -3,6 +3,8 @@ module github.com/beat/backend
 go 1.26.6
 
 require (
+	github.com/coreos/go-oidc/v3 v3.20.0
+	github.com/go-jose/go-jose/v4 v4.1.4
 	github.com/google/uuid v1.6.0
 	github.com/openmts/mts v0.0.0-20260723011810-08d26a5b6271
 	github.com/pquerna/otp v1.5.0
@@ -10,6 +12,7 @@ require (
 	github.com/urfave/cli/v3 v3.10.1
 	golang.org/x/crypto v0.54.0
 	golang.org/x/net v0.57.0
+	golang.org/x/oauth2 v0.36.0
 	modernc.org/sqlite v1.54.0
 )
 

@@ -111,3 +111,39 @@ func (r *Router) cookiePrincipal(
 	}
 	return principal, true
 }
+
+// ownerAdmin 要求 owner 角色（继承会话管理员认证）。
+func (r *Router) ownerAdmin(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		principal, ok := r.cookiePrincipal(w, request)
+		if !ok {
+			return
+		}
+		if principal.User.Role != model.AdminRoleOwner {
+			middleware.WriteAuthError(w, http.StatusForbidden, "owner permission is required")
+			return
+		}
+		ctx := middleware.WithAdminPrincipal(request.Context(), principal)
+		next.ServeHTTP(w, request.WithContext(ctx))
+	})
+}
+
+// recentAuthOwnerAdmin 要求 owner 角色且最近已本地重认证（敏感管理操作）。
+func (r *Router) recentAuthOwnerAdmin(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		principal, ok := r.cookiePrincipal(w, request)
+		if !ok {
+			return
+		}
+		if principal.User.Role != model.AdminRoleOwner {
+			middleware.WriteAuthError(w, http.StatusForbidden, "owner permission is required")
+			return
+		}
+		if !principal.Session.RecentlyAuthenticated(r.security.Now()) {
+			middleware.WriteAuthError(w, http.StatusPreconditionRequired, "recent authentication is required")
+			return
+		}
+		ctx := middleware.WithAdminPrincipal(request.Context(), principal)
+		next.ServeHTTP(w, request.WithContext(ctx))
+	})
+}

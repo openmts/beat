@@ -15,9 +15,10 @@ import (
 const keyLength = 32
 
 type Manager struct {
-	aead   cipher.AEAD
-	random io.Reader
-	mu     sync.Mutex
+	aead        cipher.AEAD
+	random      io.Reader
+	fingerprint [keyIDBytes]byte
+	mu          sync.Mutex
 }
 
 func New(keyPath string, randomSource io.Reader) (*Manager, error) {
@@ -28,6 +29,17 @@ func New(keyPath string, randomSource io.Reader) (*Manager, error) {
 	if err != nil {
 		return nil, err
 	}
+	return NewFromKey(key, randomSource)
+}
+
+// NewFromKey 从已知的 32 字节密钥构造管理器；用于备份校验等已持有密钥的路径。
+func NewFromKey(key []byte, randomSource io.Reader) (*Manager, error) {
+	if len(key) != keyLength {
+		return nil, errors.New("administrator data key must contain 32 bytes")
+	}
+	if randomSource == nil {
+		randomSource = rand.Reader
+	}
 	block, err := aes.NewCipher(key)
 	if err != nil {
 		return nil, fmt.Errorf("create AES cipher: %w", err)
@@ -36,7 +48,7 @@ func New(keyPath string, randomSource io.Reader) (*Manager, error) {
 	if err != nil {
 		return nil, fmt.Errorf("create AES-GCM: %w", err)
 	}
-	return &Manager{aead: aead, random: randomSource}, nil
+	return &Manager{aead: aead, random: randomSource, fingerprint: keyFingerprint(key)}, nil
 }
 
 func (manager *Manager) Encrypt(plaintext []byte) ([]byte, error) {

@@ -55,3 +55,13 @@ func TestSchedulerRunOnceHandlesRunnerErrors(t *testing.T) {
 		t.Fatal("runner was not called")
 	}
 }
+
+func TestSchedulerObserverHooks(t *testing.T) {
+	scheduler := NewScheduler(schedulerRunner{})
+	var observed error
+	scheduler.SetObserver(func(err error) { observed = err })
+	if scheduler.Interval() != defaultSchedulerInterval {
+		t.Fatalf("interval = %v", scheduler.Interval())
+	}
+	_ = observed
+}

@@ -66,6 +66,11 @@ func (service *Service) LegacyAuthorize(ctx context.Context, token string) (bool
 	return state.SetupRequired && constantTokenEqual(token, service.config.LegacyToken), nil
 }
 
+// Now 返回服务时钟的当前 UTC 时间，供路由层做最近重认证判定。
+func (service *Service) Now() time.Time {
+	return service.now()
+}
+
 func (service *Service) Logout(ctx context.Context, principal *model.AdminPrincipal) error {
 	if err := service.config.Store.RevokeSession(ctx, principal.Session.ID, service.now()); err != nil {
 		return err
@@ -181,6 +186,37 @@ func (service *Service) newBootstrapUser(request BootstrapRequest) (*model.Admin
 func (service *Service) newSession(
 	user *model.AdminUser, ipAddress, userAgent string,
 ) (LoginResult, *model.AdminSession, error) {
+	return service.newSessionWithAttribution(user, ipAddress, userAgent,
+		model.AuthMethodLocal, nil)
+}
+
+// CreateOIDCSession 为已验证的 OIDC 身份创建会话，并记录认证方法归因。
+func (service *Service) CreateOIDCSession(
+	ctx context.Context, userID, externalIdentityID, ipAddress, userAgent string,
+) (LoginResult, error) {
+	user, err := service.config.Store.GetUserByID(ctx, userID)
+	if err != nil || user == nil || !user.Enabled {
+		return LoginResult{}, ErrInvalidCredentials
+	}
+	result, session, err := service.newSessionWithAttribution(
+		user, ipAddress, userAgent, model.AuthMethodOIDC, &externalIdentityID)
+	if err != nil {
+		return LoginResult{}, err
+	}
+	if err := service.config.Store.CreateSession(ctx, session); err != nil {
+		return LoginResult{}, err
+	}
+	now := service.now()
+	if err := service.config.Store.TouchUserLogin(ctx, user.ID, now); err != nil {
+		_ = service.config.Store.RevokeSession(ctx, session.ID, now)
+		return LoginResult{}, err
+	}
+	return result, nil
+}
+
+func (service *Service) newSessionWithAttribution(
+	user *model.AdminUser, ipAddress, userAgent, method string, externalIdentityID *string,
+) (LoginResult, *model.AdminSession, error) {
 	raw, hash, prefix, err := GenerateSessionToken(service.random)
 	if err != nil {
 		return LoginResult{}, nil, err
@@ -189,7 +225,8 @@ func (service *Service) newSession(
 	session := &model.AdminSession{ID: uuid.New().String(), UserID: user.ID, TokenHash: hash,
 		TokenPrefix: prefix, CreatedAt: now, LastActivityAt: now,
 		IdleExpiresAt: now.Add(sessionIdleLifetime), AbsoluteExpiresAt: now.Add(sessionAbsoluteLifetime),
-		IPAddress: ipAddress, UserAgent: userAgent}
+		IPAddress: ipAddress, UserAgent: userAgent,
+		AuthenticationMethod: method, ExternalIdentityID: externalIdentityID}
 	principal := model.AdminPrincipal{User: *user, Session: *session}
 	return LoginResult{Token: raw, Principal: principal}, session, nil
 }

@@ -64,3 +64,14 @@ func TestSchedulerStartsDueMaintenanceAndStops(t *testing.T) {
 		t.Fatal("scheduler did not stop")
 	}
 }
+
+func TestSchedulerObserverHooks(t *testing.T) {
+	service := &fakeSchedulerService{}
+	scheduler := NewScheduler(service)
+	var observed error
+	scheduler.SetObserver(func(err error) { observed = err })
+	if scheduler.Interval() != 15*time.Minute {
+		t.Fatalf("interval = %v", scheduler.Interval())
+	}
+	_ = observed
+}

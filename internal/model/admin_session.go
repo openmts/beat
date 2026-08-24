@@ -15,6 +15,8 @@ type AdminSession struct {
 	IPAddress            string     `json:"ip_address"`
 	UserAgent            string     `json:"user_agent"`
 	RevokedAt            *time.Time `json:"revoked_at"`
+	AuthenticationMethod string     `json:"authentication_method"`
+	ExternalIdentityID   *string    `json:"external_identity_id,omitempty"`
 	Current              bool       `json:"current,omitempty"`
 }
 

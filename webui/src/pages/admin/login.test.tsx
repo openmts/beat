@@ -13,6 +13,7 @@ describe("admin login", () => {
   beforeEach(() => {
     vi.resetAllMocks()
     auth.setupRequired = false
+    oidcApi.list.mockResolvedValue([])
   })
 
   it("shows branding heading from fallback site settings", () => {
@@ -45,5 +46,39 @@ describe("admin login", () => {
     fireEvent.change(screen.getByLabelText("Password"), { target: { value: "long password" } })
     fireEvent.click(screen.getByRole("button", { name: "Create owner" }))
     await waitFor(() => expect(auth.bootstrap).toHaveBeenCalled())
+  })
+})
+
+const oidcApi = vi.hoisted(() => ({
+  list: vi.fn(), begin: vi.fn(),
+}))
+vi.mock("@/lib/security-api", () => ({
+  listPublicOIDCProviders: () => oidcApi.list(),
+  beginOIDCLogin: (id: string, returnPath: string) => oidcApi.begin(id, returnPath),
+}))
+
+describe("admin login with OIDC providers", () => {
+  beforeEach(() => {
+    vi.resetAllMocks()
+    auth.setupRequired = false
+    oidcApi.list.mockResolvedValue([{ id: "p1", slug: "issuer", display_name: "Corporate IdP" }])
+  })
+
+  it("shows provider buttons and navigates to the authorization URL", async () => {
+    oidcApi.begin.mockResolvedValue("https://idp.example/auth?state=x")
+    const assign = vi.fn()
+    Object.defineProperty(window, "location", { value: { assign }, writable: true })
+    render(<LocaleProvider><AdminLogin /></LocaleProvider>)
+    const button = await screen.findByRole("button", { name: "Sign in with Corporate IdP" })
+    fireEvent.click(button)
+    await waitFor(() => expect(oidcApi.begin).toHaveBeenCalledWith("p1", "/admin"))
+    await waitFor(() => expect(assign).toHaveBeenCalledWith("https://idp.example/auth?state=x"))
+  })
+
+  it("hides provider buttons during setup and on load failure", async () => {
+    auth.setupRequired = true
+    render(<LocaleProvider><AdminLogin /></LocaleProvider>)
+    await waitFor(() => expect(oidcApi.list).not.toHaveBeenCalled())
+    expect(screen.queryByRole("button", { name: /Corporate IdP/ })).not.toBeInTheDocument()
   })
 })

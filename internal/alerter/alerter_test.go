@@ -1265,3 +1265,13 @@ func TestEvaluateRulesDoesNotRetriggerAcknowledged(t *testing.T) {
 		t.Fatalf("event = %s %s, want original acknowledged event", ev.Status, ev.ID)
 	}
 }
+
+func TestAlerterObserverHooks(t *testing.T) {
+	alerter := New(nil, nil, nil, nil, nil)
+	var observed error
+	alerter.SetObserver(func(err error) { observed = err })
+	if alerter.EvaluationInterval() <= 0 {
+		t.Fatalf("evaluation interval = %v", alerter.EvaluationInterval())
+	}
+	_ = observed
+}

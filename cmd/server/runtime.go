@@ -19,6 +19,7 @@ import (
 	"github.com/beat/backend/internal/maintenance"
 	"github.com/beat/backend/internal/notification"
 	"github.com/beat/backend/internal/observability"
+	"github.com/beat/backend/internal/oidc"
 	"github.com/beat/backend/internal/secretbox"
 	"github.com/beat/backend/internal/service"
 	"github.com/beat/backend/internal/sshclient"
@@ -44,6 +45,8 @@ type serverStores struct {
 	backups            *store.BackupStore
 	agentTasks         *store.AgentTaskStore
 	customMetrics      *store.CustomMetricStore
+	oidc               *store.OIDCStore
+	secrets            *secretbox.Manager
 }
 
 type serverServices struct {
@@ -53,6 +56,7 @@ type serverServices struct {
 	terminal       *service.TerminalService
 	delivery       *notification.Service
 	trafficReports *trafficreport.Service
+	oidc           *oidc.Service
 }
 
 type backgroundTasks struct {
@@ -144,7 +148,7 @@ func openServerStores(ctx context.Context, dbPath, mtsPath string) (*serverStore
 		networkTasks:   store.NewNetworkTaskStore(database), siteSettings: store.NewSiteSettingsStore(database),
 		maintenanceSetting: store.NewMaintenanceSettingsStore(database), admins: store.NewAdminStore(database),
 		backups: store.NewBackupStore(database), agentTasks: store.NewAgentTaskStore(database),
-		customMetrics: store.NewCustomMetricStore(database)}, nil
+		customMetrics: store.NewCustomMetricStore(database), oidc: store.NewOIDCStore(database)}, nil
 }
 
 func newServerServices(
@@ -159,10 +163,19 @@ func newServerServices(
 		return nil, fmt.Errorf("initialize ssh client: %w", err)
 	}
 	delivery := notification.NewService()
+	oidcService := newOIDCService(ctx, stores, security, dataDir)
 	return &serverServices{security: security, maintenance: maintenanceService, backups: backupService,
 		terminal: service.NewTerminalService(stores.nodes, stores.sshKeys, sshConnector), delivery: delivery,
 		trafficReports: trafficreport.NewService(stores.trafficReports, stores.nodes,
-			stores.alertChannels, stores.mts, delivery)}, nil
+			stores.alertChannels, stores.mts, delivery),
+		oidc: oidcService}, nil
+}
+
+// newOIDCService 构造带生产 SSRF 策略的 OIDC 服务。
+func newOIDCService(ctx context.Context, stores *serverStores, security *adminauth.Service, dataDir string) *oidc.Service {
+	policy := oidc.EndpointPolicy{}
+	client := oidc.NewProviderClient(policy, 15*time.Minute, time.Now)
+	return oidc.NewService(stores.oidc, stores.admins, stores.secrets, security, client, time.Now, nil)
 }
 
 func newAdministrationServices(
@@ -173,6 +186,7 @@ func newAdministrationServices(
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("initialize administrator data encryption: %w", err)
 	}
+	stores.secrets = secrets
 	security, err := adminauth.NewService(adminauth.ServiceConfig{
 		Store: stores.admins, Secrets: secrets, LegacyToken: os.Getenv("BEAT_ADMIN_TOKEN"),
 	})
@@ -214,7 +228,8 @@ func buildHTTPHandler(config httpHandlerConfig) (http.Handler, *alerter.Alerter,
 		api.WithTrafficReportService(config.services.trafficReports), api.WithMaintenanceService(config.services.maintenance),
 		api.WithAdminSecurity(config.services.security), api.WithBackupService(config.services.backups),
 		api.WithAgentTaskStore(config.stores.agentTasks),
-		api.WithCustomMetricStore(config.stores.customMetrics))
+		api.WithCustomMetricStore(config.stores.customMetrics),
+		api.WithOIDC(config.services.oidc))
 	mux := http.NewServeMux()
 	mux.Handle("/api/v1/", router.ServeHandler())
 	mux.Handle("/ws", websocket.NewHandler(hub))

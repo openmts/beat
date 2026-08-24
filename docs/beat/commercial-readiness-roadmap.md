@@ -488,34 +488,38 @@ shared behavior, persistence, or deployment contracts:
 
 ## Next implementation batch
 
-The P0 foundation below is complete and deployed at SQLite migration `v1` and
-backup archive format `v1`. The single authoritative pending sequence is
+The P0 foundation below is complete and deployed at SQLite migration `v5` and
+backup archive format `v1` (migrations `v2`-`v4` shipped as
+`agent_task_channel`, `custom_metric_tasks`, and `alert_event_acknowledgement`
+before the registry numbered the competitor batches). The single authoritative
+pending sequence is
 maintained in
 [`commercial-parity-implementation-sequence.md`](./commercial-parity-implementation-sequence.md).
 
 The canonical SQLite order is:
 
-1. `v2` OIDC;
-2. `v3` theme packages, introducing backup format `v2`;
-3. `v4` secure Agent enrollment;
-4. `v5` shared application-secret lifecycle, audited remote operations, and file
+1. `v5` OIDC (this repository applied `v2`-`v4` before the registry numbered the
+   competitor batches; the OIDC design's draft `v2` therefore ships as `v5`);
+2. `v6` theme packages, introducing backup format `v2`;
+3. `v7` secure Agent enrollment;
+4. `v8` shared application-secret lifecycle, audited remote operations, and file
    transfer;
-5. `v6` commercial notification delivery;
-6. `v7` GeoIP/node lifecycle, introducing backup format `v3`;
-7. `v8` metric catalog/dashboard composition, introducing catalog-governed
+5. `v9` commercial notification delivery;
+6. `v10` GeoIP/node lifecycle, introducing backup format `v3`;
+7. `v11` metric catalog/dashboard composition, introducing catalog-governed
    backup format `v4`;
-8. `v9` GPU/accelerator telemetry;
-9. `v10` signed Agent rollout;
-10. `v11` scoped automation credentials;
-11. `v12` login-security events and notification producer;
-12. `v13` resumable restore upload sessions;
-13. `v14` controlled MTR/iperf3 diagnostics;
-14. `v15` external access, browser origin, public address, and aggregate visitor
+8. `v12` GPU/accelerator telemetry;
+9. `v13` signed Agent rollout;
+10. `v14` scoped automation credentials;
+11. `v15` login-security events and notification producer;
+12. `v16` resumable restore upload sessions;
+13. `v17` controlled MTR/iperf3 diagnostics;
+14. `v18` external access, browser origin, public address, and aggregate visitor
     telemetry policy;
-15. `v16` immutable billing-traffic calibration, correction, and revocation;
-16. `v17` durable fixed-scope metric erasure and node/task deletion lifecycle;
-17. `v18` Fleet status-summary schedules and durable outbox production;
-18. `v19` application-history lifecycle, pagination, cleanup and backup
+15. `v19` immutable billing-traffic calibration, correction, and revocation;
+16. `v20` durable fixed-scope metric erasure and node/task deletion lifecycle;
+17. `v21` Fleet status-summary schedules and durable outbox production;
+18. `v22` application-history lifecycle, pagination, cleanup and backup
     reconciliation.
 
 The schema-free batches are `fleet-public`, `pwa-static-shell`, `wallboard-html`,

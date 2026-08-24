@@ -33,6 +33,8 @@ export const baseTranslationsZhCN: Record<string, string> = {
   "auth.connect": "进入后台",
   "auth.invalid": "管理令牌无效",
   "auth.logout": "退出登录",
+  "auth.sign_in_with": "使用 {provider} 登录",
+  "auth.oidc_start_failed": "无法发起单点登录请求",
   "node.name": "名称",
   "node.host": "主机",
   "node.port": "端口",

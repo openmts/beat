@@ -1,6 +1,6 @@
 # Commercial parity implementation sequence
 
-Updated: 2026-08-01
+Updated: 2026-08-24
 
 Status: reviewed execution baseline; every implementation batch still requires
 explicit approval
@@ -14,9 +14,13 @@ boundaries, tests, and rollback. When a design's previous draft migration or
 backup number conflicts with this registry, this registry is authoritative and
 the design must be corrected before coding.
 
-The current deployed baseline is SQLite schema migration `v1` and backup archive
-format `v1`. No row, table, API, dependency, or runtime behavior described here
-is authorized merely by assigning a version.
+The current deployed baseline is SQLite schema migration `v5` and backup archive
+format `v1`. Migrations `v2` (`agent_task_channel`), `v3` (`custom_metric_tasks`),
+and `v4` (`alert_event_acknowledgement`) were applied before this registry
+numbered the competitor batches; therefore the `identity-oidc` batch is shipped
+as migration `v5` in this repository rather than the draft `v2`. No row, table,
+API, dependency, or runtime behavior described here is authorized merely by
+assigning a version.
 
 ## Separate version lines
 
@@ -43,24 +47,27 @@ secrets.
 | Migration | Release batch | Capability | Required predecessors | Backup format |
 | --- | --- | --- | --- | --- |
 | `v1` | `p0-foundation` | Deployed migration ledger and SQLite reliability invariants | none | `v1` |
-| `v2` | `identity-oidc` | OIDC providers, external identities, transactions, session attribution, and resource-bound root-key envelope format 1 | deployed account security | `v1` |
-| `v3` | `theme-packages` | Theme packages, activation history, and signed market sources | `v2` | introduces `v2` |
-| `v4` | `agent-enrollment` | Secure manual/bounded automatic Agent enrollment and pending-claim state | `v2`, per-node identity; ordered after `v3` for one consecutive release train | `v2` |
-| `v5` | `remote-operations` | Shared wrapped-key secret lifecycle, TOTP/SSH/OIDC conversion, durable Agent operation queue, command library, and single-file transfer metadata | `v4`, `v2` compatibility envelope, administrative-mutation consistency | `v2` |
-| `v6` | `notification-delivery` | Encrypted channel revisions, durable outbox, leases, retries, and delivery history | deployed `v5` application-secret lifecycle | `v2` |
-| `v7` | `geoip-lifecycle` | GeoIP sources/cache, node lifecycle, reminders, and lifecycle events | `v6` notification routing | introduces `v3` |
-| `v8` | `metric-catalog` | Governed metric definitions, per-metric retention, query policy, and dashboard templates | deployed MTS, `v7` | introduces `v4` |
-| `v9` | `accelerator-telemetry` | Accelerator inventory/policy and MTS-only GPU series | `v8` | `v4` |
-| `v10` | `agent-rollout` | Signed Agent releases, target snapshots, waves, attempts, and health gates | `v4`, per-node identity, release signing | `v4` |
-| `v11` | `automation-access` | Scoped expiring service principals and token constraints | stable central authorization after `v10` | `v4` |
-| `v12` | `login-security` | Durable login security events, persisted thresholds, fingerprints, and outbox producer | `v6`; ordered after `v7` for optional trusted GeoIP and after `v11` for final security vocabulary | `v4` |
-| `v13` | `resumable-restore-upload` | Restart-safe owner upload sessions and chunk state | current backup validation and archive format `v4` | `v4` |
-| `v14` | `advanced-diagnostics` | Approved diagnostic targets, jobs, attempts, budgets, cursors, and encrypted hop metadata | `v4`, `v5`, `v8`, `v10` | `v4` |
-| `v15` | `edge-access-policy` | Canonical external access policy, public address privacy modes, and aggregate visitor telemetry policy | `v2`, `v3`, `v8`, `fleet-public`; ordered after `v14` for one consecutive release train | `v4` |
-| `v16` | `traffic-calibration` | Append-only per-node billing traffic calibration, correction, revocation, and attribution events | deployed account security and MTS traffic aggregation; ordered after `v15` for one consecutive release train | `v4` |
-| `v17` | `metric-erasure` | Durable fixed-scope MTS erasure jobs, entity tombstones, retryable compaction, and node/task deletion finalization | `v8` metric catalog, deployed per-node identity/network tasks, MTS operation lock; ordered after `v16` | `v4` |
-| `v18` | `fleet-status-summary` | Fleet summary schedules, scoped runs, catch-up cursors, and durable notification-outbox production | `v6` notification delivery, deployed availability state, node/group model; ordered after `v17` | `v4` |
-| `v19` | `application-data-lifecycle` | Bounded application-history retention, cursor feeds, session hygiene, and crash-safe backup record/archive/journal reconciliation | `v13` upload lifecycle, deployed account audit/backup, `v18`; ordered after all prior history owners | `v4` |
+| `v2` | `agent-task-channel` | Agent task WebSocket channel (pre-registry) | `v1` | `v1` |
+| `v3` | `custom-metric-tasks` | Custom metric collection tasks (pre-registry) | `v2` | `v1` |
+| `v4` | `alert-acknowledgement` | Alert event acknowledgement columns (pre-registry) | `v3` | `v1` |
+| `v5` | `identity-oidc` | OIDC providers, external identities, transactions, session attribution, and resource-bound root-key envelope format 1 | deployed account security | `v1` |
+| `v6` | `theme-packages` | Theme packages, activation history, and signed market sources | `v5` | introduces `v2` |
+| `v7` | `agent-enrollment` | Secure manual/bounded automatic Agent enrollment and pending-claim state | `v5`, per-node identity; ordered after `v6` for one consecutive release train | `v2` |
+| `v8` | `remote-operations` | Shared wrapped-key secret lifecycle, TOTP/SSH/OIDC conversion, durable Agent operation queue, command library, and single-file transfer metadata | `v7`, `v5` compatibility envelope, administrative-mutation consistency | `v2` |
+| `v9` | `notification-delivery` | Encrypted channel revisions, durable outbox, leases, retries, and delivery history | deployed `v8` application-secret lifecycle | `v2` |
+| `v10` | `geoip-lifecycle` | GeoIP sources/cache, node lifecycle, reminders, and lifecycle events | `v9` notification routing | introduces `v3` |
+| `v11` | `metric-catalog` | Governed metric definitions, per-metric retention, query policy, and dashboard templates | deployed MTS, `v10` | introduces `v4` |
+| `v12` | `accelerator-telemetry` | Accelerator inventory/policy and MTS-only GPU series | `v11` | `v4` |
+| `v13` | `agent-rollout` | Signed Agent releases, target snapshots, waves, attempts, and health gates | `v7`, per-node identity, release signing | `v4` |
+| `v14` | `automation-access` | Scoped expiring service principals and token constraints | stable central authorization after `v13` | `v4` |
+| `v15` | `login-security` | Durable login security events, persisted thresholds, fingerprints, and outbox producer | `v9`; ordered after `v10` for optional trusted GeoIP and after `v14` for final security vocabulary | `v4` |
+| `v16` | `resumable-restore-upload` | Restart-safe owner upload sessions and chunk state | current backup validation and archive format `v4` | `v4` |
+| `v17` | `advanced-diagnostics` | Approved diagnostic targets, jobs, attempts, budgets, cursors, and encrypted hop metadata | `v7`, `v8`, `v11`, `v13` | `v4` |
+| `v18` | `edge-access-policy` | Canonical external access policy, public address privacy modes, and aggregate visitor telemetry policy | `v5`, `v6`, `v11`, `fleet-public`; ordered after `v17` for one consecutive release train | `v4` |
+| `v19` | `traffic-calibration` | Append-only per-node billing traffic calibration, correction, revocation, and attribution events | deployed account security and MTS traffic aggregation; ordered after `v18` for one consecutive release train | `v4` |
+| `v20` | `metric-erasure` | Durable fixed-scope MTS erasure jobs, entity tombstones, retryable compaction, and node/task deletion finalization | `v11` metric catalog, deployed per-node identity/network tasks, MTS operation lock; ordered after `v19` | `v4` |
+| `v21` | `fleet-status-summary` | Fleet summary schedules, scoped runs, catch-up cursors, and durable notification-outbox production | `v9` notification delivery, deployed availability state, node/group model; ordered after `v20` | `v4` |
+| `v22` | `application-data-lifecycle` | Bounded application-history retention, cursor feeds, session hygiene, and crash-safe backup record/archive/journal reconciliation | `v16` upload lifecycle, deployed account audit/backup, `v21`; ordered after all prior history owners | `v4` |
 
 Migrations are never squashed in released environments. A development-only
 fresh-database bootstrap may use an equivalent schema initializer, but tests
@@ -74,19 +81,19 @@ compare its schema/invariants with a fresh `v19` database.
 Contains manifest, complete SQLite snapshot, logical fixed-list MTS export,
 administrator data key, and checksums.
 
-Migration `v2` keeps these payloads but requires readers to authenticate every
+Migration `v5` keeps these payloads but requires readers to authenticate every
 OIDC envelope against its archived root key and reconstructed AAD. This is a
 validation strengthening, not a new payload or format number.
 
 ### Format `v2` - theme payloads
 
-Introduced by migration `v3`. Adds content-addressed theme package assets and
+Introduced by migration `v6`. Adds content-addressed theme package assets and
 manifest inventory. Readers for later formats continue accepting `v1` when the
 restored database does not reference theme assets.
 
 ### Format `v3` - managed GeoIP database
 
-Introduced by migration `v7`. Adds managed current/previous MMDB files and
+Introduced by migration `v10`. Adds managed current/previous MMDB files and
 manifest metadata. External read-only MMDB mounts remain external requirements.
 
 ### Format `v4` - catalog-governed MTS export
@@ -105,15 +112,15 @@ Format `v4` validation requires:
 - restored SQLite catalog semantics to match the manifest before MTS replay;
 - unknown measurements or incompatible unit/type changes to fail closed.
 
-Migration `v9`, `v14`, `v15`, `v16`, `v17`, `v18`, and `v19` extend registered
+Migration `v12`, `v17`, `v18`, `v19`, `v20`, `v21`, and `v22` extend registered
 application/catalog or scheduling state and backup inventory but do not change
-the `v4` envelope. Migration `v13` changes upload transport only; it does not
-change archive contents. A backup cannot overlap an active `v17` erasure, so its
+the `v4` envelope. Migration `v16` changes upload transport only; it does not
+change archive contents. A backup cannot overlap an active `v20` erasure, so its
 SQLite job state and logical MTS export remain coherent.
 
-Migration `v5` does not change the archive payload: its wrapped data-key registry
+Migration `v8` does not change the archive payload: its wrapped data-key registry
 lives inside `platform.sqlite`, and the existing `secrets/admin-data.key` entry
-remains the matching 32-byte root key. Every `v5+` reader must nevertheless
+remains the matching 32-byte root key. Every `v8+` reader must nevertheless
 validate the complete root-key/registry/ciphertext relationship defined in
 [`application-secret-lifecycle-design.md`](./application-secret-lifecycle-design.md),
 not only key length and checksums.
@@ -127,13 +134,13 @@ These batches do not consume a SQLite migration number:
 | `fleet-public` | Grouped-card-first fleet summary, search, filters, stable sorting, optional tables, visibility-aware refresh, and public/admin/heavy-route asset isolation | may ship after current baseline; country/expiry controls activate only after `v7` |
 | `pwa-static-shell` | Manifest, versioned public-route static-shell cache, explicit offline state, and controlled update activation | after `fleet-public` bundle isolation; admin/terminal/chart chunks and all API/auth/WebSocket/metric requests remain outside the public precache |
 | `wallboard-html` | Bounded HTML wallboard over existing public REST/WebSocket | after `fleet-public` and independent PWA cache verification |
-| `operator-recovery-cli` | Stopped-service owner unlock, all-session revocation, empty-instance inspection, and validated first-run/existing-instance restore staging | after deployed account security; OIDC local-login restoration activates after `v2` |
+| `operator-recovery-cli` | Stopped-service owner unlock, all-session revocation, empty-instance inspection, and validated first-run/existing-instance restore staging | after deployed account security; OIDC local-login restoration activates after `v5` |
 | `migration-recovery-ops` | Local migration status/preflight, private failure marker, and owner-only read-only operations guidance without DSN editing | after `operator-recovery-cli`; tracks the then-current canonical migration and backup readers |
 | `runtime-diagnostics` | Owner-only bounded runtime summary and ephemeral profile capture | after deployed account security; independent of Agent diagnostics `v14` |
 | `runtime-resilience` | Per-worker supervision, truthful readiness and MTS lifecycle errors, one shared public metrics snapshot, bounded WebSocket fanout, and shutdown-safe connection ownership | after deployed operability and public metrics; composes with `agent-ingest-consistency`, `v15` origin policy and may use `v8` batch-latest queries |
 | `ingress-governance` | Bounded HTTP bodies/targets, pre-KDF authentication admission, public snapshot/history query budgets, Agent ingestion limits, and cancellation-safe polling | after deployed trusted-proxy identity; coordinate with `runtime-resilience`, generalized by `v8` query policy and `v12` durable login security |
-| `agent-ingest-consistency` | Stable Agent sample identity/time, deterministic MTS retry and traffic deltas, durable receipt acknowledgement, and contact-versus-telemetry freshness | after deployed per-node identity/MTS; coordinate with `ingress-governance` and `runtime-resilience`, register in `v8`, deploy before `v17` and mandatory Agent rollout |
-| `administrative-mutation-consistency` | Explicit role/recent-auth/cache/audit route policy, safe pending TOTP, atomic SQLite mutation/audit writes, long-lived session invalidation, and truthful external phases | after deployed account security; deploy before adding more administrator mutations and require `v5`, `v6`, `v12`, `v17`, and `v19` to reuse its authorization/audit envelope and operation linkage |
+| `agent-ingest-consistency` | Stable Agent sample identity/time, deterministic MTS retry and traffic deltas, durable receipt acknowledgement, and contact-versus-telemetry freshness | after deployed per-node identity/MTS; coordinate with `ingress-governance` and `runtime-resilience`, register in `v11`, deploy before `v20` and mandatory Agent rollout |
+| `administrative-mutation-consistency` | Explicit role/recent-auth/cache/audit route policy, safe pending TOTP, atomic SQLite mutation/audit writes, long-lived session invalidation, and truthful external phases | after deployed account security; deploy before adding more administrator mutations and require `v8`, `v9`, `v15`, `v20`, and `v22` to reuse its authorization/audit envelope and operation linkage |
 | `localization-parity` | Complete English, Simplified/Traditional Chinese, Japanese, and Indonesian frontend catalogs | after `fleet-public`; every later frontend batch adds all locale keys atomically |
 
 Theme runtime implementation is part of migration `v3`; it must not be confused
@@ -198,7 +205,7 @@ fails before serving when the database is newer. Forward migration occurs only
 after a verified stopped-service backup. There are no in-place down migrations;
 rollback restores the matching pre-migration SQLite/data/Agent artifacts.
 
-Migration `v5` is also the only owner of the application-secret primitive.
+Migration `v8` is also the only owner of the application-secret primitive.
 Later secret-bearing migrations register AAD/resource enumerators with it and
 must not add another key file, envelope, or rotation implementation.
 
@@ -209,7 +216,7 @@ versions and a rolling compatibility window defined by the owning design.
 
 MTS additions are append-only across a failed feature rollback. The older
 binary may leave new registered measurements unreachable; deletion is the
-separate owner-approved `v17` erasure operation after rollback evidence is safe.
+separate owner-approved `v20` erasure operation after rollback evidence is safe.
 
 ## Change control
 
@@ -218,6 +225,6 @@ and backup-format assignment in this registry. If new competitor evidence or a
 dependency changes ordering, update this file and every affected design in one
 reviewed documentation change before allocating code.
 
-After `v19`, the next SQLite migration is `v20`. No design may claim `v20`
+After `v22`, the next SQLite migration is `v23`. No design may claim `v23`
 without first adding its dependency, backup impact, approval unit, and rollback
 contract here.

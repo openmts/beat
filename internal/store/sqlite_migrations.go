@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-const currentSchemaVersion = 4
+const currentSchemaVersion = 5
 
 type sqliteMigration struct {
 	version int
@@ -20,6 +20,89 @@ var sqliteMigrations = []sqliteMigration{
 	{version: 2, name: "agent_task_channel", apply: applyAgentTaskChannel},
 	{version: 3, name: "custom_metric_tasks", apply: applyCustomMetricTasks},
 	{version: 4, name: "alert_event_acknowledgement", apply: applyAlertEventAcknowledgement},
+	{version: 5, name: "oidc_identity", apply: applyOIDCIdentity},
+}
+
+// applyOIDCIdentity 引入 OIDC 提供方、外部身份与登录/链接事务表，并为会话
+// 增加认证方法与外部身份归因列。
+func applyOIDCIdentity(ctx context.Context, db schemaExecutor) error {
+	for _, statement := range []string{
+		`CREATE TABLE IF NOT EXISTS admin_oidc_providers (
+			id TEXT PRIMARY KEY,
+			slug TEXT NOT NULL UNIQUE CHECK(length(slug) BETWEEN 1 AND 100),
+			display_name TEXT NOT NULL CHECK(length(display_name) BETWEEN 1 AND 200),
+			issuer_url TEXT NOT NULL UNIQUE CHECK(length(issuer_url) BETWEEN 1 AND 2048),
+			client_id TEXT NOT NULL CHECK(length(client_id) BETWEEN 1 AND 1024),
+			client_secret_encrypted BLOB,
+			scopes_json TEXT NOT NULL CHECK(length(scopes_json) BETWEEN 1 AND 2048),
+			enabled INTEGER NOT NULL DEFAULT 1 CHECK(enabled IN (0, 1)),
+			configuration_version INTEGER NOT NULL DEFAULT 1,
+			sort_order INTEGER NOT NULL DEFAULT 0,
+			created_at DATETIME NOT NULL,
+			updated_at DATETIME NOT NULL
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_admin_oidc_providers_enabled ON admin_oidc_providers(enabled, sort_order)`,
+		`CREATE TABLE IF NOT EXISTS admin_external_identities (
+			id TEXT PRIMARY KEY,
+			provider_id TEXT NOT NULL,
+			user_id TEXT NOT NULL,
+			subject TEXT NOT NULL CHECK(length(subject) BETWEEN 1 AND 1024),
+			email TEXT NOT NULL DEFAULT '',
+			email_verified INTEGER NOT NULL DEFAULT 0 CHECK(email_verified IN (0, 1)),
+			preferred_username TEXT NOT NULL DEFAULT '',
+			display_name TEXT NOT NULL DEFAULT '',
+			last_login_at DATETIME NOT NULL,
+			created_at DATETIME NOT NULL,
+			updated_at DATETIME NOT NULL,
+			FOREIGN KEY(provider_id) REFERENCES admin_oidc_providers(id) ON DELETE RESTRICT,
+			FOREIGN KEY(user_id) REFERENCES admin_users(id) ON DELETE CASCADE,
+			UNIQUE(provider_id, subject),
+			UNIQUE(provider_id, user_id)
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_admin_external_identities_user ON admin_external_identities(user_id)`,
+		`CREATE TABLE IF NOT EXISTS admin_oidc_transactions (
+			id TEXT PRIMARY KEY,
+			state_hash BLOB NOT NULL UNIQUE,
+			browser_binding_hash BLOB NOT NULL,
+			nonce_hash BLOB NOT NULL,
+			code_verifier_encrypted BLOB NOT NULL,
+			provider_id TEXT NOT NULL,
+			provider_configuration_version INTEGER NOT NULL,
+			purpose TEXT NOT NULL CHECK(purpose IN ('login', 'link')),
+			user_id TEXT,
+			redirect_uri TEXT NOT NULL CHECK(length(redirect_uri) BETWEEN 1 AND 2048),
+			return_path TEXT NOT NULL CHECK(length(return_path) BETWEEN 1 AND 512),
+			created_at DATETIME NOT NULL,
+			expires_at DATETIME NOT NULL,
+			consumed_at DATETIME,
+			FOREIGN KEY(provider_id) REFERENCES admin_oidc_providers(id) ON DELETE CASCADE
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_admin_oidc_transactions_expiry ON admin_oidc_transactions(expires_at)`,
+	} {
+		if _, err := db.ExecContext(ctx, statement); err != nil {
+			return err
+		}
+	}
+	for _, column := range []struct {
+		name string
+		ddl  string
+	}{
+		{name: "authentication_method", ddl: "ALTER TABLE admin_sessions ADD COLUMN authentication_method TEXT NOT NULL DEFAULT 'local'"},
+		{name: "external_identity_id", ddl: "ALTER TABLE admin_sessions ADD COLUMN external_identity_id TEXT"},
+	} {
+		var count int
+		if err := db.QueryRowContext(ctx,
+			"SELECT COUNT(*) FROM pragma_table_info('admin_sessions') WHERE name = ?", column.name,
+		).Scan(&count); err != nil {
+			return err
+		}
+		if count == 0 {
+			if _, err := db.ExecContext(ctx, column.ddl); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 func applyAlertEventAcknowledgement(ctx context.Context, db schemaExecutor) error {
