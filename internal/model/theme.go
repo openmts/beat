@@ -140,4 +140,8 @@ type ActiveThemeDescriptor struct {
 	BuiltIn       bool   `json:"built_in"`
 	Protocol      int    `json:"protocol"`
 	Configuration string `json:"configuration,omitempty"`
+	// SandboxEntry 是沙箱包入口 HTML 的包相对文件名（公开安全值）。
+	SandboxEntry string `json:"sandbox_entry,omitempty"`
+	// ArchiveDigest 是内容寻址摘要，用于构造沙箱资产 URL。
+	ArchiveDigest string `json:"archive_digest,omitempty"`
 }

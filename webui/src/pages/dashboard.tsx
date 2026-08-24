@@ -6,13 +6,17 @@ import { PublicFooter } from "@/components/public-footer"
 import { GroupTabs } from "@/components/group-tabs"
 import { NodeCard } from "@/components/node-card"
 import { NetworkQualityBand } from "@/components/network-quality-band"
+import { SandboxedThemeFrame } from "@/components/sandboxed-theme-frame"
 import { useLocale } from "@/context/locale"
 import { useSiteSettings } from "@/context/site-settings"
+import { getActiveTheme } from "@/lib/theme-api"
+import type { ActiveThemeDescriptor } from "@/types/theme"
 
 function Dashboard() {
   const { t } = useLocale()
   const { settings } = useSiteSettings()
   const [selectedGroup, setSelectedGroup] = useState("")
+  const [activeTheme, setActiveTheme] = useState<ActiveThemeDescriptor | null>(null)
   const {
     data: nodes,
     loading: nodesLoading,
@@ -26,6 +30,20 @@ function Dashboard() {
   } = useGroups()
 
   useEffect(() => {
+    let cancelled = false
+    getActiveTheme()
+      .then((descriptor) => {
+        if (!cancelled) setActiveTheme(descriptor)
+      })
+      .catch(() => {
+        if (!cancelled) setActiveTheme(null)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  useEffect(() => {
     const interval = setInterval(() => {
       void refreshNodes({ silent: true })
     }, 30000)
@@ -34,7 +52,7 @@ function Dashboard() {
 
   const skeletonCount = 8
 
-  return (
+  const builtInDashboard = (
     <div className="flex min-h-svh flex-col">
       <Header />
       <main className="flex-1">
@@ -86,6 +104,30 @@ function Dashboard() {
       <PublicFooter />
     </div>
   )
+
+  const sandboxActive = activeTheme != null &&
+    activeTheme.runtime === "sandboxed" &&
+    activeTheme.sandbox_entry != null &&
+    activeTheme.archive_digest != null
+
+  if (sandboxActive) {
+    return (
+      <SandboxedThemeFrame
+        descriptor={activeTheme}
+        snapshot={() => ({
+          timestamp: new Date().toISOString(),
+          nodes: (nodes ?? []).map((node) => ({
+            id: node.id,
+            name: node.name,
+            status: node.status,
+          })),
+        })}
+        fallback={builtInDashboard}
+      />
+    )
+  }
+
+  return builtInDashboard
 }
 
 export default Dashboard

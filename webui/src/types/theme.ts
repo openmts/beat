@@ -7,6 +7,8 @@ export interface ActiveThemeDescriptor {
   built_in: boolean
   protocol: number
   configuration?: string
+  sandbox_entry?: string
+  archive_digest?: string
 }
 
 export interface ThemePackage {

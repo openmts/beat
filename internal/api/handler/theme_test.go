@@ -4,7 +4,11 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
+	"crypto/ed25519"
+	"crypto/rand"
 	"crypto/sha256"
+	"crypto/x509"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -480,5 +484,90 @@ func TestThemeHandlerMarketSourceSuccess(t *testing.T) {
 	handler.HandleDeleteMarket(delResponse, del)
 	if delResponse.Code != http.StatusNoContent {
 		t.Fatalf("delete = %d", delResponse.Code)
+	}
+}
+
+func TestThemeHandlerMarketFullFlow(t *testing.T) {
+	// 真实签名目录 + 包服务器，走 handler 完整市场流程
+	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	packageBytes := themeUploadZip(t)
+	packageDigest := fmt.Sprintf("%x", sha256.Sum256(packageBytes))
+
+	packageServer := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write(packageBytes)
+	}))
+	defer packageServer.Close()
+
+	sqlite, err := store.NewSQLiteStore(filepath.Join(t.TempDir(), "beat.db"))
+	if err != nil {
+		t.Fatalf("new sqlite: %v", err)
+	}
+	t.Cleanup(func() { _ = sqlite.Close() })
+	service, err := theme.NewService(store.NewThemeStore(sqlite.DB), store.NewAdminStore(sqlite.DB),
+		filepath.Join(t.TempDir(), "themes"), "0.1.0", time.Now)
+	if err != nil {
+		t.Fatalf("new theme service: %v", err)
+	}
+	client := theme.NewMarketClient(true, time.Now)
+	markets := theme.NewMarketService(store.NewThemeStore(sqlite.DB), client, service, time.Now)
+	handler := NewThemeHandler(service, markets)
+	ctx := themeOwnerContext().Context()
+
+	// 先建源
+	source, err := markets.CreateSource(ctx, &model.ThemeMarketSource{
+		Name: "Market", CatalogURL: "https://placeholder.invalid/c",
+		PublicKey: base64.StdEncoding.EncodeToString(publicKey), KeyFingerprint: "fp", Enabled: true,
+	})
+	if err != nil {
+		t.Fatalf("create source: %v", err)
+	}
+	catalog := model.ThemeCatalog{
+		SchemaVersion: 1, SourceID: source.ID,
+		Themes: []model.ThemeCatalogEntry{{
+			ThemeID: "test-theme", Name: "Test Theme", Version: "1.0.0", Author: "a",
+			Description: "d", Runtime: model.ThemeRuntimeDeclarative, PackageURL: packageServer.URL,
+			PackageSHA256: packageDigest, MinimumBeat: "0.1.0",
+		}},
+	}
+	body, _ := json.Marshal(catalog)
+	signature := ed25519.Sign(privateKey, body)
+	catalogServer := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Beat-Catalog-Signature", base64.StdEncoding.EncodeToString(signature))
+		_, _ = w.Write(body)
+	}))
+	defer catalogServer.Close()
+	pool := x509.NewCertPool()
+	pool.AddCert(catalogServer.Certificate())
+	pool.AddCert(packageServer.Certificate())
+	client.SetRootCAs(pool)
+
+	source.CatalogURL = catalogServer.URL
+	if _, err := markets.UpdateSource(ctx, source.ID, *source); err != nil {
+		t.Fatalf("update source url: %v", err)
+	}
+
+	// 刷新目录（成功）
+	refresh := httptest.NewRequest(http.MethodGet, "/api/v1/admin/theme-markets/"+source.ID+"/catalog", nil)
+	refresh.SetPathValue("id", source.ID)
+	refresh = refresh.WithContext(ctx)
+	refreshResponse := httptest.NewRecorder()
+	handler.HandleRefreshCatalog(refreshResponse, refresh)
+	if refreshResponse.Code != http.StatusOK || !strings.Contains(refreshResponse.Body.String(), "Test Theme") {
+		t.Fatalf("refresh = %d %s", refreshResponse.Code, refreshResponse.Body.String())
+	}
+
+	// 市场安装（成功）
+	install := httptest.NewRequest(http.MethodPost,
+		"/api/v1/admin/theme-markets/"+source.ID+"/themes/test-theme/install", nil)
+	install.SetPathValue("id", source.ID)
+	install.SetPathValue("theme_id", "test-theme")
+	install = install.WithContext(ctx)
+	installResponse := httptest.NewRecorder()
+	handler.HandleInstallFromMarket(installResponse, install)
+	if installResponse.Code != http.StatusCreated {
+		t.Fatalf("install = %d %s", installResponse.Code, installResponse.Body.String())
 	}
 }

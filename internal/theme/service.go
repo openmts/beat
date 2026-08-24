@@ -296,7 +296,25 @@ func (service *Service) ActiveDescriptor(ctx context.Context) (model.ActiveTheme
 	return model.ActiveThemeDescriptor{
 		PackageID: pkg.ID, ThemeID: pkg.ThemeID, Name: pkg.Name, Version: pkg.Version,
 		Runtime: pkg.Runtime, Protocol: 1, Configuration: pkg.ConfigurationJSON,
+		SandboxEntry: sandboxEntryFor(pkg), ArchiveDigest: pkg.ArchiveDigest,
 	}, nil
+}
+
+// sandboxEntryFor 从清单中解析沙箱入口 HTML 文件名。
+func sandboxEntryFor(pkg *model.ThemePackage) string {
+	var manifest model.ThemeManifest
+	if err := json.Unmarshal([]byte(pkg.ManifestJSON), &manifest); err != nil {
+		return ""
+	}
+	if pkg.Runtime != model.ThemeRuntimeSandboxed {
+		return ""
+	}
+	for _, file := range manifest.Files {
+		if strings.HasSuffix(file.Path, ".html") {
+			return file.Path
+		}
+	}
+	return ""
 }
 
 // ListPackages 列出包（附活动/健康标记）。
