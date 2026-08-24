@@ -198,3 +198,86 @@ func TestEvaluateResourceRuleSkipsOfflineNode(t *testing.T) {
 		t.Fatalf("MTS latest queries = %d, want 0", mts.latestQueries)
 	}
 }
+
+// TestEvaluateRulesRetriggersAfterManualResolve verifies that once an alert
+// event is manually resolved while the metric still exceeds the threshold, the
+// next evaluation creates a fresh triggered event and pushes it to every
+// enabled channel. This is the core re-trigger contract after human dismissal.
+func TestEvaluateRulesRetriggersAfterManualResolve(t *testing.T) {
+	var deliveries []model.AlertEvent
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var delivered model.AlertEvent
+		if err := json.NewDecoder(r.Body).Decode(&delivered); err != nil {
+			t.Errorf("decode payload: %v", err)
+		}
+		deliveries = append(deliveries, delivered)
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	t.Cleanup(server.Close)
+
+	now := time.Date(2026, 8, 19, 15, 0, 0, 0, time.UTC)
+	node := model.Node{
+		ID: "node-1", Name: "edge", Status: model.NodeStatusOnline,
+		LastSeen: now.Add(-5 * time.Second),
+	}
+	rule := model.AlertRule{
+		ID: "rule-1", Name: "High Memory", Metric: "memory",
+		Operator: "gt", Threshold: 15, Duration: 0,
+		Severity: model.AlertSeverityWarning,
+	}
+	events := &mockAlertEventStore{}
+
+	// Seed an event that an operator manually resolved while the metric
+	// remained above threshold.
+	originalTrigger := now.Add(-time.Minute)
+	if err := events.CreateEvent(t.Context(), &model.AlertEvent{
+		ID: "event-1", RuleID: rule.ID, NodeID: node.ID,
+		Message: "memory above threshold", Value: 53,
+		Status: model.AlertStatusResolved, TriggeredAt: originalTrigger,
+		ResolvedAt: &now,
+	}); err != nil {
+		t.Fatalf("seed resolved event: %v", err)
+	}
+
+	a := New(
+		&mockAlertRuleStore{rules: []model.AlertRule{rule}},
+		events,
+		&mockAlertChannelStore{channels: []model.AlertChannel{{
+			ID: "channel-1", Name: "webhook", ChannelType: "webhook",
+			Config: server.URL, Enabled: true,
+		}}},
+		&mockMTSStore{metrics: map[string]map[string]float64{"node-1": {"memory": 53}}},
+		&mockNodeStore{nodes: []model.Node{node}},
+	)
+	a.now = func() time.Time { return now }
+
+	if err := a.evaluateRules(t.Context()); err != nil {
+		t.Fatalf("evaluate after manual resolve: %v", err)
+	}
+
+	// A resolved event must not block a new trigger; GetActiveEvent only
+	// returns triggered/acknowledged events.
+	active, err := events.GetActiveEvent(t.Context(), rule.ID, node.ID)
+	if err != nil {
+		t.Fatalf("get active event: %v", err)
+	}
+	if active == nil {
+		t.Fatal("expected a new triggered event after manual resolve")
+	}
+	if active.Status != model.AlertStatusTriggered {
+		t.Fatalf("status = %s, want triggered", active.Status)
+	}
+	if active.ID == "event-1" {
+		t.Fatal("expected a new event, not the resolved original")
+	}
+
+	if len(deliveries) != 1 {
+		t.Fatalf("delivery count = %d, want 1", len(deliveries))
+	}
+	if deliveries[0].Status != model.AlertStatusTriggered {
+		t.Fatalf("delivered status = %s, want triggered", deliveries[0].Status)
+	}
+	if !strings.Contains(deliveries[0].Message, "edge") {
+		t.Fatalf("trigger message = %q, want node name", deliveries[0].Message)
+	}
+}

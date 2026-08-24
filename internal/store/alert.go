@@ -110,6 +110,21 @@ func (s *AlertRuleStore) ListEnabledRules(ctx context.Context) ([]model.AlertRul
 	return rules, nil
 }
 
+func (s *AlertRuleStore) GetRuleByID(ctx context.Context, id string) (*model.AlertRule, error) {
+	var r model.AlertRule
+	err := s.db.QueryRowContext(ctx,
+		"SELECT id, name, description, metric, operator, threshold, duration, severity, enabled, created_at, updated_at FROM alert_rules WHERE id = ?",
+		id,
+	).Scan(&r.ID, &r.Name, &r.Description, &r.Metric, &r.Operator, &r.Threshold, &r.Duration, &r.Severity, &r.Enabled, &r.CreatedAt, &r.UpdatedAt)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("querying alert rule: %w", err)
+	}
+	return &r, nil
+}
+
 type AlertEventStore struct {
 	db *sql.DB
 }

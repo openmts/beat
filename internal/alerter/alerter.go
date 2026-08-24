@@ -2,6 +2,7 @@ package alerter
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sync"
@@ -81,6 +82,7 @@ type Alerter struct {
 	now                func() time.Time
 	offlineAfter       time.Duration
 	evaluationInterval time.Duration
+	observer           func(error)
 }
 
 func New(
@@ -110,10 +112,21 @@ func New(
 	}
 }
 
+// SetObserver 注册每轮评估的结果钩子；须在 Start 之前调用。
+func (a *Alerter) SetObserver(observer func(error)) {
+	a.observer = observer
+}
+
+// EvaluationInterval 返回评估周期，供监督层做滞后判定。
+func (a *Alerter) EvaluationInterval() time.Duration {
+	return a.evaluationInterval
+}
+
 func (a *Alerter) Start(ctx context.Context) {
 	if err := a.evaluateRules(ctx); err != nil {
 		slog.ErrorContext(ctx, "alert evaluation failed", "error", err)
 	}
+	a.notify(ctx, nil)
 	ticker := time.NewTicker(a.evaluationInterval)
 	defer ticker.Stop()
 
@@ -124,10 +137,18 @@ func (a *Alerter) Start(ctx context.Context) {
 		case <-a.stopCh:
 			return
 		case <-ticker.C:
-			if err := a.evaluateRules(ctx); err != nil {
+			err := a.evaluateRules(ctx)
+			if err != nil {
 				slog.ErrorContext(ctx, "alert evaluation failed", "error", err)
 			}
+			a.notify(ctx, err)
 		}
+	}
+}
+
+func (a *Alerter) notify(ctx context.Context, err error) {
+	if a.observer != nil {
+		a.observer(err)
 	}
 }
 
@@ -149,22 +170,28 @@ func (a *Alerter) evaluateRules(ctx context.Context) error {
 		return fmt.Errorf("list nodes: %w", err)
 	}
 
+	var evalErrs error
 	for _, rule := range rules {
 		for _, node := range nodes {
-			a.evaluateRule(ctx, &rule, &node)
+			if err := a.evaluateRule(ctx, &rule, &node); err != nil {
+				evalErrs = errors.Join(evalErrs, fmt.Errorf("evaluate alert rule %s for node %s: %w", rule.ID, node.ID, err))
+			}
 		}
 	}
 
-	return nil
+	return evalErrs
 }
 
-func (a *Alerter) evaluateRule(ctx context.Context, rule *model.AlertRule, node *model.Node) {
+func (a *Alerter) evaluateRule(ctx context.Context, rule *model.AlertRule, node *model.Node) error {
 	if rule.Metric != model.MetricHeartbeatAgeSeconds && node.Status == model.NodeStatusOffline {
-		return
+		return nil
 	}
 	value, found, err := a.metricValue(ctx, rule.Metric, node)
-	if err != nil || !found {
-		return
+	if err != nil {
+		return err
+	}
+	if !found {
+		return nil
 	}
 
 	trigger, conditionActive := a.updateRuleState(rule, node, value)
@@ -178,6 +205,7 @@ func (a *Alerter) evaluateRule(ctx context.Context, rule *model.AlertRule, node 
 			slog.ErrorContext(ctx, "alert resolution failed", "rule_id", rule.ID, "node_id", node.ID, "error", err)
 		}
 	}
+	return nil
 }
 
 func (a *Alerter) updateRuleState(

@@ -2,6 +2,7 @@ package alerter
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -555,6 +556,7 @@ func TestEvaluateRulesMetricNotFound(t *testing.T) {
 }
 
 func TestEvaluateRulesMTSQueryError(t *testing.T) {
+	want := fmt.Errorf("mts error")
 	node := model.Node{ID: "node-1", Name: "node-1"}
 	rule := model.AlertRule{
 		ID: "rule-1", Name: "CPU Alert", Metric: "cpu",
@@ -566,13 +568,12 @@ func TestEvaluateRulesMTSQueryError(t *testing.T) {
 		&mockAlertRuleStore{rules: []model.AlertRule{rule}},
 		&mockAlertEventStore{},
 		&mockAlertChannelStore{},
-		&mockMTSStore{err: fmt.Errorf("mts error")},
+		&mockMTSStore{err: want},
 		&mockNodeStore{nodes: []model.Node{node}},
 	)
 
-	err := a.evaluateRules(context.Background())
-	if err != nil {
-		t.Fatalf("expected no error (errors are skipped), got %v", err)
+	if err := a.evaluateRules(context.Background()); !errors.Is(err, want) {
+		t.Fatalf("evaluate error = %v, want %v", err, want)
 	}
 }
 
@@ -717,7 +718,8 @@ func TestEvaluateRulesTrafficQuotaSkipsUnavailableUsage(t *testing.T) {
 	}
 }
 
-func TestEvaluateRulesTrafficQuotaQueryErrorIsSkipped(t *testing.T) {
+func TestEvaluateRulesTrafficQuotaQueryErrorFailsIteration(t *testing.T) {
+	want := fmt.Errorf("mts error")
 	node := model.Node{
 		ID: "node-1", TrafficLimit: 1_000,
 		TrafficLimitType: model.TrafficLimitSum, TrafficResetDay: 1,
@@ -728,12 +730,94 @@ func TestEvaluateRulesTrafficQuotaQueryErrorIsSkipped(t *testing.T) {
 	}
 	a := New(
 		&mockAlertRuleStore{rules: []model.AlertRule{rule}}, &mockAlertEventStore{},
-		&mockAlertChannelStore{}, &mockMTSStore{trafficErr: fmt.Errorf("mts error")},
+		&mockAlertChannelStore{}, &mockMTSStore{trafficErr: want},
 		&mockNodeStore{nodes: []model.Node{node}},
 	)
 
-	if err := a.evaluateRules(context.Background()); err != nil {
-		t.Fatalf("traffic storage errors should be skipped, got %v", err)
+	if err := a.evaluateRules(context.Background()); !errors.Is(err, want) {
+		t.Fatalf("evaluate error = %v, want %v", err, want)
+	}
+}
+
+func TestEvaluateRulesMTSQueryErrorDoesNotResolveActiveEvent(t *testing.T) {
+	want := fmt.Errorf("mts unavailable")
+	node := model.Node{ID: "node-1", Name: "node-1"}
+	rule := model.AlertRule{
+		ID: "rule-1", Name: "CPU Alert", Metric: "cpu",
+		Operator: "gt", Threshold: 80, Duration: 0,
+		Severity: model.AlertSeverityWarning,
+	}
+	eventStore := &mockAlertEventStore{}
+	if err := eventStore.CreateEvent(context.Background(), &model.AlertEvent{
+		ID: "event-1", RuleID: rule.ID, NodeID: node.ID,
+		Status: model.AlertStatusTriggered, TriggeredAt: time.Now(),
+	}); err != nil {
+		t.Fatalf("seed event: %v", err)
+	}
+
+	a := New(
+		&mockAlertRuleStore{rules: []model.AlertRule{rule}}, eventStore,
+		&mockAlertChannelStore{}, &mockMTSStore{err: want},
+		&mockNodeStore{nodes: []model.Node{node}},
+	)
+	a.mu.Lock()
+	a.states[rule.ID+":"+node.ID] = &ruleState{active: true}
+	a.mu.Unlock()
+
+	if err := a.evaluateRules(context.Background()); !errors.Is(err, want) {
+		t.Fatalf("evaluate error = %v, want %v", err, want)
+	}
+	event, err := eventStore.GetActiveEvent(context.Background(), rule.ID, node.ID)
+	if err != nil {
+		t.Fatalf("get active event: %v", err)
+	}
+	if event == nil || event.Status != model.AlertStatusTriggered {
+		t.Fatalf("active event = %#v, want triggered event preserved", event)
+	}
+}
+
+func TestEvaluateRulesMTSQueryErrorContinuesAvailabilityRules(t *testing.T) {
+	want := fmt.Errorf("mts unavailable")
+	now := time.Date(2026, 8, 21, 12, 0, 0, 0, time.UTC)
+	onlineNode := model.Node{ID: "online-node", Name: "web", Status: model.NodeStatusOnline}
+	offlineNode := model.Node{
+		ID: "offline-node", Name: "edge", Status: model.NodeStatusOffline,
+		LastSeen: now.Add(-2 * time.Minute),
+	}
+	resourceRule := model.AlertRule{
+		ID: "rule-cpu", Name: "CPU Alert", Metric: "cpu",
+		Operator: "gt", Threshold: 80, Duration: 0,
+		Severity: model.AlertSeverityWarning,
+	}
+	availabilityRule := model.AlertRule{
+		ID: "rule-availability", Name: "Node offline", Metric: model.MetricHeartbeatAgeSeconds,
+		Operator: "gt", Threshold: 90, Duration: 0,
+		Severity: model.AlertSeverityCritical,
+	}
+	eventStore := &mockAlertEventStore{}
+	a := New(
+		&mockAlertRuleStore{rules: []model.AlertRule{resourceRule, availabilityRule}}, eventStore,
+		&mockAlertChannelStore{}, &mockMTSStore{err: want},
+		&mockNodeStore{nodes: []model.Node{onlineNode, offlineNode}},
+	)
+	a.now = func() time.Time { return now }
+
+	if err := a.evaluateRules(context.Background()); !errors.Is(err, want) {
+		t.Fatalf("evaluate error = %v, want %v", err, want)
+	}
+	availabilityEvent, err := eventStore.GetActiveEvent(context.Background(), availabilityRule.ID, offlineNode.ID)
+	if err != nil {
+		t.Fatalf("get availability event: %v", err)
+	}
+	if availabilityEvent == nil || availabilityEvent.Status != model.AlertStatusTriggered {
+		t.Fatalf("availability event = %#v, want triggered event", availabilityEvent)
+	}
+	resourceEvent, err := eventStore.GetActiveEvent(context.Background(), resourceRule.ID, onlineNode.ID)
+	if err != nil {
+		t.Fatalf("get resource event: %v", err)
+	}
+	if resourceEvent != nil {
+		t.Fatalf("resource event = %#v, want no event on MTS failure", resourceEvent)
 	}
 }
 

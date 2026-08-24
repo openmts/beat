@@ -264,7 +264,7 @@ func TestSSHKeyHandlerDatabaseErrors(t *testing.T) {
 
 func TestAlertHandlerDatabaseErrors(t *testing.T) {
 	stores := closedHandlerStores(t)
-	h := NewAlertHandler(stores.rules, stores.channels, stores.events)
+	h := NewAlertHandler(stores.rules, stores.channels, stores.events, nil)
 	tests := []struct {
 		name, method, body string
 		handler            http.HandlerFunc

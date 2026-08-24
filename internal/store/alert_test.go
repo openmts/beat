@@ -646,3 +646,53 @@ func TestApplyAlertEventAcknowledgementAddsColumn(t *testing.T) {
 		t.Fatalf("acknowledged_at column count = %d, want 1", count)
 	}
 }
+
+func TestGetRuleByID(t *testing.T) {
+	db := setupTestDB(t)
+	ctx := context.Background()
+	store := NewAlertRuleStore(db.DB)
+
+	rule := &model.AlertRule{
+		Name: "CPU Alert", Metric: "cpu", Operator: ">", Threshold: 90,
+		Duration: 60, Severity: model.AlertSeverityCritical, Enabled: true,
+	}
+	created, err := store.CreateAlertRule(ctx, rule)
+	if err != nil {
+		t.Fatalf("create rule: %v", err)
+	}
+
+	got, err := store.GetRuleByID(ctx, created.ID)
+	if err != nil {
+		t.Fatalf("get rule: %v", err)
+	}
+	if got == nil {
+		t.Fatal("expected rule, got nil")
+	}
+	if got.Name != "CPU Alert" || got.Metric != "cpu" || got.Severity != model.AlertSeverityCritical {
+		t.Fatalf("rule = %#v, want CPU Alert/cpu/critical", got)
+	}
+}
+
+func TestGetRuleByIDNotFound(t *testing.T) {
+	db := setupTestDB(t)
+	ctx := context.Background()
+	store := NewAlertRuleStore(db.DB)
+
+	got, err := store.GetRuleByID(ctx, "nonexistent")
+	if err != nil {
+		t.Fatalf("get rule: %v", err)
+	}
+	if got != nil {
+		t.Fatalf("expected nil for missing rule, got %#v", got)
+	}
+}
+
+func TestGetRuleByIDDatabaseError(t *testing.T) {
+	db := setupTestDB(t)
+	_ = db.Close()
+	store := NewAlertRuleStore(db.DB)
+
+	if _, err := store.GetRuleByID(context.Background(), "any"); err == nil {
+		t.Fatal("expected error from closed database")
+	}
+}

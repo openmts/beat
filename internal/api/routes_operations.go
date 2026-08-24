@@ -23,7 +23,7 @@ func (r *Router) registerSSHRoutes(api *http.ServeMux) {
 
 func (r *Router) registerAlertRoutes(api *http.ServeMux) {
 	alertHandler := handler.NewAlertHandler(
-		r.alertRuleStore, r.alertChannelStore, r.alertEventStore, r.delivery,
+		r.alertRuleStore, r.alertChannelStore, r.alertEventStore, r.nodeStore, r.delivery,
 	)
 	api.Handle("GET /api/v1/alerts/rules", r.admin(http.HandlerFunc(alertHandler.HandleListAlertRules)))
 	api.Handle("POST /api/v1/alerts/rules", r.admin(http.HandlerFunc(alertHandler.HandleCreateAlertRule)))

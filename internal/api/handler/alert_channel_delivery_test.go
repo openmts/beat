@@ -19,6 +19,7 @@ func TestAlertChannelSecretsAreSanitizedAndPreserved(t *testing.T) {
 		store.NewAlertRuleStore(database.DB),
 		channels,
 		store.NewAlertEventStore(database.DB),
+		nil,
 	)
 
 	createBody := `{"name":"Telegram","channel_type":"telegram","config":"{\"bot_token\":\"123:secret\",\"chat_id\":\"42\"}","enabled":true}`
@@ -80,6 +81,7 @@ func TestHandleTestAlertChannelRecordsDelivery(t *testing.T) {
 		store.NewAlertRuleStore(database.DB),
 		channels,
 		store.NewAlertEventStore(database.DB),
+		nil,
 	)
 
 	response := runHandlerRequest(
@@ -105,6 +107,7 @@ func TestAlertChannelValidationAndMissingChannel(t *testing.T) {
 		store.NewAlertRuleStore(database.DB),
 		channels,
 		store.NewAlertEventStore(database.DB),
+		nil,
 	)
 	existing, err := channels.CreateAlertChannel(t.Context(), &model.AlertChannel{
 		Name: "Existing", ChannelType: notification.TypeWebhook,

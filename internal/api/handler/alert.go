@@ -1,6 +1,8 @@
 package handler
 
 import (
+	"context"
+	"fmt"
 	"log/slog"
 	"net/http"
 
@@ -13,6 +15,7 @@ type AlertHandler struct {
 	alertRuleStore    *store.AlertRuleStore
 	alertChannelStore *store.AlertChannelStore
 	alertEventStore   *store.AlertEventStore
+	nodeStore         *store.NodeStore
 	delivery          *notification.Service
 }
 
@@ -20,6 +23,7 @@ func NewAlertHandler(
 	alertRuleStore *store.AlertRuleStore,
 	alertChannelStore *store.AlertChannelStore,
 	alertEventStore *store.AlertEventStore,
+	nodeStore *store.NodeStore,
 	deliveryServices ...*notification.Service,
 ) *AlertHandler {
 	delivery := notification.NewService()
@@ -30,6 +34,7 @@ func NewAlertHandler(
 		alertRuleStore:    alertRuleStore,
 		alertChannelStore: alertChannelStore,
 		alertEventStore:   alertEventStore,
+		nodeStore:         nodeStore,
 		delivery:          delivery,
 	}
 }
@@ -205,19 +210,29 @@ func (h *AlertHandler) HandleResolveAlertEvent(w http.ResponseWriter, r *http.Re
 }
 
 // notifyAcknowledgment pushes an acknowledgement or resolution notification to
-// all enabled channels. Delivery failures are logged but do not fail the state
-// change.
+// all enabled channels. It enriches the event with rule and node context so
+// notification templates render the same fields as trigger deliveries. Delivery
+// failures are logged but do not fail the state change.
 func (h *AlertHandler) notifyAcknowledgment(r *http.Request, event *model.AlertEvent, kind string) {
+	h.enrichEvent(r.Context(), event)
 	channels, err := h.alertChannelStore.ListEnabledChannels(r.Context())
 	if err != nil {
 		slog.WarnContext(r.Context(), "list enabled channels for alert ack", "error", err)
 		return
 	}
-	message := "alert acknowledged"
-	if kind == "resolved" {
-		message = "alert resolved"
+	nodeName := event.NodeName
+	if nodeName == "" {
+		nodeName = event.NodeID
 	}
-	event.Message = message
+	ruleName := event.RuleName
+	if ruleName == "" {
+		ruleName = event.RuleID
+	}
+	action := "acknowledged"
+	if kind == "resolved" {
+		action = "resolved"
+	}
+	event.Message = fmt.Sprintf("alert %s: %s on node %s, value=%.2f", action, ruleName, nodeName, event.Value)
 	if kind == "resolved" {
 		now := model.NowUTC()
 		event.ResolvedAt = &now
@@ -226,6 +241,26 @@ func (h *AlertHandler) notifyAcknowledgment(r *http.Request, event *model.AlertE
 		if _, err := h.delivery.Send(r.Context(), &channel, event); err != nil {
 			slog.WarnContext(r.Context(), "alert ack notification failed",
 				"channel_id", channel.ID, "channel_type", channel.ChannelType, "error", err)
+		}
+	}
+}
+
+// enrichEvent populates the non-persisted context fields (RuleName, NodeName,
+// Metric, Severity) on an event loaded from storage so notification templates
+// render complete information. Missing rules or nodes are skipped silently.
+func (h *AlertHandler) enrichEvent(ctx context.Context, event *model.AlertEvent) {
+	if rule, err := h.alertRuleStore.GetRuleByID(ctx, event.RuleID); err != nil {
+		slog.WarnContext(ctx, "enrich event: load rule", "rule_id", event.RuleID, "error", err)
+	} else if rule != nil {
+		event.RuleName = rule.Name
+		event.Metric = rule.Metric
+		event.Severity = rule.Severity
+	}
+	if h.nodeStore != nil {
+		if node, err := h.nodeStore.GetNode(ctx, event.NodeID); err != nil {
+			slog.WarnContext(ctx, "enrich event: load node", "node_id", event.NodeID, "error", err)
+		} else if node != nil {
+			event.NodeName = node.Name
 		}
 	}
 }
