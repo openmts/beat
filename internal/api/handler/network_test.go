@@ -172,12 +172,12 @@ func TestNetworkHandlerStoreFailures(t *testing.T) {
 			t.Fatalf("close MTS: %v", err)
 		}
 		assertHandlerStatus(t, fixture.handler.HandlePublicNetworkQuality,
-			networkHandlerRequest(http.MethodGet, "/quality", ""), http.StatusOK)
+			networkHandlerRequest(http.MethodGet, "/quality", ""), http.StatusInternalServerError)
 		postInvalidNetworkResult(t, fixture, created.ID, fixture.now, http.StatusInternalServerError)
 		assertHandlerStatus(t, fixture.handler.HandleAdminNetworkHistory,
-			historyRequest(created.ID, fixture.node.ID, ""), http.StatusOK)
+			historyRequest(created.ID, fixture.node.ID, ""), http.StatusInternalServerError)
 		assertHandlerStatus(t, fixture.handler.HandleDeleteNetworkTask,
-			requestWithTaskID(http.MethodDelete, created.ID, ""), http.StatusNoContent)
+			requestWithTaskID(http.MethodDelete, created.ID, ""), http.StatusInternalServerError)
 	})
 }
 

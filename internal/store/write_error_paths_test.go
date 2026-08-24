@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -18,20 +19,20 @@ func TestMTSStoreClosedDatabase(t *testing.T) {
 	}
 	ctx := context.Background()
 	now := time.Now()
-	if err := s.WriteMetric(ctx, "node", "cpu", 1, now); err == nil {
-		t.Fatal("expected write error")
+	if err := s.WriteMetric(ctx, "node", "cpu", 1, now); !errors.Is(err, ErrMTSStoreClosed) {
+		t.Fatalf("write after close: expected ErrMTSStoreClosed, got %v", err)
 	}
-	if err := s.Flush(ctx); err != nil {
-		t.Fatalf("flush after close should be safe: %v", err)
+	if err := s.Flush(ctx); !errors.Is(err, ErrMTSStoreClosed) {
+		t.Fatalf("flush after close: expected ErrMTSStoreClosed, got %v", err)
 	}
 	if err := s.Close(); err != nil {
 		t.Fatalf("second close should be safe: %v", err)
 	}
-	if _, err := s.QueryMetrics(ctx, []string{"cpu"}, now.Add(-time.Hour), now, "node"); err != nil {
-		t.Fatalf("query should degrade to empty result, got %v", err)
+	if _, err := s.QueryMetrics(ctx, []string{"cpu"}, now.Add(-time.Hour), now, "node"); !errors.Is(err, ErrMTSStoreClosed) {
+		t.Fatalf("query after close must fail closed, got %v", err)
 	}
-	if err := s.ImportPoints(ctx, []mts.Point{{Measurement: "cpu"}}); err == nil {
-		t.Fatal("import after close should error")
+	if err := s.ImportPoints(ctx, []mts.Point{{Measurement: "cpu"}}); !errors.Is(err, ErrMTSStoreClosed) {
+		t.Fatalf("import after close: expected ErrMTSStoreClosed, got %v", err)
 	}
 }
 

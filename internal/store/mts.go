@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io/fs"
 	"path/filepath"
@@ -13,6 +14,10 @@ import (
 	"github.com/beat/backend/internal/model"
 )
 
+// ErrMTSStoreClosed 表示存储已在关闭后被使用；调用方应将其视为不可恢复的
+// 生命周期错误，而不是空结果。
+var ErrMTSStoreClosed = errors.New("MTS store is closed")
+
 type TimePoint struct {
 	Timestamp time.Time
 	Value     float64
@@ -23,6 +28,7 @@ type MTSStore struct {
 	path        string
 	nodeLocks   sync.Map
 	operationMu sync.RWMutex
+	closed      bool
 }
 
 type NodeMetricSample struct {
@@ -58,6 +64,14 @@ func (s *MTSStore) WriteNodeMetrics(ctx context.Context, sample NodeMetricSample
 	return s.writeNodeMetrics(ctx, sample)
 }
 
+// ensureOpen 必须在持有 operationMu（读锁或写锁）时调用，保证与 Close 互斥。
+func (s *MTSStore) ensureOpen() error {
+	if s.closed {
+		return ErrMTSStoreClosed
+	}
+	return nil
+}
+
 func (s *MTSStore) writeMetricValues(
 	ctx context.Context,
 	nodeID string,
@@ -66,6 +80,9 @@ func (s *MTSStore) writeMetricValues(
 ) error {
 	s.operationMu.RLock()
 	defer s.operationMu.RUnlock()
+	if err := s.ensureOpen(); err != nil {
+		return err
+	}
 	return s.writeMetricValuesLocked(ctx, nodeID, metrics, timestamp)
 }
 
@@ -103,6 +120,12 @@ func (s *MTSStore) QueryMetrics(
 	end time.Time,
 	nodeID string,
 ) (map[string][]TimePoint, error) {
+	s.operationMu.RLock()
+	defer s.operationMu.RUnlock()
+	if err := s.ensureOpen(); err != nil {
+		return nil, err
+	}
+
 	result := map[string][]TimePoint{}
 	startUnix := start.Unix()
 	endUnix := end.Unix()
@@ -143,6 +166,12 @@ func (s *MTSStore) QueryMetrics(
 }
 
 func (s *MTSStore) QueryLatest(ctx context.Context, nodeID string) (map[string]float64, error) {
+	s.operationMu.RLock()
+	defer s.operationMu.RUnlock()
+	if err := s.ensureOpen(); err != nil {
+		return nil, err
+	}
+
 	now := time.Now().UTC()
 	start := now.Add(-1 * time.Hour)
 	startUnix := start.Unix()
@@ -181,12 +210,21 @@ func (s *MTSStore) QueryLatest(ctx context.Context, nodeID string) (map[string]f
 }
 
 func (s *MTSStore) Close() error {
+	s.operationMu.Lock()
+	defer s.operationMu.Unlock()
+	if s.closed {
+		return nil
+	}
+	s.closed = true
 	return s.engine.Close(context.Background())
 }
 
 func (s *MTSStore) Flush(ctx context.Context) error {
 	s.operationMu.RLock()
 	defer s.operationMu.RUnlock()
+	if err := s.ensureOpen(); err != nil {
+		return err
+	}
 	return s.engine.Flush(ctx)
 }
 
@@ -196,6 +234,9 @@ func (s *MTSStore) CleanupBefore(ctx context.Context, cutoff time.Time) error {
 	}
 	s.operationMu.Lock()
 	defer s.operationMu.Unlock()
+	if err := s.ensureOpen(); err != nil {
+		return err
+	}
 
 	if err := s.engine.Flush(ctx); err != nil {
 		return fmt.Errorf("flush MTS before cleanup: %w", err)
@@ -232,6 +273,12 @@ func managedMeasurements() []string {
 }
 
 func (s *MTSStore) DiskUsage() (int64, error) {
+	s.operationMu.RLock()
+	defer s.operationMu.RUnlock()
+	if err := s.ensureOpen(); err != nil {
+		return 0, err
+	}
+
 	var total int64
 	err := filepath.WalkDir(s.path, func(_ string, entry fs.DirEntry, err error) error {
 		if err != nil {
@@ -253,6 +300,11 @@ func (s *MTSStore) DiskUsage() (int64, error) {
 }
 
 func (s *MTSStore) Health() (bool, []string) {
+	s.operationMu.RLock()
+	defer s.operationMu.RUnlock()
+	if s.closed {
+		return false, []string{ErrMTSStoreClosed.Error()}
+	}
 	health := s.engine.HealthSnapshot()
 	return health.Healthy && health.Ready, append([]string(nil), health.Reasons...)
 }

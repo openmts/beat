@@ -23,6 +23,9 @@ func (s *MTSStore) ExportRows(
 	}
 	s.operationMu.Lock()
 	defer s.operationMu.Unlock()
+	if err := s.ensureOpen(); err != nil {
+		return 0, err
+	}
 	if err := s.engine.Flush(ctx); err != nil {
 		return 0, fmt.Errorf("flush MTS before export: %w", err)
 	}
@@ -43,6 +46,9 @@ func (s *MTSStore) ImportPoints(ctx context.Context, points []mts.Point) error {
 	}
 	s.operationMu.RLock()
 	defer s.operationMu.RUnlock()
+	if err := s.ensureOpen(); err != nil {
+		return err
+	}
 	if err := s.engine.Write(ctx, points, mts.WriteOptions{Sync: true}); err != nil {
 		return fmt.Errorf("import MTS points: %w", err)
 	}

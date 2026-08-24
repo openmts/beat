@@ -19,6 +19,9 @@ const (
 func (s *MTSStore) writeNodeMetrics(ctx context.Context, sample NodeMetricSample) error {
 	s.operationMu.RLock()
 	defer s.operationMu.RUnlock()
+	if err := s.ensureOpen(); err != nil {
+		return err
+	}
 	lock := s.nodeLock(sample.NodeID)
 	lock.Lock()
 	defer lock.Unlock()
@@ -48,6 +51,12 @@ func (s *MTSStore) QueryTrafficUsage(
 	start time.Time,
 	end time.Time,
 ) (model.TrafficTotals, error) {
+	s.operationMu.RLock()
+	defer s.operationMu.RUnlock()
+	if err := s.ensureOpen(); err != nil {
+		return model.TrafficTotals{}, err
+	}
+
 	received, trackedSince, err := s.queryTrafficMetric(
 		ctx, nodeID, trafficReceivedDelta, start, end, true,
 	)

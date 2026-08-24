@@ -47,6 +47,9 @@ func (s *MTSStore) WriteNetworkProbes(ctx context.Context, samples []NetworkProb
 	}
 	s.operationMu.RLock()
 	defer s.operationMu.RUnlock()
+	if err := s.ensureOpen(); err != nil {
+		return err
+	}
 	points := make([]mts.Point, 0, len(samples))
 	for _, sample := range samples {
 		success := 0.0
@@ -79,6 +82,12 @@ func (s *MTSStore) QueryNetworkLatest(
 	taskID string,
 	nodeID string,
 ) (*NetworkProbeLatest, error) {
+	s.operationMu.RLock()
+	defer s.operationMu.RUnlock()
+	if err := s.ensureOpen(); err != nil {
+		return nil, err
+	}
+
 	query, err := networkProbeQuery(taskID, nodeID, time.Unix(0, 0), time.Now().UTC().Add(time.Minute)).
 		OrderByTimeDesc().Limit(1).Build()
 	if err != nil {
@@ -105,6 +114,12 @@ func (s *MTSStore) QueryNetworkHistory(
 	start time.Time,
 	end time.Time,
 ) ([]NetworkProbePoint, error) {
+	s.operationMu.RLock()
+	defer s.operationMu.RUnlock()
+	if err := s.ensureOpen(); err != nil {
+		return nil, err
+	}
+
 	query, err := networkProbeQuery(taskID, nodeID, start, end).
 		OrderByTimeAsc().Limit(maxNetworkHistoryPoints + 1).Build()
 	if err != nil {
@@ -123,6 +138,9 @@ func (s *MTSStore) QueryNetworkHistory(
 func (s *MTSStore) DeleteNetworkTask(ctx context.Context, taskID string) error {
 	s.operationMu.Lock()
 	defer s.operationMu.Unlock()
+	if err := s.ensureOpen(); err != nil {
+		return err
+	}
 	err := s.engine.Delete(ctx, mts.DeleteRequest{
 		Database: "beat", Measurement: networkProbeMeasurement,
 		Tags: map[string]string{"task": taskID}, StartTime: 0, EndTime: time.Now().Add(time.Hour).UnixNano(),
