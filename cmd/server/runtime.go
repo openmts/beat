@@ -24,6 +24,7 @@ import (
 	"github.com/beat/backend/internal/service"
 	"github.com/beat/backend/internal/sshclient"
 	"github.com/beat/backend/internal/store"
+	"github.com/beat/backend/internal/theme"
 	"github.com/beat/backend/internal/trafficreport"
 	"github.com/beat/backend/internal/websocket"
 )
@@ -46,6 +47,7 @@ type serverStores struct {
 	agentTasks         *store.AgentTaskStore
 	customMetrics      *store.CustomMetricStore
 	oidc               *store.OIDCStore
+	themes             *store.ThemeStore
 	secrets            *secretbox.Manager
 }
 
@@ -57,6 +59,8 @@ type serverServices struct {
 	delivery       *notification.Service
 	trafficReports *trafficreport.Service
 	oidc           *oidc.Service
+	themes         *theme.Service
+	themeMarkets   *theme.MarketService
 }
 
 type backgroundTasks struct {
@@ -148,7 +152,8 @@ func openServerStores(ctx context.Context, dbPath, mtsPath string) (*serverStore
 		networkTasks:   store.NewNetworkTaskStore(database), siteSettings: store.NewSiteSettingsStore(database),
 		maintenanceSetting: store.NewMaintenanceSettingsStore(database), admins: store.NewAdminStore(database),
 		backups: store.NewBackupStore(database), agentTasks: store.NewAgentTaskStore(database),
-		customMetrics: store.NewCustomMetricStore(database), oidc: store.NewOIDCStore(database)}, nil
+		customMetrics: store.NewCustomMetricStore(database), oidc: store.NewOIDCStore(database),
+		themes: store.NewThemeStore(database)}, nil
 }
 
 func newServerServices(
@@ -164,11 +169,29 @@ func newServerServices(
 	}
 	delivery := notification.NewService()
 	oidcService := newOIDCService(ctx, stores, security, dataDir)
+	themeService, themeMarkets, err := newThemeServices(ctx, stores, dataDir)
+	if err != nil {
+		return nil, err
+	}
 	return &serverServices{security: security, maintenance: maintenanceService, backups: backupService,
 		terminal: service.NewTerminalService(stores.nodes, stores.sshKeys, sshConnector), delivery: delivery,
 		trafficReports: trafficreport.NewService(stores.trafficReports, stores.nodes,
 			stores.alertChannels, stores.mts, delivery),
-		oidc: oidcService}, nil
+		oidc: oidcService, themes: themeService, themeMarkets: themeMarkets}, nil
+}
+
+// newThemeServices 构造主题与市场服务。
+func newThemeServices(
+	ctx context.Context, stores *serverStores, dataDir string,
+) (*theme.Service, *theme.MarketService, error) {
+	themeService, err := theme.NewService(stores.themes, stores.admins,
+		filepath.Join(dataDir, "themes"), buildinfo.Version, time.Now)
+	if err != nil {
+		return nil, nil, fmt.Errorf("initialize theme service: %w", err)
+	}
+	marketClient := theme.NewMarketClient(false, time.Now)
+	marketService := theme.NewMarketService(stores.themes, marketClient, themeService, time.Now)
+	return themeService, marketService, nil
 }
 
 // newOIDCService 构造带生产 SSRF 策略的 OIDC 服务。
@@ -229,7 +252,8 @@ func buildHTTPHandler(config httpHandlerConfig) (http.Handler, *alerter.Alerter,
 		api.WithAdminSecurity(config.services.security), api.WithBackupService(config.services.backups),
 		api.WithAgentTaskStore(config.stores.agentTasks),
 		api.WithCustomMetricStore(config.stores.customMetrics),
-		api.WithOIDC(config.services.oidc))
+		api.WithOIDC(config.services.oidc),
+		api.WithThemes(config.services.themes, config.services.themeMarkets))
 	mux := http.NewServeMux()
 	mux.Handle("/api/v1/", router.ServeHandler())
 	mux.Handle("/ws", websocket.NewHandler(hub))

@@ -12,6 +12,7 @@ import (
 	"github.com/beat/backend/internal/notification"
 	"github.com/beat/backend/internal/oidc"
 	"github.com/beat/backend/internal/store"
+	"github.com/beat/backend/internal/theme"
 )
 
 type Router struct {
@@ -33,6 +34,8 @@ type Router struct {
 	backups           handler.BackupOperations
 	security          *adminauth.Service
 	oidc              *oidc.Service
+	themeService      *theme.Service
+	themeMarkets      *theme.MarketService
 	adminToken        string
 	legacyAgentToken  string
 	terminal          handler.TerminalOperations
@@ -132,6 +135,14 @@ func WithOIDC(service *oidc.Service) RouterOption {
 	}
 }
 
+// WithThemes 注入主题服务与市场服务；nil 时跳过主题路由注册。
+func WithThemes(service *theme.Service, markets *theme.MarketService) RouterOption {
+	return func(router *Router) {
+		router.themeService = service
+		router.themeMarkets = markets
+	}
+}
+
 func NewRouter(
 	nodeStore *store.NodeStore,
 	groupStore *store.GroupStore,
@@ -174,6 +185,11 @@ func (r *Router) setupRoutes() {
 	r.mux.Handle("/api/v1/", middleware.SecurityHeaders(
 		middleware.CORS(middleware.ContentTypeJSON(api)),
 	))
+	if r.themeService != nil {
+		themeHandler := handler.NewThemeHandler(r.themeService, r.themeMarkets)
+		r.mux.Handle("GET /themes/assets/{digest}/{asset...}",
+			http.HandlerFunc(themeHandler.HandleAsset))
+	}
 }
 
 func (r *Router) admin(next http.Handler) http.Handler {

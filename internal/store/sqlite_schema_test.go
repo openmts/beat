@@ -37,8 +37,8 @@ func TestSQLiteSchemaContainsOnlyApplicationData(t *testing.T) {
 		"admin_oidc_transactions", "admin_sessions", "admin_users", "agent_tasks", "alert_channels",
 		"alert_events", "alert_rules", "custom_metric_nodes", "custom_metrics", "groups",
 		"maintenance_settings", "network_task_nodes", "network_tasks", "nodes", "schema_migrations",
-		"site_settings", "ssh_keys", "traffic_report_schedule_channels", "traffic_report_schedule_nodes",
-		"traffic_report_schedules",
+		"site_settings", "ssh_keys", "theme_activations", "theme_market_sources", "theme_packages",
+		"traffic_report_schedule_channels", "traffic_report_schedule_nodes", "traffic_report_schedules",
 	}
 	if !slices.Equal(tables, wantTables) {
 		t.Fatalf("SQLite tables = %v, want application tables %v", tables, wantTables)

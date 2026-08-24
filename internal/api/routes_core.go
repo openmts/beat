@@ -51,9 +51,30 @@ func (r *Router) registerSessionAuthRoutes(api *http.ServeMux) {
 	if r.oidc != nil {
 		r.registerOIDCRoutes(api)
 	}
+	if r.themeService != nil {
+		r.registerThemeRoutes(api)
+	}
 	if r.backups != nil {
 		r.registerBackupRoutes(api)
 	}
+}
+
+func (r *Router) registerThemeRoutes(api *http.ServeMux) {
+	themeHandler := handler.NewThemeHandler(r.themeService, r.themeMarkets)
+	api.HandleFunc("GET /api/v1/themes/active", themeHandler.HandleActive)
+	api.Handle("GET /api/v1/admin/themes", r.ownerAdmin(http.HandlerFunc(themeHandler.HandleList)))
+	api.Handle("POST /api/v1/admin/themes/upload", r.recentAuthOwnerAdmin(http.HandlerFunc(themeHandler.HandleUpload)))
+	api.Handle("GET /api/v1/admin/themes/{id}/export", r.recentAuthOwnerAdmin(http.HandlerFunc(themeHandler.HandleExport)))
+	api.Handle("POST /api/v1/admin/themes/{id}/activate", r.recentAuthOwnerAdmin(http.HandlerFunc(themeHandler.HandleActivate)))
+	api.Handle("POST /api/v1/admin/themes/rollback", r.recentAuthOwnerAdmin(http.HandlerFunc(themeHandler.HandleRollback)))
+	api.Handle("DELETE /api/v1/admin/themes/{id}", r.recentAuthOwnerAdmin(http.HandlerFunc(themeHandler.HandleDelete)))
+	api.Handle("GET /api/v1/admin/theme-markets", r.ownerAdmin(http.HandlerFunc(themeHandler.HandleListMarkets)))
+	api.Handle("POST /api/v1/admin/theme-markets", r.recentAuthOwnerAdmin(http.HandlerFunc(themeHandler.HandleCreateMarket)))
+	api.Handle("PUT /api/v1/admin/theme-markets/{id}", r.recentAuthOwnerAdmin(http.HandlerFunc(themeHandler.HandleUpdateMarket)))
+	api.Handle("DELETE /api/v1/admin/theme-markets/{id}", r.recentAuthOwnerAdmin(http.HandlerFunc(themeHandler.HandleDeleteMarket)))
+	api.Handle("GET /api/v1/admin/theme-markets/{id}/catalog", r.recentAuthOwnerAdmin(http.HandlerFunc(themeHandler.HandleRefreshCatalog)))
+	api.Handle("POST /api/v1/admin/theme-markets/{id}/themes/{theme_id}/install",
+		r.recentAuthOwnerAdmin(http.HandlerFunc(themeHandler.HandleInstallFromMarket)))
 }
 
 func (r *Router) registerOIDCRoutes(api *http.ServeMux) {

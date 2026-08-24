@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-const currentSchemaVersion = 5
+const currentSchemaVersion = 6
 
 type sqliteMigration struct {
 	version int
@@ -21,6 +21,95 @@ var sqliteMigrations = []sqliteMigration{
 	{version: 3, name: "custom_metric_tasks", apply: applyCustomMetricTasks},
 	{version: 4, name: "alert_event_acknowledgement", apply: applyAlertEventAcknowledgement},
 	{version: 5, name: "oidc_identity", apply: applyOIDCIdentity},
+	{version: 6, name: "theme_packages", apply: applyThemePackages},
+}
+
+// applyThemePackages 引入主题包、激活历史、市场源与站点活动主题持久化。
+func applyThemePackages(ctx context.Context, db schemaExecutor) error {
+	for _, statement := range []string{
+		`CREATE TABLE IF NOT EXISTS theme_packages (
+			id TEXT PRIMARY KEY,
+			theme_id TEXT NOT NULL CHECK(length(theme_id) BETWEEN 3 AND 64),
+			name TEXT NOT NULL CHECK(length(name) BETWEEN 1 AND 200),
+			version TEXT NOT NULL CHECK(length(version) BETWEEN 1 AND 64),
+			author TEXT NOT NULL DEFAULT '',
+			description TEXT NOT NULL DEFAULT '',
+			license TEXT NOT NULL DEFAULT '',
+			runtime TEXT NOT NULL CHECK(runtime IN ('declarative', 'sandboxed')),
+			manifest_schema INTEGER NOT NULL DEFAULT 1,
+			minimum_beat_version TEXT NOT NULL DEFAULT '',
+			maximum_beat_version TEXT,
+			archive_digest TEXT NOT NULL UNIQUE CHECK(length(archive_digest) = 64),
+			archive_bytes INTEGER NOT NULL CHECK(archive_bytes BETWEEN 0 AND 26214400),
+			content_bytes INTEGER NOT NULL CHECK(content_bytes BETWEEN 0 AND 67108864),
+			manifest_json TEXT NOT NULL,
+			configuration_json TEXT NOT NULL DEFAULT '{}',
+			source_type TEXT NOT NULL CHECK(source_type IN ('upload', 'market')),
+			source_id TEXT,
+			state TEXT NOT NULL CHECK(state IN ('installed', 'quarantined', 'deleted')),
+			validated_at DATETIME NOT NULL,
+			creator_id TEXT NOT NULL,
+			last_error_category TEXT NOT NULL DEFAULT '',
+			created_at DATETIME NOT NULL,
+			updated_at DATETIME NOT NULL,
+			UNIQUE(theme_id, version)
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_theme_packages_theme ON theme_packages(theme_id, created_at)`,
+		`CREATE TABLE IF NOT EXISTS theme_activations (
+			id TEXT PRIMARY KEY,
+			package_id TEXT,
+			previous_package_id TEXT,
+			actor_id TEXT NOT NULL,
+			reason TEXT NOT NULL CHECK(reason IN ('activate', 'rollback', 'fallback')),
+			activated_at DATETIME NOT NULL,
+			deactivated_at DATETIME,
+			health_state TEXT NOT NULL CHECK(health_state IN ('healthy', 'unhealthy')),
+			last_failure_category TEXT NOT NULL DEFAULT '',
+			FOREIGN KEY(package_id) REFERENCES theme_packages(id) ON DELETE SET NULL
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_theme_activations_current ON theme_activations(deactivated_at)`,
+		`CREATE TABLE IF NOT EXISTS theme_market_sources (
+			id TEXT PRIMARY KEY,
+			name TEXT NOT NULL CHECK(length(name) BETWEEN 1 AND 200),
+			catalog_url TEXT NOT NULL CHECK(length(catalog_url) BETWEEN 1 AND 2048),
+			enabled INTEGER NOT NULL DEFAULT 1 CHECK(enabled IN (0, 1)),
+			sort_order INTEGER NOT NULL DEFAULT 0,
+			public_key TEXT NOT NULL CHECK(length(public_key) BETWEEN 32 AND 128),
+			key_fingerprint TEXT NOT NULL,
+			cache_etag TEXT NOT NULL DEFAULT '',
+			cache_last_modified TEXT NOT NULL DEFAULT '',
+			fetched_at DATETIME,
+			expires_at DATETIME,
+			catalog_digest TEXT NOT NULL DEFAULT '',
+			last_status TEXT NOT NULL DEFAULT '',
+			last_error_category TEXT NOT NULL DEFAULT '',
+			created_at DATETIME NOT NULL,
+			updated_at DATETIME NOT NULL
+		)`,
+	} {
+		if _, err := db.ExecContext(ctx, statement); err != nil {
+			return err
+		}
+	}
+	for _, column := range []struct {
+		name string
+		ddl  string
+	}{
+		{name: "active_theme_package_id", ddl: "ALTER TABLE site_settings ADD COLUMN active_theme_package_id TEXT"},
+	} {
+		var count int
+		if err := db.QueryRowContext(ctx,
+			"SELECT COUNT(*) FROM pragma_table_info('site_settings') WHERE name = ?", column.name,
+		).Scan(&count); err != nil {
+			return err
+		}
+		if count == 0 {
+			if _, err := db.ExecContext(ctx, column.ddl); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 // applyOIDCIdentity 引入 OIDC 提供方、外部身份与登录/链接事务表，并为会话
