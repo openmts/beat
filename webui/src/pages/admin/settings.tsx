@@ -27,6 +27,7 @@ import { updateSiteSettings } from "@/lib/api"
 import type { SiteSettings } from "@/types"
 import { PageHeader } from "@/components/page-header"
 import MaintenancePanel from "@/pages/admin/maintenance-panel"
+import { ThemesPanel } from "@/pages/admin/theme-panels"
 
 function Settings() {
   const { t } = useLocale()
@@ -169,6 +170,7 @@ function Settings() {
         </div>
       </form>
       <MaintenancePanel />
+      <ThemesPanel />
     </div>
   )
 }

@@ -919,3 +919,44 @@ func TestServiceMultiVersionLifecycle(t *testing.T) {
 		}
 	}
 }
+
+func TestMarketServiceBranchCoverage(t *testing.T) {
+	sqlite, err := store.NewSQLiteStore(filepath.Join(t.TempDir(), "beat.db"))
+	if err != nil {
+		t.Fatalf("new sqlite: %v", err)
+	}
+	t.Cleanup(func() { _ = sqlite.Close() })
+	service, err := NewService(store.NewThemeStore(sqlite.DB), store.NewAdminStore(sqlite.DB),
+		filepath.Join(t.TempDir(), "themes"), "0.1.0", time.Now)
+	if err != nil {
+		t.Fatalf("new service: %v", err)
+	}
+	client := NewMarketClient(true, time.Now)
+	markets := NewMarketService(store.NewThemeStore(sqlite.DB), client, service, time.Now)
+	ctx := context.Background()
+
+	source, err := markets.CreateSource(ctx, &model.ThemeMarketSource{
+		Name: "M", CatalogURL: "https://placeholder.invalid/c", PublicKey: repeat('k', 44),
+		KeyFingerprint: "fp", Enabled: true,
+	})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	// 更新 URL（触发缓存失效分支）
+	source.CatalogURL = "https://new.example/c"
+	updated, err := markets.UpdateSource(ctx, source.ID, *source)
+	if err != nil || updated.CatalogURL != "https://new.example/c" {
+		t.Fatalf("update url = %v / %v", updated, err)
+	}
+	// 禁用后刷新与安装失败
+	source.Enabled = false
+	if _, err := markets.UpdateSource(ctx, source.ID, *source); err != nil {
+		t.Fatalf("disable: %v", err)
+	}
+	if _, err := markets.RefreshCatalog(ctx, source.ID); !errors.Is(err, ErrMarketUnavailable) {
+		t.Fatalf("refresh disabled = %v", err)
+	}
+	if _, err := markets.InstallFromMarket(ctx, source.ID, "t", "u"); !errors.Is(err, ErrMarketUnavailable) {
+		t.Fatalf("install disabled = %v", err)
+	}
+}

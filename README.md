@@ -84,7 +84,12 @@ network-quality visibility are persisted in SQLite and exposed through a
 public read-only endpoint; updates remain administrator-only. Disabling public
 IP display also redacts node hosts from REST and live WebSocket responses. See
 [`docs/beat/site-theme-settings-design.md`](docs/beat/site-theme-settings-design.md).
-The same page provides administrator-only data maintenance. MTS metric history
+The same page provides administrator-only data maintenance, a theme library
+with upload/activate/rollback/export, and signed HTTPS market sources whose
+catalogs are verified with Ed25519 and installed by digest. Themes apply only
+to the public dashboard; the administrator interface always uses the built-in
+shadcn surface. Theme packages are stored under the writable data directory and
+included in backup format 2 archives. MTS metric history
 defaults to 30 days and can be configured from 1 to 3650 days; automatic and
 manual runs share one lock, delete only expired MTS measurements, compact MTS,
 and checkpoint, verify, vacuum, and optimize SQLite without deleting platform

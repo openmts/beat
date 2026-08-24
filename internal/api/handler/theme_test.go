@@ -388,3 +388,97 @@ func TestThemeHelperFunctions(t *testing.T) {
 		_ = valid
 	}
 }
+
+func TestThemeHandlerAssetInvalidPaths(t *testing.T) {
+	handler, service, _ := setupThemeHandler(t)
+	raw := themeUploadZip(t)
+	pkg, err := service.Install(context.Background(), raw, model.ThemeSourceUpload, "", "owner-1")
+	if err != nil {
+		t.Fatalf("install: %v", err)
+	}
+	// 无效 digest / 缺失路径 / 非法 asset
+	for _, tc := range []struct{ digest, asset string }{
+		{"not-a-digest", "x.css"},
+		{"", "assets/theme.css"},
+		{pkg.ArchiveDigest, ""},
+		{pkg.ArchiveDigest, "assets/..%2f..%2farchive.zip"},
+	} {
+		request := httptest.NewRequest(http.MethodGet, "/themes/assets/x", nil)
+		request.SetPathValue("digest", tc.digest)
+		request.SetPathValue("asset", tc.asset)
+		response := httptest.NewRecorder()
+		handler.HandleAsset(response, request)
+		if response.Code != http.StatusNotFound {
+			t.Fatalf("asset %q/%q = %d, want 404", tc.digest, tc.asset, response.Code)
+		}
+	}
+}
+
+func TestThemeHandlerUploadTooLarge(t *testing.T) {
+	handler, _, _ := setupThemeHandler(t)
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/admin/themes/upload",
+		bytes.NewReader(make([]byte, maxThemeUploadBytes+1)))
+	request = request.WithContext(themeOwnerContext().Context())
+	response := httptest.NewRecorder()
+	handler.HandleUpload(response, request)
+	if response.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("upload too large = %d", response.Code)
+	}
+}
+
+func TestThemeHandlerMarketSourceSuccess(t *testing.T) {
+	handler, _, _ := setupThemeHandler(t)
+	ctx := themeOwnerContext().Context()
+
+	create := httptest.NewRequest(http.MethodPost, "/api/v1/admin/theme-markets",
+		strings.NewReader(`{"name":"Market","catalog_url":"https://market.example/c","public_key":"`+
+			strings.Repeat("k", 44)+`","enabled":true}`))
+	create = create.WithContext(ctx)
+	createResponse := httptest.NewRecorder()
+	handler.HandleCreateMarket(createResponse, create)
+	if createResponse.Code != http.StatusCreated {
+		t.Fatalf("create = %d %s", createResponse.Code, createResponse.Body.String())
+	}
+	var created struct {
+		Data struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	_ = json.Unmarshal(createResponse.Body.Bytes(), &created)
+
+	list := httptest.NewRequest(http.MethodGet, "/api/v1/admin/theme-markets", nil).WithContext(ctx)
+	listResponse := httptest.NewRecorder()
+	handler.HandleListMarkets(listResponse, list)
+	if listResponse.Code != http.StatusOK || !strings.Contains(listResponse.Body.String(), "Market") {
+		t.Fatalf("list = %d %s", listResponse.Code, listResponse.Body.String())
+	}
+
+	update := httptest.NewRequest(http.MethodPut, "/api/v1/admin/theme-markets/"+created.Data.ID,
+		strings.NewReader(`{"name":"Renamed","enabled":false}`))
+	update.SetPathValue("id", created.Data.ID)
+	update = update.WithContext(ctx)
+	updateResponse := httptest.NewRecorder()
+	handler.HandleUpdateMarket(updateResponse, update)
+	if updateResponse.Code != http.StatusOK {
+		t.Fatalf("update = %d %s", updateResponse.Code, updateResponse.Body.String())
+	}
+
+	refresh := httptest.NewRequest(http.MethodGet, "/api/v1/admin/theme-markets/"+created.Data.ID+"/catalog", nil)
+	refresh.SetPathValue("id", created.Data.ID)
+	refresh = refresh.WithContext(ctx)
+	refreshResponse := httptest.NewRecorder()
+	handler.HandleRefreshCatalog(refreshResponse, refresh)
+	// 无法到达市场 → 503
+	if refreshResponse.Code != http.StatusServiceUnavailable {
+		t.Fatalf("refresh unreachable = %d", refreshResponse.Code)
+	}
+
+	del := httptest.NewRequest(http.MethodDelete, "/api/v1/admin/theme-markets/"+created.Data.ID, nil)
+	del.SetPathValue("id", created.Data.ID)
+	del = del.WithContext(ctx)
+	delResponse := httptest.NewRecorder()
+	handler.HandleDeleteMarket(delResponse, del)
+	if delResponse.Code != http.StatusNoContent {
+		t.Fatalf("delete = %d", delResponse.Code)
+	}
+}

@@ -13,6 +13,7 @@ import { monitorTranslations } from "@/context/monitor-translations"
 import { trafficReportTranslations } from "@/context/traffic-report-translations"
 import { siteSettingsTranslations } from "@/context/site-settings-translations"
 import { maintenanceTranslations } from "@/context/maintenance-translations"
+import { themeTranslations } from "@/context/theme-translations"
 import { securityTranslations } from "@/context/security-translations"
 import { backupTranslations } from "@/context/backup-translations"
 
@@ -39,6 +40,7 @@ export function LocaleProvider({ children }: { children: ReactNode }) {
         trafficReportTranslations,
         siteSettingsTranslations,
         maintenanceTranslations,
+        themeTranslations,
         securityTranslations,
         backupTranslations,
       ]
