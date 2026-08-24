@@ -59,6 +59,7 @@ type backgroundTasks struct {
 	cancel  context.CancelFunc
 	alerts  *alerter.Alerter
 	runtime *runtimeState
+	hub     *websocket.MetricsHub
 	wait    sync.WaitGroup
 	once    sync.Once
 }
@@ -87,16 +88,17 @@ func run(ctx context.Context, dbPath, mtsPath, listenAddr, staticDir string) err
 		cancelRun()
 		services.wait()
 	}()
-	runtime := &runtimeState{}
-	handler, alerts := buildHTTPHandler(httpHandlerConfig{
+	runtime := newRuntimeState()
+	handler, alerts, hub := buildHTTPHandler(httpHandlerConfig{
 		dataDir: dataDir, staticDir: staticDir, stores: stores, services: services,
 		trustedProxies: trustedProxies, runtime: runtime,
 	})
 	background := startBackgroundTasks(backgroundConfig{
-		ctx: runCtx, cancel: cancelRun, alerts: alerts, services: services, runtime: runtime,
+		ctx: runCtx, cancel: cancelRun, alerts: alerts, services: services, runtime: runtime, hub: hub,
 	})
 	defer background.stop()
 	if err := serveHTTP(ctx, listenAddr, handler, func() {
+		services.terminal.CloseAll()
 		background.stop()
 		services.maintenance.Wait()
 	}); err != nil {
@@ -199,7 +201,7 @@ type httpHandlerConfig struct {
 	runtime        *runtimeState
 }
 
-func buildHTTPHandler(config httpHandlerConfig) (http.Handler, *alerter.Alerter) {
+func buildHTTPHandler(config httpHandlerConfig) (http.Handler, *alerter.Alerter, *websocket.MetricsHub) {
 	metrics := observability.NewRegistry()
 	hub := websocket.NewMetricsHub()
 	go hub.Run()
@@ -225,7 +227,7 @@ func buildHTTPHandler(config httpHandlerConfig) (http.Handler, *alerter.Alerter)
 	handler = middleware.Recovery(handler)
 	handler = middleware.LoggingWithObserver(handler, metrics)
 	handler = middleware.RequestContext(config.trustedProxies)(handler)
-	return handler, alerts
+	return handler, alerts, hub
 }
 
 type backgroundConfig struct {
@@ -234,24 +236,39 @@ type backgroundConfig struct {
 	alerts   *alerter.Alerter
 	services *serverServices
 	runtime  *runtimeState
+	hub      *websocket.MetricsHub
 }
 
 func startBackgroundTasks(config backgroundConfig) *backgroundTasks {
-	tasks := &backgroundTasks{cancel: config.cancel, alerts: config.alerts, runtime: config.runtime}
-	tasks.wait.Go(func() { config.alerts.Start(config.ctx) })
+	tasks := &backgroundTasks{cancel: config.cancel, alerts: config.alerts, runtime: config.runtime,
+		hub: config.hub}
+	supervisor := config.runtime.workers
+	alertsWorker := supervisor.register("alerts", config.alerts.EvaluationInterval())
+	config.alerts.SetObserver(alertsWorker.observe())
+
 	reportScheduler := trafficreport.NewScheduler(config.services.trafficReports)
-	tasks.wait.Go(func() { reportScheduler.Run(config.ctx) })
+	reportWorker := supervisor.register("traffic_reports", reportScheduler.Interval())
+	reportScheduler.SetObserver(reportWorker.observe())
+
 	maintenanceScheduler := maintenance.NewScheduler(config.services.maintenance)
-	tasks.wait.Go(func() { maintenanceScheduler.Run(config.ctx) })
-	config.runtime.schedulers.Store(true)
+	maintenanceWorker := supervisor.register("maintenance", maintenanceScheduler.Interval())
+	maintenanceScheduler.SetObserver(maintenanceWorker.observe())
+
+	supervisor.start(&tasks.wait, config.ctx, alertsWorker, config.alerts.Start)
+	supervisor.start(&tasks.wait, config.ctx, reportWorker, reportScheduler.Run)
+	supervisor.start(&tasks.wait, config.ctx, maintenanceWorker, maintenanceScheduler.Run)
 	return tasks
 }
 
+// stop 先取消调度上下文，再关闭 WebSocket Hub 使全部被劫持连接在存储关闭前
+// 终止，避免连接读取已关闭的 MTS/SQLite。
 func (tasks *backgroundTasks) stop() {
 	tasks.once.Do(func() {
 		tasks.cancel()
-		tasks.runtime.schedulers.Store(false)
 		tasks.alerts.Stop()
+		if tasks.hub != nil {
+			tasks.hub.Close()
+		}
 		tasks.wait.Wait()
 	})
 }

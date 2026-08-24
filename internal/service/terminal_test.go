@@ -58,6 +58,21 @@ func (s *memoryStream) Close() error { return nil }
 
 func setupTerminalService(t *testing.T, privateKey string) (*TerminalService, *model.Node, *fakeTerminalConnector) {
 	t.Helper()
+	connector := &fakeTerminalConnector{
+		execute: make(map[string]string),
+		err:     make(map[string]error),
+	}
+	service, node := setupTerminalServiceWithConnector(t, privateKey, connector)
+	connector.execute[node.ID] = "output"
+	return service, node, connector
+}
+
+func setupTerminalServiceWithConnector(
+	t *testing.T,
+	privateKey string,
+	connector TerminalConnector,
+) (*TerminalService, *model.Node) {
+	t.Helper()
 	sqliteStore, err := store.NewSQLiteStore(filepath.Join(t.TempDir(), "beat.db"))
 	if err != nil {
 		t.Fatalf("create database: %v", err)
@@ -82,11 +97,7 @@ func setupTerminalService(t *testing.T, privateKey string) (*TerminalService, *m
 	}
 	node.SSHPublicKey = key.PublicKey
 
-	connector := &fakeTerminalConnector{
-		execute: map[string]string{node.ID: "output"},
-		err:     make(map[string]error),
-	}
-	return NewTerminalService(nodes, keys, connector), node, connector
+	return NewTerminalService(nodes, keys, connector), node
 }
 
 func TestTerminalServiceOpenTerminal(t *testing.T) {

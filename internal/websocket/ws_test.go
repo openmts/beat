@@ -11,13 +11,12 @@ import (
 )
 
 func TestComputeAcceptKey(t *testing.T) {
+	// RFC 6455 §1.3 的标准示例向量，锁定握手摘要算法与编码。
 	key := "dGhlIHNhbXBsZSBub25jZQ=="
+	expected := "s3pPLMBiTxaQ9kYGzzhZRbK+xOo="
 	result := computeAcceptKey(key)
-	if result == "" {
-		t.Error("expected non-empty accept key")
-	}
-	if len(result) == 0 {
-		t.Error("expected non-empty accept key")
+	if result != expected {
+		t.Fatalf("accept key = %q, want %q", result, expected)
 	}
 }
 
@@ -38,14 +37,11 @@ func TestNewMetricsHub(t *testing.T) {
 	if hub.clients == nil {
 		t.Error("expected clients map to be initialized")
 	}
-	if hub.register == nil {
-		t.Error("expected register channel to be initialized")
+	if hub.done == nil {
+		t.Error("expected done channel to be initialized")
 	}
-	if hub.unregister == nil {
-		t.Error("expected unregister channel to be initialized")
-	}
-	if hub.broadcast == nil {
-		t.Error("expected broadcast channel to be initialized")
+	if hub.Count() != 0 {
+		t.Errorf("fresh hub count = %d, want 0", hub.Count())
 	}
 }
 
@@ -58,7 +54,13 @@ func TestMetricsHubRegister(t *testing.T) {
 		send: make(chan []byte, 1),
 	}
 	hub.Register(client)
+	if hub.Count() != 1 {
+		t.Fatalf("count after register = %d, want 1", hub.Count())
+	}
 	hub.Unregister(client)
+	if hub.Count() != 0 {
+		t.Fatalf("count after unregister = %d, want 0", hub.Count())
+	}
 }
 
 func TestMetricsHubBroadcast(t *testing.T) {

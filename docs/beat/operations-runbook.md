@@ -10,13 +10,19 @@ Beat exposes three unauthenticated operational endpoints:
 - `GET /readyz`: SQLite schema, MTS, staged restore, and scheduler readiness;
 - `GET /metrics`: Prometheus text metrics with bounded labels.
 
-The deployed `schedulers` readiness check currently confirms only that the
-background startup path ran. It does not prove individual alert,
-traffic-report, or maintenance worker liveness or recent success. Until the
-reviewed [`runtime-resilience-design.md`](./runtime-resilience-design.md) is
-implemented, operators must correlate readiness with scheduler error logs and
-delivery/maintenance timestamps rather than treating `schedulers=ok` as a
-per-worker health guarantee.
+The `schedulers` readiness check now supervises each background worker
+individually: alert evaluation, traffic-report scheduling, and maintenance
+scheduling report every iteration result through an observer hook. A worker
+that exits unexpectedly (including panic) is restarted with exponential
+backoff up to 3 attempts before the supervisor gives up. `/readyz` names any
+unhealthy worker with a reason — `stopped` (exited and restarts exhausted),
+`failing` (4 or more consecutive failed iterations), or `stale` (no successful
+iteration for 4 expected intervals). Prometheus gauges
+`beat_scheduler_worker_running`, `beat_scheduler_worker_last_success_unix_seconds`,
+`beat_scheduler_worker_consecutive_failures{worker=...}`, and
+`beat_scheduler_worker_restarts_total` expose the same signals. Treat any
+non-ok scheduler check as a page: the process stays alive but that schedule no
+longer makes progress.
 
 The metrics endpoint intentionally avoids usernames, node names, node IDs,
 hosts, and request URLs. Restrict `/metrics` at the reverse proxy when the
@@ -51,16 +57,14 @@ points and MTS health before concluding telemetry is fresh. Stable report
 receipts, deterministic retry, and explicit telemetry age are reviewed in
 [`agent-ingest-consistency-design.md`](./agent-ingest-consistency-design.md).
 
-Current MTS read failure visibility is not uniform. Node REST/history and
-traffic reports propagate engine query errors, while alert evaluation silently
-skips a failed resource metric. The MTS engine also returns an empty successful
-query after its store is closed, so an empty chart or absent alert sample alone
-does not prove there was genuinely no data. During an incident, correlate MTS
-readiness, storage logs, traffic-report failures, and the age of the last known
-point; do not resolve an alert or declare recovery from an empty result. The
-explicit lifecycle guard and per-consumer failure metrics are owned by
-[`runtime-resilience-design.md`](./runtime-resilience-design.md) and the typed
-no-data/error query contract by
+MTS read failures are fail-closed: node REST/history, traffic reports, and
+alert evaluation all propagate engine query errors instead of presenting empty
+results as data, and every MTS operation after store close returns
+`ErrMTSStoreClosed` rather than a successful empty query. An empty chart or
+absent alert sample therefore indicates either genuinely no data or a logged
+MTS error; correlate `/readyz` MTS status and storage logs during incidents.
+Per-consumer failure metrics and the typed no-data/error query contract remain
+owned by [`runtime-resilience-design.md`](./runtime-resilience-design.md) and
 [`metric-catalog-dashboard-design.md`](./metric-catalog-dashboard-design.md).
 
 The current application cleanup is also incomplete: expired sessions are not

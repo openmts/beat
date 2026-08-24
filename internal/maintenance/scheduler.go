@@ -18,6 +18,7 @@ type Scheduler struct {
 	service  schedulerService
 	interval time.Duration
 	now      func() time.Time
+	observer func(error)
 }
 
 func NewScheduler(service schedulerService) *Scheduler {
@@ -25,6 +26,16 @@ func NewScheduler(service schedulerService) *Scheduler {
 		service: service, interval: 15 * time.Minute,
 		now: func() time.Time { return time.Now().UTC() },
 	}
+}
+
+// SetObserver 注册每轮调度结果钩子；须在 Run 之前调用。
+func (scheduler *Scheduler) SetObserver(observer func(error)) {
+	scheduler.observer = observer
+}
+
+// Interval 返回调度周期，供监督层做滞后判定。
+func (scheduler *Scheduler) Interval() time.Duration {
+	return scheduler.interval
 }
 
 func (scheduler *Scheduler) Run(ctx context.Context) {
@@ -45,14 +56,24 @@ func (scheduler *Scheduler) runOnce(ctx context.Context) {
 	overview, err := scheduler.service.Overview(ctx)
 	if err != nil {
 		slog.ErrorContext(ctx, "maintenance scheduler overview failed", "error", err)
+		scheduler.observe(err)
 		return
 	}
-	now := scheduler.now()
-	if !automaticMaintenanceDue(overview, now) {
+	if !automaticMaintenanceDue(overview, scheduler.now()) {
+		scheduler.observe(nil)
 		return
 	}
 	if err := scheduler.service.StartAutomatic(); err != nil && !errors.Is(err, ErrAlreadyRunning) {
 		slog.ErrorContext(ctx, "maintenance scheduler start failed", "error", err)
+		scheduler.observe(err)
+		return
+	}
+	scheduler.observe(nil)
+}
+
+func (scheduler *Scheduler) observe(err error) {
+	if scheduler.observer != nil {
+		scheduler.observer(err)
 	}
 }
 

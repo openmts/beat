@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
-	"sync/atomic"
 	"time"
 
 	"github.com/beat/backend/internal/backup"
@@ -44,8 +43,31 @@ type notificationMonitor interface {
 	Stats() notification.DeliveryStats
 }
 
+type terminalMonitor interface {
+	ActiveSessions() int
+}
+
 type runtimeState struct {
-	schedulers atomic.Bool
+	workers *workerSupervisor
+}
+
+func newRuntimeState() *runtimeState {
+	return &runtimeState{workers: newWorkerSupervisor()}
+}
+
+func (state *runtimeState) schedulerWorkers() []workerSnapshot {
+	if state.workers == nil {
+		return nil
+	}
+	return state.workers.snapshot()
+}
+
+// schedulerHealth 返回各 worker 的健康原因；空字符串表示健康。
+func (state *runtimeState) schedulerHealth(now time.Time) []workerHealth {
+	if state.workers == nil {
+		return nil
+	}
+	return state.workers.health(now)
 }
 
 type operability struct {
@@ -56,6 +78,7 @@ type operability struct {
 	backups        runningMonitor
 	maintenance    runningMonitor
 	notifications  notificationMonitor
+	terminals      terminalMonitor
 	metrics        *observability.Registry
 	runtime        *runtimeState
 	pendingRestore func(string) (bool, error)
@@ -81,7 +104,8 @@ func newOperability(
 		sqlite: config.stores.sqlite, mts: config.stores.mts, nodes: config.stores.nodes,
 		backupRecords: config.stores.backups, backups: config.services.backups,
 		maintenance: config.services.maintenance, notifications: config.services.delivery,
-		metrics: metrics, runtime: config.runtime, pendingRestore: backup.PendingRestore, dataDir: config.dataDir,
+		terminals: config.services.terminal,
+		metrics:   metrics, runtime: config.runtime, pendingRestore: backup.PendingRestore, dataDir: config.dataDir,
 	}
 }
 
@@ -153,8 +177,18 @@ func (operations *operability) restoreCheck() readinessCheck {
 }
 
 func (operations *operability) schedulerCheck() readinessCheck {
-	if !operations.runtime.schedulers.Load() {
+	health := operations.runtime.schedulerHealth(time.Now().UTC())
+	if len(health) == 0 {
 		return readinessCheck{Status: "error", Detail: "stopped"}
+	}
+	unhealthy := make([]string, 0, len(health))
+	for _, worker := range health {
+		if worker.Reason != "" {
+			unhealthy = append(unhealthy, worker.Name+" "+worker.Reason)
+		}
+	}
+	if len(unhealthy) > 0 {
+		return readinessCheck{Status: "error", Detail: strings.Join(unhealthy, ",")}
 	}
 	return readinessCheck{Status: "ok"}
 }
@@ -190,6 +224,28 @@ func (operations *operability) writeReadinessMetrics(output *strings.Builder, ct
 	}
 	restorePending := response.Checks["restore"].Detail == "restart_required"
 	fmt.Fprintf(output, "# TYPE beat_restore_pending gauge\nbeat_restore_pending %d\n", boolMetric(restorePending))
+
+	workers := operations.runtime.schedulerWorkers()
+	if len(workers) > 0 {
+		output.WriteString("# TYPE beat_scheduler_worker_running gauge\n")
+		output.WriteString("# TYPE beat_scheduler_worker_last_success_unix_seconds gauge\n")
+		output.WriteString("# TYPE beat_scheduler_worker_consecutive_failures gauge\n")
+		output.WriteString("# TYPE beat_scheduler_worker_restarts_total counter\n")
+		for _, worker := range workers {
+			lastSuccess := int64(0)
+			if !worker.LastSuccess.IsZero() {
+				lastSuccess = worker.LastSuccess.Unix()
+			}
+			fmt.Fprintf(output, "beat_scheduler_worker_running{worker=%q} %d\n",
+				worker.Name, boolMetric(worker.Running))
+			fmt.Fprintf(output, "beat_scheduler_worker_last_success_unix_seconds{worker=%q} %d\n",
+				worker.Name, lastSuccess)
+			fmt.Fprintf(output, "beat_scheduler_worker_consecutive_failures{worker=%q} %d\n",
+				worker.Name, worker.ConsecutiveFails)
+			fmt.Fprintf(output, "beat_scheduler_worker_restarts_total{worker=%q} %d\n",
+				worker.Name, worker.Restarts)
+		}
+	}
 }
 
 func (operations *operability) writeNodeMetrics(output *strings.Builder, ctx context.Context) {
@@ -231,6 +287,10 @@ func (operations *operability) writeServiceMetrics(output *strings.Builder, ctx 
 	output.WriteString("# TYPE beat_notification_deliveries_total counter\n")
 	fmt.Fprintf(output, "beat_notification_deliveries_total{result=\"success\"} %d\n", stats.Success)
 	fmt.Fprintf(output, "beat_notification_deliveries_total{result=\"failed\"} %d\n", stats.Failed)
+	if operations.terminals != nil {
+		output.WriteString("# TYPE beat_terminal_sessions_active gauge\n")
+		fmt.Fprintf(output, "beat_terminal_sessions_active %d\n", operations.terminals.ActiveSessions())
+	}
 	operations.writeBackupRecordMetrics(output, ctx)
 }
 

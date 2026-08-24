@@ -59,18 +59,35 @@ type fakeNotificationMonitor struct{ stats notification.DeliveryStats }
 
 func (monitor fakeNotificationMonitor) Stats() notification.DeliveryStats { return monitor.stats }
 
+type fakeTerminalMonitor int
+
+func (monitor fakeTerminalMonitor) ActiveSessions() int { return int(monitor) }
+
 func newTestOperability() *operability {
-	runtime := &runtimeState{}
-	runtime.schedulers.Store(true)
 	return &operability{
 		sqlite: fakeSQLiteMonitor{bytes: 10}, mts: fakeMTSMonitor{healthy: true, bytes: 20},
 		nodes: fakeNodeMonitor{nodes: []model.Node{{Status: model.NodeStatusOnline,
 			LastSeen: time.Now().Add(-time.Minute)}}},
 		backupRecords: fakeBackupMonitor{records: []model.BackupRecord{{State: model.BackupStateReady}}}, backups: fakeRunningMonitor(false), maintenance: fakeRunningMonitor(true),
 		notifications: fakeNotificationMonitor{stats: notification.DeliveryStats{Success: 3, Failed: 1}},
-		metrics:       observability.NewRegistry(), runtime: runtime,
+		terminals:     fakeTerminalMonitor(2),
+		metrics:       observability.NewRegistry(), runtime: newRuntimeStateWithWorkers("alerts", "traffic_reports"),
 		pendingRestore: func(string) (bool, error) { return false, nil }, dataDir: tTempPath,
 	}
+}
+
+// newRuntimeStateWithWorkers 注册处于运行状态的模拟 worker，供就绪检查测试使用。
+func newRuntimeStateWithWorkers(names ...string) *runtimeState {
+	runtime := newRuntimeState()
+	runtime.workers.mu.Lock()
+	defer runtime.workers.mu.Unlock()
+	for _, name := range names {
+		w := &supervisedWorker{name: name, expectedInterval: time.Minute}
+		w.running.Store(true)
+		w.lastSuccess.Store(time.Now().UnixNano())
+		runtime.workers.workers = append(runtime.workers.workers, w)
+	}
+	return runtime
 }
 
 const tTempPath = "/test-data"
@@ -92,7 +109,9 @@ func TestOperabilityHealthAndReadiness(t *testing.T) {
 func TestOperabilityReadinessFailureDoesNotLeakError(t *testing.T) {
 	operations := newTestOperability()
 	operations.sqlite = fakeSQLiteMonitor{readyErr: errors.New("secret database path")}
-	operations.runtime.schedulers.Store(false)
+	for _, worker := range operations.runtime.workers.workers {
+		worker.running.Store(false)
+	}
 	request := httptest.NewRequest(http.MethodGet, "/readyz", nil)
 	response := httptest.NewRecorder()
 	operations.handleReady(response, request)
@@ -101,6 +120,9 @@ func TestOperabilityReadinessFailureDoesNotLeakError(t *testing.T) {
 	}
 	if strings.Contains(response.Body.String(), "secret database path") {
 		t.Fatalf("readiness leaked internal error: %s", response.Body.String())
+	}
+	if !strings.Contains(response.Body.String(), "alerts stopped") {
+		t.Fatalf("readiness should name the stopped workers: %s", response.Body.String())
 	}
 }
 

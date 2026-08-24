@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -17,6 +19,9 @@ import (
 const (
 	agentTaskResultMessage = "task_result"
 	agentChannelPingEvery  = 30 * time.Second
+	// 读超时为 ping 周期的 3 倍；agent 收到 ping 会回复 pong 续期。
+	agentChannelReadTimeout  = 90 * time.Second
+	agentChannelWriteTimeout = 30 * time.Second
 )
 
 // AgentChannelOperations exposes the pieces the agent channel needs.
@@ -92,6 +97,8 @@ func (h *AgentChannelHandler) serveConnection(ctx context.Context, nodeID string
 
 	pending, err := h.operations.RegisterAgent(ctx, nodeID)
 	if err != nil {
+		slog.WarnContext(ctx, "agent channel register failed",
+			"node_id", nodeID, "error", err)
 		_ = conn.Close()
 		return
 	}
@@ -102,7 +109,11 @@ func (h *AgentChannelHandler) serveConnection(ctx context.Context, nodeID string
 	}
 	// Re-sync the custom metric registry on every connect so agents that
 	// restarted (or lost the earlier registration task) rebuild their state.
-	if task, err := h.operations.RefreshCustomMetrics(ctx, nodeID); err == nil && task != nil {
+	task, refreshErr := h.operations.RefreshCustomMetrics(ctx, nodeID)
+	if refreshErr != nil {
+		slog.WarnContext(ctx, "agent channel refresh custom metrics failed",
+			"node_id", nodeID, "error", refreshErr)
+	} else if task != nil {
 		if err := wrapped.WriteTask(ctx, *task); err != nil {
 			return
 		}
@@ -114,30 +125,44 @@ func (h *AgentChannelHandler) serveConnection(ctx context.Context, nodeID string
 		writeLoop(ctx, wrapped)
 	}()
 
-	h.receiveResults(ctx, conn)
+	h.receiveResults(ctx, nodeID, conn)
 
 	_ = conn.Close()
 	<-writeDone
 }
 
 // receiveResults reads task result messages until the connection closes.
-func (h *AgentChannelHandler) receiveResults(ctx context.Context, conn *websocket.Conn) {
+// 单条结果落库失败只告警不断连：任务保持待执行并在重连后重投，属于既有
+// at-least-once 语义；断连只会放大数据库故障期的重连风暴。
+func (h *AgentChannelHandler) receiveResults(
+	ctx context.Context,
+	nodeID string,
+	conn *websocket.Conn,
+) {
 	for {
+		if err := conn.SetReadDeadline(time.Now().Add(agentChannelReadTimeout)); err != nil {
+			slog.WarnContext(ctx, "set agent read deadline failed",
+				"node_id", nodeID, "error", err)
+			return
+		}
 		var message agentChannelMessage
 		if err := websocket.JSON.Receive(conn, &message); err != nil {
 			return
 		}
-		if message.Type != agentTaskResultMessage || message.Result == nil {
-			continue
-		}
-		status := model.AgentTaskStatusFailed
-		if message.Result.Success {
-			status = model.AgentTaskStatusDone
-		}
-		if err := h.operations.CompleteAgentTask(
-			ctx, message.Result.TaskID, status, message.Result.Error,
-		); err != nil {
-			return
+		switch {
+		case message.Type == agentTaskResultMessage && message.Result != nil:
+			status := model.AgentTaskStatusFailed
+			if message.Result.Success {
+				status = model.AgentTaskStatusDone
+			}
+			if err := h.operations.CompleteAgentTask(
+				ctx, message.Result.TaskID, status, message.Result.Error,
+			); err != nil {
+				slog.WarnContext(ctx, "record agent task result failed; task stays pending for redelivery",
+					"node_id", nodeID, "task_id", message.Result.TaskID, "error", err)
+			}
+		default:
+			// ping 的 pong 应答或其他帧：收到即证明链路活跃。
 		}
 	}
 }
@@ -147,7 +172,8 @@ type agentChannelMessage struct {
 	Result *model.AgentTaskResult `json:"result,omitempty"`
 }
 
-// writeLoop sends queued task messages and periodic keepalives.
+// writeLoop sends queued task messages and periodic keepalives. Every send
+// carries a write deadline so a stalled TCP peer cannot hold the pump forever.
 func writeLoop(ctx context.Context, conn *agentWebSocketConn) {
 	ping := time.NewTicker(agentChannelPingEvery)
 	defer ping.Stop()
@@ -157,17 +183,27 @@ func writeLoop(ctx context.Context, conn *agentWebSocketConn) {
 			if !ok {
 				return
 			}
-			if err := websocket.Message.Send(conn.conn, string(message)); err != nil {
+			if err := sendAgentFrame(conn.conn, message); err != nil {
 				return
 			}
 		case <-ping.C:
-			if err := websocket.JSON.Send(conn.conn, map[string]string{"type": "ping"}); err != nil {
+			if err := sendAgentFrame(conn.conn, []byte(`{"type":"ping"}`)); err != nil {
 				return
 			}
 		case <-ctx.Done():
 			return
 		}
 	}
+}
+
+func sendAgentFrame(conn *websocket.Conn, payload []byte) error {
+	if err := conn.SetWriteDeadline(time.Now().Add(agentChannelWriteTimeout)); err != nil {
+		return fmt.Errorf("set write deadline: %w", err)
+	}
+	if err := websocket.Message.Send(conn, string(payload)); err != nil {
+		return fmt.Errorf("send agent frame: %w", err)
+	}
+	return nil
 }
 
 func agentChannelHandshake(config *websocket.Config, _ *http.Request) error {

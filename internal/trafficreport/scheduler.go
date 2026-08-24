@@ -15,10 +15,21 @@ type dueRunner interface {
 type Scheduler struct {
 	runner   dueRunner
 	interval time.Duration
+	observer func(error)
 }
 
 func NewScheduler(runner dueRunner) *Scheduler {
 	return &Scheduler{runner: runner, interval: defaultSchedulerInterval}
+}
+
+// SetObserver 注册每轮调度结果钩子；须在 Run 之前调用。
+func (s *Scheduler) SetObserver(observer func(error)) {
+	s.observer = observer
+}
+
+// Interval 返回调度周期，供监督层做滞后判定。
+func (s *Scheduler) Interval() time.Duration {
+	return s.interval
 }
 
 func (s *Scheduler) Run(ctx context.Context) {
@@ -36,7 +47,11 @@ func (s *Scheduler) Run(ctx context.Context) {
 }
 
 func (s *Scheduler) runOnce(ctx context.Context) {
-	if err := s.runner.RunDue(ctx); err != nil {
+	err := s.runner.RunDue(ctx)
+	if err != nil {
 		slog.ErrorContext(ctx, "traffic report scheduler failed", "error", err)
+	}
+	if s.observer != nil {
+		s.observer(err)
 	}
 }

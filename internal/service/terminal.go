@@ -30,6 +30,16 @@ type TerminalService struct {
 	nodes     *store.NodeStore
 	keys      *store.SSHKeyStore
 	connector TerminalConnector
+
+	mu       sync.Mutex
+	sessions map[*terminalSession]struct{}
+}
+
+// terminalSession 标识一条活跃的终端会话；取消其 ctx 即可终止桥接并关闭流。
+type terminalSession struct {
+	nodeID string
+	cancel context.CancelFunc
+	stream io.ReadWriteCloser
 }
 
 type BatchResult struct {
@@ -44,7 +54,38 @@ func NewTerminalService(
 	keys *store.SSHKeyStore,
 	connector TerminalConnector,
 ) *TerminalService {
-	return &TerminalService{nodes: nodes, keys: keys, connector: connector}
+	return &TerminalService{nodes: nodes, keys: keys, connector: connector,
+		sessions: make(map[*terminalSession]struct{})}
+}
+
+// ActiveSessions 返回当前活跃终端会话数，供可观测性暴露。
+func (s *TerminalService) ActiveSessions() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.sessions)
+}
+
+// CloseAll 终止全部活跃终端会话：取消桥接上下文并关闭流。须在存储关闭前
+// 调用（优雅停机路径），确保被劫持的终端连接不会读取已关闭的存储。
+func (s *TerminalService) CloseAll() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for session := range s.sessions {
+		session.cancel()
+		_ = session.stream.Close()
+	}
+}
+
+func (s *TerminalService) register(session *terminalSession) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.sessions[session] = struct{}{}
+}
+
+func (s *TerminalService) unregister(session *terminalSession) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.sessions, session)
 }
 
 func (s *TerminalService) OpenTerminal(
@@ -56,8 +97,17 @@ func (s *TerminalService) OpenTerminal(
 	if err != nil {
 		return err
 	}
+	sessionCtx, cancel := context.WithCancel(ctx)
+	session := &terminalSession{nodeID: nodeID, cancel: cancel, stream: stream}
+	s.register(session)
+	defer func() {
+		cancel()
+		s.unregister(session)
+		_ = stream.Close()
+	}()
+
 	request := sshclient.Request{Node: *node, PrivateKey: privateKey}
-	if err := s.connector.OpenTerminal(ctx, request, stream); err != nil {
+	if err := s.connector.OpenTerminal(sessionCtx, request, stream); err != nil {
 		return fmt.Errorf("open ssh terminal: %w", err)
 	}
 	return nil

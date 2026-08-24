@@ -14,21 +14,24 @@ Fleet snapshot from MTS every five seconds.
 
 The confirmed current behavior is:
 
-- `startBackgroundTasks` starts three goroutines and immediately stores one
-  aggregate `schedulers=true` flag;
-- `/readyz` reports only that aggregate flag, not individual worker liveness,
-  last success, lag, consecutive failures, panic, or unexpected return;
+- `startBackgroundTasks` registers three workers under a per-worker supervisor:
+  panics are contained; unexpected exit triggers exponential-backoff restart
+  (up to 3 attempts, then stays down); every iteration reports success/failure
+  via observer hooks, so `/readyz` distinguishes `stopped`, `failing`, and
+  `stale` workers and Prometheus exposes running/last-success/
+  consecutive-failure/restart gauges;
 - each `/api/v1/ws/metrics` client lists every public node, queries every known
   latest metric per node, and aggregates current-cycle traffic independently;
-- REST node/current/history and traffic-report consumers propagate MTS query
-  errors, but alert evaluation returns silently when a metric query fails;
-- the MTS wrapper propagates errors returned by the engine, but the engine
-  currently answers queries after `Close()` with an empty result and no error,
-  and a regression test explicitly accepts that false-empty state;
-- hijacked WebSocket connections are not registered with the Server shutdown
-  lifecycle and can outlive `http.Server.Shutdown`;
-- legacy `/ws` and `/metrics/ws` routes use a non-RFC WebSocket accept digest;
-  `/metrics/ws` has no production broadcaster and `/ws` closes immediately.
+- REST node/current/history, traffic-report, and alert-evaluation consumers all
+  propagate MTS query errors;
+- the MTS wrapper fails closed after `Close()` with `ErrMTSStoreClosed`;
+  last-success freshness of the engine itself remains engine-owned;
+- legacy `/ws` and `/metrics/ws` routes now use the RFC 6455 accept digest,
+  unregister clients when either pump exits, and close every hub connection in
+  `backgroundTasks.stop` before stores close; the routes themselves remain
+  unremoved pending explicit API-change approval, `/metrics/ws` still has no
+  production broadcaster, and terminal WebSocket sessions remain outside this
+  hub lifecycle;
 
 This schema-free batch makes background execution and public realtime delivery
 bounded, observable, and shutdown-safe without changing public login policy,

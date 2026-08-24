@@ -45,7 +45,9 @@ admin panel is available at `/admin`; on a fresh database, use
 `BEAT_ADMIN_TOKEN` once to create the first `owner` account. Normal admin access
 then uses username/password, optional TOTP, and a server-side session carried by
 an HttpOnly SameSite cookie. Terminal WebSockets use the same session and
-same-origin checks. No administrator credential is stored in Web Storage.
+same-origin checks; active terminal sessions are tracked server-side, exposed
+as `beat_terminal_sessions_active`, and terminated before storage closes during
+graceful shutdown. No administrator credential is stored in Web Storage.
 
 `BEAT_TRUSTED_PROXIES` is disabled when empty. Configure it only with the CIDRs
 of reverse proxies that connect directly to Beat; trusted HTTPS forwarding then
@@ -224,7 +226,11 @@ reconnecting.
 - Tasks are persisted and replayed until the agent reports a result; failed
   tasks are not retried.
 - Task results are sent back over the same WebSocket and recorded by the
-  server.
+  server; a transient failure to record one result is logged and the channel
+  stays connected (the task remains pending and is redelivered on reconnect).
+- The server pings the channel every 30 seconds and the agent answers with a
+  pong. Both sides enforce read/write deadlines, so a half-open connection is
+  detected within about 90 seconds and re-established automatically.
 - On every heartbeat the agent also checks that its own `~/.ssh/authorized_keys`
   still contains the node's assigned key and re-installs it if it was removed
   externally, so a lost key self-heals automatically.
