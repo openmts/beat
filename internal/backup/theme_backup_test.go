@@ -245,3 +245,55 @@ func TestBackupFormat1StillValid(t *testing.T) {
 		t.Fatalf("state = %s", uploaded.State)
 	}
 }
+
+func TestBackupCopyThemesInvalidDirectory(t *testing.T) {
+	fixture := newBackupFixture(t)
+	// themesDir 指向一个文件而非目录 → copyThemes 报错
+	badThemes := filepath.Join(t.TempDir(), "themes")
+	if err := os.WriteFile(badThemes, []byte("x"), 0o600); err != nil {
+		t.Fatalf("write themes file: %v", err)
+	}
+	fixture.service.SetThemesDir(badThemes)
+	record, err := fixture.service.Start(t.Context())
+	if err != nil {
+		t.Fatalf("start backup: %v", err)
+	}
+	fixture.service.Wait()
+	records, err := fixture.service.List(t.Context())
+	if err != nil || len(records) != 1 || records[0].State != "failed" {
+		t.Fatalf("records = %v / %v", records, err)
+	}
+	_ = record
+}
+
+func TestValidatePayloadsFormat2Rejections(t *testing.T) {
+	// 构造一个格式 2 manifest，但其 themes 条目与磁盘不一致
+	root := t.TempDir()
+	manifest := model.BackupManifest{
+		FormatVersion: 2, CreatedAt: time.Now().UTC(), SnapshotCutoff: time.Now().UTC(),
+		PayloadSizes: map[string]int64{},
+		Checksums:    map[string]string{},
+		ThemeFiles: map[string]model.BackupThemeFile{
+			"themes/digest/archive.zip": {Path: "themes/digest/archive.zip", Size: 1, SHA256: "x"},
+		},
+	}
+	// 缺 sqlite/metrics 也会报错；这里先验证缺失主题归档被拒绝
+	// 写入一个虚假的 sqlite/metrics 以满足基本校验
+	_ = os.WriteFile(filepath.Join(root, sqliteEntry), []byte("sqlite"), 0o600)
+	_ = os.WriteFile(filepath.Join(root, metricsEntry), []byte("metrics"), 0o600)
+	manifest.PayloadSizes[sqliteEntry] = 6
+	manifest.Checksums[sqliteEntry] = "0"
+	manifest.PayloadSizes[metricsEntry] = 7
+	manifest.Checksums[metricsEntry] = "0"
+	if err := validatePayloads(root, manifest); err == nil {
+		t.Fatal("format 2 manifest with missing theme archive accepted")
+	}
+
+	// 活动主题存在但主题资产缺失
+	manifest.PayloadSizes["themes/digest/archive.zip"] = 1
+	manifest.Checksums["themes/digest/archive.zip"] = "x"
+	_ = os.WriteFile(filepath.Join(root, "themes", "digest", "archive.zip"), []byte("a"), 0o600)
+	if err := validatePayloads(root, manifest); err == nil {
+		t.Fatal("format 2 with mismatched theme metadata accepted")
+	}
+}

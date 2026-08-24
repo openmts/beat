@@ -948,6 +948,27 @@ func TestMarketServiceBranchCoverage(t *testing.T) {
 	if err != nil || updated.CatalogURL != "https://new.example/c" {
 		t.Fatalf("update url = %v / %v", updated, err)
 	}
+	// 更新公钥（触发密钥变更分支）
+	source.PublicKey = repeat('z', 44)
+	source.KeyFingerprint = "new-fp"
+	if _, err := markets.UpdateSource(ctx, source.ID, *source); err != nil {
+		t.Fatalf("update key: %v", err)
+	}
+	// 指向不可达目录：刷新与安装走 fetch 失败分支
+	unreachable := &model.ThemeMarketSource{
+		ID: "m2", Name: "Unreachable", CatalogURL: "https://unreachable.invalid/catalog",
+		PublicKey: repeat('q', 44), KeyFingerprint: "fp2", Enabled: true,
+	}
+	createdUnreachable, err := markets.CreateSource(ctx, unreachable)
+	if err != nil {
+		t.Fatalf("create unreachable: %v", err)
+	}
+	if _, err := markets.RefreshCatalog(ctx, createdUnreachable.ID); !errors.Is(err, ErrMarketUnavailable) {
+		t.Fatalf("refresh unreachable = %v", err)
+	}
+	if _, err := markets.InstallFromMarket(ctx, createdUnreachable.ID, "t", "u"); !errors.Is(err, ErrMarketUnavailable) {
+		t.Fatalf("install unreachable = %v", err)
+	}
 	// 禁用后刷新与安装失败
 	source.Enabled = false
 	if _, err := markets.UpdateSource(ctx, source.ID, *source); err != nil {
@@ -958,5 +979,50 @@ func TestMarketServiceBranchCoverage(t *testing.T) {
 	}
 	if _, err := markets.InstallFromMarket(ctx, source.ID, "t", "u"); !errors.Is(err, ErrMarketUnavailable) {
 		t.Fatalf("install disabled = %v", err)
+	}
+}
+
+func TestNewServiceErrorPaths(t *testing.T) {
+	sqlite, err := store.NewSQLiteStore(filepath.Join(t.TempDir(), "beat.db"))
+	if err != nil {
+		t.Fatalf("new sqlite: %v", err)
+	}
+	t.Cleanup(func() { _ = sqlite.Close() })
+	// root 指向一个文件 → MkdirAll/Chmod 失败
+	badRoot := filepath.Join(t.TempDir(), "themes")
+	if err := os.WriteFile(badRoot, []byte("x"), 0o600); err != nil {
+		t.Fatalf("write root file: %v", err)
+	}
+	if _, err := NewService(store.NewThemeStore(sqlite.DB), store.NewAdminStore(sqlite.DB),
+		badRoot, "0.1.0", time.Now); err == nil {
+		t.Fatal("service over a file root accepted")
+	}
+	// 子目录不可创建（父级为只读文件路径）
+	parent := filepath.Join(t.TempDir(), "parent")
+	if err := os.WriteFile(parent, []byte("x"), 0o600); err != nil {
+		t.Fatalf("write parent file: %v", err)
+	}
+	if _, err := NewService(store.NewThemeStore(sqlite.DB), store.NewAdminStore(sqlite.DB),
+		filepath.Join(parent, "themes"), "0.1.0", time.Now); err == nil {
+		t.Fatal("service with uncreatable child accepted")
+	}
+}
+
+func TestServiceContentHelpers(t *testing.T) {
+	sqlite, err := store.NewSQLiteStore(filepath.Join(t.TempDir(), "beat.db"))
+	if err != nil {
+		t.Fatalf("new sqlite: %v", err)
+	}
+	t.Cleanup(func() { _ = sqlite.Close() })
+	service, err := NewService(store.NewThemeStore(sqlite.DB), store.NewAdminStore(sqlite.DB),
+		filepath.Join(t.TempDir(), "themes"), "0.1.0", time.Now)
+	if err != nil {
+		t.Fatalf("new service: %v", err)
+	}
+	if _, err := service.Content(""); !errors.Is(err, ErrContentUnavailable) {
+		t.Fatalf("content empty id = %v", err)
+	}
+	if service.PackageDir("abc") == "" {
+		t.Fatal("package dir must be non-empty")
 	}
 }
