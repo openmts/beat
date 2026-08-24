@@ -908,11 +908,31 @@ func TestServiceMultiVersionLifecycle(t *testing.T) {
 		t.Fatalf("descriptor after fallback = %#v", descriptor)
 	}
 
-	// 列出时应标记 v2 非活动（已回退）
+	// 重新激活 v2 后列出应标记活动
+	if _, err := service.Activate(ctx, pkg2.ID, "u"); err != nil {
+		t.Fatalf("re-activate v2: %v", err)
+	}
 	packages, err := service.ListPackages(ctx)
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
+	activeFound := false
+	for _, pkg := range packages {
+		if pkg.IsActive {
+			activeFound = true
+			if pkg.ID != pkg2.ID || pkg.HealthState != "healthy" {
+				t.Fatalf("active package = %#v", pkg)
+			}
+		}
+	}
+	if !activeFound {
+		t.Fatal("expected an active package in the list")
+	}
+	// 回退后不再有活动包
+	if err := service.Fallback(ctx, "u", "test"); err != nil {
+		t.Fatalf("fallback: %v", err)
+	}
+	packages, _ = service.ListPackages(ctx)
 	for _, pkg := range packages {
 		if pkg.IsActive {
 			t.Fatalf("unexpected active package after fallback: %#v", pkg)
@@ -1025,4 +1045,119 @@ func TestServiceContentHelpers(t *testing.T) {
 	if service.PackageDir("abc") == "" {
 		t.Fatal("package dir must be non-empty")
 	}
+}
+
+func TestActivateAndDeleteEdgeBranches(t *testing.T) {
+	sqlite, err := store.NewSQLiteStore(filepath.Join(t.TempDir(), "beat.db"))
+	if err != nil {
+		t.Fatalf("new sqlite: %v", err)
+	}
+	t.Cleanup(func() { _ = sqlite.Close() })
+	service, err := NewService(store.NewThemeStore(sqlite.DB), store.NewAdminStore(sqlite.DB),
+		filepath.Join(t.TempDir(), "themes"), "0.1.0", time.Now)
+	if err != nil {
+		t.Fatalf("new service: %v", err)
+	}
+	ctx := context.Background()
+	raw := validPackageBytes(t)
+	pkg, err := service.Install(ctx, raw, model.ThemeSourceUpload, "", "u")
+	if err != nil {
+		t.Fatalf("install: %v", err)
+	}
+	// 隔离后激活 → ErrContentUnavailable
+	if err := service.Delete(ctx, pkg.ID, "u"); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+	if _, err := service.Activate(ctx, pkg.ID, "u"); !errors.Is(err, ErrContentUnavailable) {
+		t.Fatalf("activate quarantined = %v", err)
+	}
+	// 二次删除 → 幂等成功（已隔离）
+	if err := service.Delete(ctx, pkg.ID, "u"); err != nil {
+		t.Fatalf("second delete = %v", err)
+	}
+	// 兼容性校验（最大版本小于当前）
+	rawMax := buildThemeZip(t, sampleManifest(t, map[string]any{"maximum_beat_version": "0.0.1"}), map[string]string{
+		"preview.png": "p", "assets/theme.css": "c",
+	})
+	if _, err := service.Install(ctx, rawMax, model.ThemeSourceUpload, "", "u"); !errors.Is(err, ErrRuntimeIncompatible) {
+		t.Fatalf("max version incompatible = %v", err)
+	}
+}
+
+func TestMarketFetch304AndKeyErrors(t *testing.T) {
+	pub, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	body := []byte(`{"schema_version":1,"source_id":"m1","themes":[]}`)
+	sig := ed25519.Sign(priv, body)
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("If-None-Match") == `"etag-1"` {
+			w.WriteHeader(http.StatusNotModified)
+			return
+		}
+		w.Header().Set("ETag", `"etag-1"`)
+		w.Header().Set(catalogSignatureHeader, base64.StdEncoding.EncodeToString(sig))
+		_, _ = w.Write(body)
+	}))
+	defer server.Close()
+	client := NewMarketClient(true, time.Now)
+	pool := x509.NewCertPool()
+	pool.AddCert(server.Certificate())
+	client.SetRootCAs(pool)
+
+	source := &model.ThemeMarketSource{ID: "m1", CatalogURL: server.URL,
+		PublicKey: base64.StdEncoding.EncodeToString(pub), CacheETag: `"etag-1"`}
+	catalog, digest, err := client.FetchCatalog(context.Background(), source)
+	if err != nil || catalog != nil {
+		t.Fatalf("304 fetch = %v / %v / %v", catalog, digest, err)
+	}
+	// 密钥长度错误 → ErrMarketInvalid
+	badKey := &model.ThemeMarketSource{ID: "m1", CatalogURL: server.URL,
+		PublicKey: base64.StdEncoding.EncodeToString([]byte("short"))}
+	if _, _, err := client.FetchCatalog(context.Background(), badKey); !errors.Is(err, ErrMarketInvalid) {
+		t.Fatalf("bad key = %v", err)
+	}
+}
+
+func TestWritePrivateAndMarketBranches(t *testing.T) {
+	// writePrivate 的 OpenFile 失败分支
+	if err := writePrivate(filepath.Join("/dev/null", "x"), []byte("a")); err == nil {
+		t.Fatal("writePrivate under /dev/null accepted")
+	}
+	// FetchCatalog：目录 source_id 与源不匹配
+	pub, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	body := []byte(`{"schema_version":1,"source_id":"other","themes":[]}`)
+	sig := ed25519.Sign(priv, body)
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set(catalogSignatureHeader, base64.StdEncoding.EncodeToString(sig))
+		_, _ = w.Write(body)
+	}))
+	defer server.Close()
+	client := NewMarketClient(true, time.Now)
+	pool := x509.NewCertPool()
+	pool.AddCert(server.Certificate())
+	client.SetRootCAs(pool)
+	source := &model.ThemeMarketSource{ID: "m1", CatalogURL: server.URL,
+		PublicKey: base64.StdEncoding.EncodeToString(pub)}
+	if _, _, err := client.FetchCatalog(context.Background(), source); !errors.Is(err, ErrMarketInvalid) {
+		t.Fatalf("source id mismatch = %v", err)
+	}
+	// DownloadPackage：超大响应
+	bigServer := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write(make([]byte, maxPackageBytes+1))
+	}))
+	defer bigServer.Close()
+	bigClient := NewMarketClient(true, time.Now)
+	bigPool := x509.NewCertPool()
+	bigPool.AddCert(bigServer.Certificate())
+	bigClient.SetRootCAs(bigPool)
+	if _, _, err := bigClient.DownloadPackage(context.Background(), bigServer.URL); !errors.Is(err, ErrMarketInvalid) {
+		t.Fatalf("oversized download = %v", err)
+	}
+	// NewMarketClient 默认 now
+	_ = NewMarketClient(true, nil)
 }

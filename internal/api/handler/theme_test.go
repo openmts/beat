@@ -405,7 +405,11 @@ func TestThemeHandlerAssetInvalidPaths(t *testing.T) {
 		{"not-a-digest", "x.css"},
 		{"", "assets/theme.css"},
 		{pkg.ArchiveDigest, ""},
-		{pkg.ArchiveDigest, "assets/..%2f..%2farchive.zip"},
+		{pkg.ArchiveDigest, "/etc/passwd"},
+		{pkg.ArchiveDigest, "../archive.zip"},
+		{pkg.ArchiveDigest, "sub/../../archive.zip"},
+		{pkg.ArchiveDigest, "theme.dat"},
+		{pkg.ArchiveDigest, "missing.css"},
 	} {
 		request := httptest.NewRequest(http.MethodGet, "/themes/assets/x", nil)
 		request.SetPathValue("digest", tc.digest)
@@ -569,5 +573,39 @@ func TestThemeHandlerMarketFullFlow(t *testing.T) {
 	handler.HandleInstallFromMarket(installResponse, install)
 	if installResponse.Code != http.StatusCreated {
 		t.Fatalf("install = %d %s", installResponse.Code, installResponse.Body.String())
+	}
+}
+
+func TestThemeHandlerActivateNotFoundAndRollbackBuiltIn(t *testing.T) {
+	handler, _, _ := setupThemeHandler(t)
+	ctx := themeOwnerContext().Context()
+
+	// 激活不存在的包 → 404
+	activate := httptest.NewRequest(http.MethodPost, "/api/v1/admin/themes/missing/activate", nil)
+	activate.SetPathValue("id", "missing")
+	activate = activate.WithContext(ctx)
+	activateResponse := httptest.NewRecorder()
+	handler.HandleActivate(activateResponse, activate)
+	if activateResponse.Code != http.StatusNotFound {
+		t.Fatalf("activate missing = %d", activateResponse.Code)
+	}
+
+	// 回滚（无激活）→ 内置
+	rollback := httptest.NewRequest(http.MethodPost, "/api/v1/admin/themes/rollback", nil)
+	rollback = rollback.WithContext(ctx)
+	rollbackResponse := httptest.NewRecorder()
+	handler.HandleRollback(rollbackResponse, rollback)
+	if rollbackResponse.Code != http.StatusOK || !strings.Contains(rollbackResponse.Body.String(), "built-in") {
+		t.Fatalf("rollback = %d %s", rollbackResponse.Code, rollbackResponse.Body.String())
+	}
+
+	// 删除不存在的包 → 404
+	del := httptest.NewRequest(http.MethodDelete, "/api/v1/admin/themes/missing", nil)
+	del.SetPathValue("id", "missing")
+	del = del.WithContext(ctx)
+	delResponse := httptest.NewRecorder()
+	handler.HandleDelete(delResponse, del)
+	if delResponse.Code != http.StatusNotFound {
+		t.Fatalf("delete missing = %d", delResponse.Code)
 	}
 }
