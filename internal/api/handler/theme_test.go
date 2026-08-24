@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -354,5 +355,36 @@ func TestThemeHandlerAllMethodsClosedStore(t *testing.T) {
 		if response.Code == http.StatusOK || response.Code == http.StatusNoContent || response.Code == http.StatusCreated {
 			t.Fatalf("%s on closed store returned %d", name, response.Code)
 		}
+	}
+}
+
+func TestWriteThemeErrorStatusMapping(t *testing.T) {
+	cases := map[error]int{
+		theme.ErrArchiveInvalid:      http.StatusBadRequest,
+		theme.ErrManifestInvalid:     http.StatusBadRequest,
+		theme.ErrPackageConflict:     http.StatusConflict,
+		theme.ErrRuntimeIncompatible: http.StatusBadRequest,
+		theme.ErrContentUnavailable:  http.StatusNotFound,
+		theme.ErrActivePackage:       http.StatusConflict,
+		theme.ErrNoHealthyRollback:   http.StatusConflict,
+		theme.ErrMarketInvalid:       http.StatusBadRequest,
+		theme.ErrMarketUnavailable:   http.StatusServiceUnavailable,
+		errors.New("unexpected"):     http.StatusBadRequest,
+	}
+	for err, want := range cases {
+		response := httptest.NewRecorder()
+		writeThemeError(response, err)
+		if response.Code != want {
+			t.Fatalf("writeThemeError(%v) = %d, want %d", err, response.Code, want)
+		}
+	}
+}
+
+func TestThemeHelperFunctions(t *testing.T) {
+	if !isHexDigest(strings.Repeat("a", 64)) || isHexDigest("abc") || isHexDigest(strings.Repeat("g", 64)) {
+		t.Fatal("isHexDigest misbehaves")
+	}
+	for _, valid := range []byte{'0', '9', 'a', 'f', 'z', '-'} {
+		_ = valid
 	}
 }

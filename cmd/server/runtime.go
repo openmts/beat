@@ -226,6 +226,7 @@ func newAdministrationServices(
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("initialize backup service: %w", err)
 	}
+	backupService.SetThemesDir(filepath.Join(dataDir, "themes"))
 	return security, maintenanceService, backupService, nil
 }
 

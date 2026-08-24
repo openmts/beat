@@ -56,7 +56,44 @@ func prepareRestore(
 		prepared.cleanup()
 		return nil, fmt.Errorf("inspect restored administrator key: %w", err)
 	}
+	themeSource := filepath.Join(validated.root, "themes")
+	if _, err := os.Stat(themeSource); err == nil {
+		packagesLive := filepath.Join(dataDir, "themes", "packages")
+		packagesNew := filepath.Join(dataDir, "themes", "packages.restore-new-"+token)
+		if err := copyTree(themeSource, packagesNew); err != nil {
+			prepared.cleanup()
+			return nil, err
+		}
+		prepared.targets = append(prepared.targets, restoreTarget{live: packagesLive, new: packagesNew})
+	} else if !os.IsNotExist(err) {
+		prepared.cleanup()
+		return nil, fmt.Errorf("inspect restored themes: %w", err)
+	}
 	return prepared, nil
+}
+
+// copyTree 递归复制目录树（保留 0600/0700 权限）。
+func copyTree(sourceRoot, destinationRoot string) error {
+	return filepath.WalkDir(sourceRoot, func(path string, info os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		relative, err := filepath.Rel(sourceRoot, path)
+		if err != nil {
+			return err
+		}
+		target := filepath.Join(destinationRoot, relative)
+		if relative == "." {
+			return os.MkdirAll(target, 0o700)
+		}
+		if info.IsDir() {
+			return os.MkdirAll(target, 0o700)
+		}
+		if !info.Type().IsRegular() {
+			return nil
+		}
+		return copyFile(path, target, 0o600)
+	})
 }
 
 func importMetrics(ctx context.Context, path, destination string) error {

@@ -36,7 +36,7 @@ func TestArchiveCreationHelperErrors(t *testing.T) {
 	if err := service.copyDataKey(t.TempDir()); err == nil {
 		t.Fatal("directory copied as administrator data key")
 	}
-	if _, err := service.buildManifest(root, []string{"missing"}, time.Now(), 0); err == nil {
+	if _, err := service.buildManifest(root, []string{"missing"}, time.Now(), 0, nil); err == nil {
 		t.Fatal("manifest built with missing payload")
 	}
 	if _, _, err := fileDigest(filepath.Join(root, "missing")); err == nil {

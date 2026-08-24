@@ -684,3 +684,238 @@ func TestServiceExportAndActiveEdgeCases(t *testing.T) {
 		t.Fatalf("activate missing = %v", err)
 	}
 }
+
+func TestValidateArchiveAdditionalLimits(t *testing.T) {
+	t.Run("empty manifest only", func(t *testing.T) {
+		raw := buildThemeZip(t, sampleManifest(t, nil), nil)
+		if _, err := ValidateArchive(raw); err == nil {
+			t.Fatal("archive without declared files but preview missing accepted")
+		}
+	})
+	t.Run("too many files", func(t *testing.T) {
+		var buffer bytes.Buffer
+		writer := zip.NewWriter(&buffer)
+		entry, _ := writer.Create("beat-theme.json")
+		_, _ = entry.Write([]byte(sampleManifest(t, nil)))
+		for index := 0; index <= maxFiles; index++ {
+			file, _ := writer.Create(fmt.Sprintf("f%04d.css", index))
+			_, _ = file.Write([]byte("x"))
+		}
+		_ = writer.Close()
+		if _, err := ValidateArchive(buffer.Bytes()); err == nil {
+			t.Fatal("too many files accepted")
+		}
+	})
+	t.Run("oversized file", func(t *testing.T) {
+		var buffer bytes.Buffer
+		writer := zip.NewWriter(&buffer)
+		entry, _ := writer.Create("beat-theme.json")
+		_, _ = entry.Write([]byte(sampleManifest(t, nil)))
+		big, _ := writer.Create("preview.png")
+		_, _ = big.Write(make([]byte, maxAssetFileBytes+1))
+		_ = writer.Close()
+		if _, err := ValidateArchive(buffer.Bytes()); err == nil {
+			t.Fatal("oversized file accepted")
+		}
+	})
+	t.Run("nul character path", func(t *testing.T) {
+		raw := buildThemeZip(t, sampleManifest(t, nil), map[string]string{
+			"preview.png": "p", "assets/theme.css": "c", "bad\x00.css": "x",
+		})
+		if _, err := ValidateArchive(raw); err == nil {
+			t.Fatal("nul path accepted")
+		}
+	})
+	t.Run("path too long", func(t *testing.T) {
+		long := strings.Repeat("a", maxPathBytes+1)
+		raw := buildThemeZip(t, sampleManifest(t, nil), map[string]string{
+			"preview.png": "p", "assets/theme.css": "c", long + ".css": "x",
+		})
+		if _, err := ValidateArchive(raw); err == nil {
+			t.Fatal("long path accepted")
+		}
+	})
+	t.Run("too deep", func(t *testing.T) {
+		deep := strings.Join([]string{"a", "b", "c", "d", "e", "f", "g", "h", "i"}, "/") + ".css"
+		raw := buildThemeZip(t, sampleManifest(t, nil), map[string]string{
+			"preview.png": "p", "assets/theme.css": "c", deep: "x",
+		})
+		if _, err := ValidateArchive(raw); err == nil {
+			t.Fatal("too deep path accepted")
+		}
+	})
+}
+
+func TestThemeHelperFunctions(t *testing.T) {
+	if !isIDCharacter('a') || !isIDCharacter('0') || !isIDCharacter('-') || isIDCharacter('A') {
+		t.Fatal("isIDCharacter misbehaves")
+	}
+	if !validThemeID("abc-def_1") || validThemeID("AB") || validThemeID("a b") {
+		t.Fatal("validThemeID misbehaves")
+	}
+}
+
+func TestMarketClientErrorPaths(t *testing.T) {
+	t.Run("non-ok status", func(t *testing.T) {
+		server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			http.Error(w, "boom", http.StatusInternalServerError)
+		}))
+		defer server.Close()
+		client := NewMarketClient(true, time.Now)
+		pool := x509.NewCertPool()
+		pool.AddCert(server.Certificate())
+		client.SetRootCAs(pool)
+		source := &model.ThemeMarketSource{ID: "m1", CatalogURL: server.URL, PublicKey: base64.StdEncoding.EncodeToString(make([]byte, 32))}
+		if _, _, err := client.FetchCatalog(context.Background(), source); !errors.Is(err, ErrMarketUnavailable) {
+			t.Fatalf("non-ok fetch = %v", err)
+		}
+	})
+	t.Run("oversized catalog", func(t *testing.T) {
+		server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			_, _ = w.Write(make([]byte, maxCatalogBytes+1))
+		}))
+		defer server.Close()
+		client := NewMarketClient(true, time.Now)
+		pool := x509.NewCertPool()
+		pool.AddCert(server.Certificate())
+		client.SetRootCAs(pool)
+		source := &model.ThemeMarketSource{ID: "m1", CatalogURL: server.URL, PublicKey: base64.StdEncoding.EncodeToString(make([]byte, 32))}
+		if _, _, err := client.FetchCatalog(context.Background(), source); !errors.Is(err, ErrMarketInvalid) {
+			t.Fatalf("oversized fetch = %v", err)
+		}
+	})
+	t.Run("bad signature format", func(t *testing.T) {
+		server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set(catalogSignatureHeader, "not-base64")
+			_, _ = w.Write([]byte(`{}`))
+		}))
+		defer server.Close()
+		client := NewMarketClient(true, time.Now)
+		pool := x509.NewCertPool()
+		pool.AddCert(server.Certificate())
+		client.SetRootCAs(pool)
+		source := &model.ThemeMarketSource{ID: "m1", CatalogURL: server.URL, PublicKey: base64.StdEncoding.EncodeToString(make([]byte, 32))}
+		if _, _, err := client.FetchCatalog(context.Background(), source); !errors.Is(err, ErrMarketInvalid) {
+			t.Fatalf("bad signature = %v", err)
+		}
+	})
+	t.Run("download non-ok", func(t *testing.T) {
+		server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			http.Error(w, "nope", http.StatusNotFound)
+		}))
+		defer server.Close()
+		client := NewMarketClient(true, time.Now)
+		pool := x509.NewCertPool()
+		pool.AddCert(server.Certificate())
+		client.SetRootCAs(pool)
+		if _, _, err := client.DownloadPackage(context.Background(), server.URL); !errors.Is(err, ErrMarketUnavailable) {
+			t.Fatalf("download non-ok = %v", err)
+		}
+	})
+	t.Run("download bad url", func(t *testing.T) {
+		client := NewMarketClient(false, time.Now)
+		if _, _, err := client.DownloadPackage(context.Background(), "http://127.0.0.1/x"); err == nil {
+			t.Fatal("bad download url accepted")
+		}
+	})
+	t.Run("redirect too many", func(t *testing.T) {
+		var server *httptest.Server
+		server = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			http.Redirect(w, r, server.URL, http.StatusFound)
+		}))
+		defer server.Close()
+		client := NewMarketClient(true, time.Now)
+		pool := x509.NewCertPool()
+		pool.AddCert(server.Certificate())
+		client.SetRootCAs(pool)
+		source := &model.ThemeMarketSource{ID: "m1", CatalogURL: server.URL, PublicKey: base64.StdEncoding.EncodeToString(make([]byte, 32))}
+		if _, _, err := client.FetchCatalog(context.Background(), source); err == nil {
+			t.Fatal("redirect loop accepted")
+		}
+	})
+}
+
+func TestServiceMultiVersionLifecycle(t *testing.T) {
+	sqlite, err := store.NewSQLiteStore(filepath.Join(t.TempDir(), "beat.db"))
+	if err != nil {
+		t.Fatalf("new sqlite: %v", err)
+	}
+	t.Cleanup(func() { _ = sqlite.Close() })
+	service, err := NewService(store.NewThemeStore(sqlite.DB), store.NewAdminStore(sqlite.DB),
+		filepath.Join(t.TempDir(), "themes"), "0.1.0", time.Now)
+	if err != nil {
+		t.Fatalf("new service: %v", err)
+	}
+	ctx := context.Background()
+
+	// 版本 1.0.0
+	v1 := buildThemeZip(t, sampleManifest(t, nil), map[string]string{"preview.png": "p", "assets/theme.css": "c"})
+	pkg1, err := service.Install(ctx, v1, model.ThemeSourceUpload, "", "u")
+	if err != nil {
+		t.Fatalf("install v1: %v", err)
+	}
+	// 版本 1.1.0（同 theme_id，不同 version）
+	v2 := buildThemeZip(t, sampleManifest(t, map[string]any{"version": "1.1.0"}), map[string]string{
+		"preview.png": "p", "assets/theme.css": "c",
+	})
+	pkg2, err := service.Install(ctx, v2, model.ThemeSourceUpload, "", "u")
+	if err != nil {
+		t.Fatalf("install v2: %v", err)
+	}
+
+	if _, err := service.Activate(ctx, pkg1.ID, "u"); err != nil {
+		t.Fatalf("activate v1: %v", err)
+	}
+	if _, err := service.Activate(ctx, pkg2.ID, "u"); err != nil {
+		t.Fatalf("activate v2: %v", err)
+	}
+	descriptor, _ := service.ActiveDescriptor(ctx)
+	if descriptor.ThemeID != "acme-theme" || descriptor.Version != "1.1.0" {
+		t.Fatalf("descriptor = %#v", descriptor)
+	}
+
+	// 回滚应回到 v1（前一激活）
+	if _, err := service.Rollback(ctx, "u"); err != nil {
+		t.Fatalf("rollback: %v", err)
+	}
+	descriptor, _ = service.ActiveDescriptor(ctx)
+	if descriptor.Version != "1.0.0" {
+		t.Fatalf("descriptor after rollback = %#v", descriptor)
+	}
+
+	// 标记不健康
+	if err := service.MarkUnhealthy(ctx, "iframe_timeout"); err != nil {
+		t.Fatalf("mark unhealthy: %v", err)
+	}
+
+	// 重新激活 v2，再删除 v1（非活动）并导出 v1 应失败
+	if _, err := service.Activate(ctx, pkg2.ID, "u"); err != nil {
+		t.Fatalf("re-activate v2: %v", err)
+	}
+	if err := service.Delete(ctx, pkg1.ID, "u"); err != nil {
+		t.Fatalf("delete v1: %v", err)
+	}
+	if _, _, err := service.Export(ctx, pkg1.ID); !errors.Is(err, ErrContentUnavailable) {
+		t.Fatalf("export deleted = %v", err)
+	}
+
+	// 回退到内置
+	if err := service.Fallback(ctx, "u", "test"); err != nil {
+		t.Fatalf("fallback: %v", err)
+	}
+	descriptor, _ = service.ActiveDescriptor(ctx)
+	if !descriptor.BuiltIn {
+		t.Fatalf("descriptor after fallback = %#v", descriptor)
+	}
+
+	// 列出时应标记 v2 非活动（已回退）
+	packages, err := service.ListPackages(ctx)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	for _, pkg := range packages {
+		if pkg.IsActive {
+			t.Fatalf("unexpected active package after fallback: %#v", pkg)
+		}
+	}
+}

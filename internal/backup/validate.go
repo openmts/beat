@@ -3,6 +3,7 @@ package backup
 import (
 	"archive/zip"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -15,7 +16,7 @@ import (
 )
 
 const (
-	maximumArchiveEntries = 10
+	maximumArchiveEntries = 600
 	maximumMetricRows     = 1_000_000_000
 	maximumJSONLLine      = 1 << 20
 )
@@ -68,8 +69,12 @@ func extractAllowlisted(files []*zip.File, root string) error {
 	var expanded uint64
 	for _, file := range files {
 		name := file.Name
-		if !allowed[name] || seen[name] || filepath.IsAbs(name) || filepath.Clean(name) != name {
+		isTheme := strings.HasPrefix(name, "themes/")
+		if (!allowed[name] && !isTheme) || seen[name] || filepath.IsAbs(name) || filepath.Clean(name) != name {
 			return fmt.Errorf("backup archive entry %q is not allowed", name)
+		}
+		if isTheme && !validThemeBackupPath(name) {
+			return fmt.Errorf("backup archive theme entry %q is not allowed", name)
 		}
 		seen[name] = true
 		if file.FileInfo().Mode()&os.ModeSymlink != 0 || file.FileInfo().IsDir() || file.Flags&1 != 0 {
@@ -163,17 +168,36 @@ func readManifest(path string) (model.BackupManifest, error) {
 	if err := decoder.Decode(&manifest); err != nil {
 		return model.BackupManifest{}, fmt.Errorf("decode backup manifest: %w", err)
 	}
-	if manifest.FormatVersion != 1 || manifest.CreatedAt.IsZero() || manifest.SnapshotCutoff.IsZero() ||
+	if (manifest.FormatVersion != 1 && manifest.FormatVersion != 2) ||
+		manifest.CreatedAt.IsZero() || manifest.SnapshotCutoff.IsZero() ||
 		manifest.MetricRows < 0 || manifest.MetricRows > maximumMetricRows {
 		return model.BackupManifest{}, errors.New("backup manifest is incompatible")
 	}
+	if manifest.FormatVersion == 2 && len(manifest.ThemeFiles) == 0 {
+		return model.BackupManifest{}, errors.New("backup format 2 requires theme metadata")
+	}
 	return manifest, nil
+}
+
+func validThemeBackupPath(name string) bool {
+	// 要求 themes/<64位小写hex>/<相对安全路径>。
+	parts := strings.Split(name, "/")
+	if len(parts) < 3 || parts[0] != "themes" || !isHexString(parts[1], 64) {
+		return false
+	}
+	for _, part := range parts[2:] {
+		if part == "" || part == "." || part == ".." {
+			return false
+		}
+	}
+	return true
 }
 
 func validatePayloads(root string, manifest model.BackupManifest) error {
 	required := map[string]bool{sqliteEntry: true, metricsEntry: true}
 	for name := range manifest.Checksums {
-		if name != sqliteEntry && name != metricsEntry && name != dataKeyEntry {
+		if name != sqliteEntry && name != metricsEntry && name != dataKeyEntry &&
+			!strings.HasPrefix(name, "themes/") {
 			return fmt.Errorf("manifest payload %q is not allowed", name)
 		}
 		required[name] = true
@@ -194,6 +218,12 @@ func validatePayloads(root string, manifest model.BackupManifest) error {
 		if manifest.PayloadSizes[name] != size || manifest.Checksums[name] != checksum {
 			return fmt.Errorf("backup payload %s failed checksum validation", name)
 		}
+		if strings.HasPrefix(name, "themes/") {
+			themeFile, ok := manifest.ThemeFiles[name]
+			if !ok || themeFile.Size != size || themeFile.SHA256 != checksum {
+				return fmt.Errorf("backup theme payload %s metadata is inconsistent", name)
+			}
+		}
 	}
 	if _, ok := manifest.Checksums[dataKeyEntry]; ok {
 		info, err := os.Stat(filepath.Join(root, filepath.FromSlash(dataKeyEntry)))
@@ -201,7 +231,61 @@ func validatePayloads(root string, manifest model.BackupManifest) error {
 			return errors.New("administrator data key is invalid")
 		}
 	}
+	if manifest.FormatVersion >= 2 {
+		if err := validateThemePayloads(root, manifest); err != nil {
+			return err
+		}
+	}
 	return nil
+}
+
+// validateThemePayloads 校验归档内主题包结构一致且活动主题资产完整。
+func validateThemePayloads(root string, manifest model.BackupManifest) error {
+	packages := map[string]bool{}
+	for name := range manifest.ThemeFiles {
+		parts := strings.Split(name, "/")
+		if len(parts) >= 2 {
+			packages[parts[1]] = true
+		}
+	}
+	for digest := range packages {
+		archivePath := filepath.Join(root, filepath.FromSlash("themes/"+digest+"/archive.zip"))
+		if _, err := os.Stat(archivePath); err != nil {
+			return fmt.Errorf("theme package %s is missing its archive", digest)
+		}
+	}
+	// 活动主题包必须存在（通过归档 SQLite 的活动主题记录）。
+	activeDigest, err := archivedActiveThemeDigest(filepath.Join(root, sqliteEntry))
+	if err != nil {
+		return err
+	}
+	if activeDigest != "" && !packages[activeDigest] {
+		return errors.New("active theme package payload is missing from the backup")
+	}
+	return nil
+}
+
+func archivedActiveThemeDigest(sqlitePath string) (string, error) {
+	db, err := sql.Open("sqlite", "file:"+filepath.ToSlash(sqlitePath)+"?mode=ro&_query_only=1")
+	if err != nil {
+		return "", fmt.Errorf("open archived sqlite read-only: %w", err)
+	}
+	defer func() { _ = db.Close() }()
+	var activeID sql.NullString
+	if err := db.QueryRow("SELECT active_theme_package_id FROM site_settings WHERE id = 1").Scan(&activeID); err != nil {
+		if strings.Contains(err.Error(), "no such column") || strings.Contains(err.Error(), "no such table") {
+			return "", nil
+		}
+		return "", fmt.Errorf("query archived active theme: %w", err)
+	}
+	if !activeID.Valid || activeID.String == "" {
+		return "", nil
+	}
+	var digest string
+	if err := db.QueryRow("SELECT archive_digest FROM theme_packages WHERE id = ?", activeID.String).Scan(&digest); err != nil {
+		return "", nil
+	}
+	return digest, nil
 }
 
 func validateChecksumList(root string, manifest model.BackupManifest) error {

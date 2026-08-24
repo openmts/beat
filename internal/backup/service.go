@@ -49,6 +49,12 @@ type Service struct {
 	mu          sync.Mutex
 	running     bool
 	wg          sync.WaitGroup
+	themesDir   string
+}
+
+// SetThemesDir 配置主题包数据目录，用于备份格式 v2 的主题资产归档。
+func (service *Service) SetThemesDir(themesDir string) {
+	service.themesDir = themesDir
 }
 
 func NewService(

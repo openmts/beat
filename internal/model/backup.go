@@ -26,14 +26,22 @@ type BackupRecord struct {
 }
 
 type BackupManifest struct {
-	FormatVersion    int               `json:"format_version"`
-	BeatVersion      string            `json:"beat_version"`
-	CreatedAt        time.Time         `json:"created_at"`
-	SnapshotCutoff   time.Time         `json:"snapshot_cutoff"`
-	MetricRows       int64             `json:"metric_rows"`
-	PayloadSizes     map[string]int64  `json:"payload_sizes"`
-	Checksums        map[string]string `json:"checksums"`
-	RequiredExternal []string          `json:"required_external_settings"`
+	FormatVersion    int                        `json:"format_version"`
+	BeatVersion      string                     `json:"beat_version"`
+	CreatedAt        time.Time                  `json:"created_at"`
+	SnapshotCutoff   time.Time                  `json:"snapshot_cutoff"`
+	MetricRows       int64                      `json:"metric_rows"`
+	PayloadSizes     map[string]int64           `json:"payload_sizes"`
+	Checksums        map[string]string          `json:"checksums"`
+	RequiredExternal []string                   `json:"required_external_settings"`
+	ThemeFiles       map[string]BackupThemeFile `json:"theme_files,omitempty"`
+}
+
+// BackupThemeFile 记录备份中一个主题文件的路径、大小与 SHA-256。
+type BackupThemeFile struct {
+	Path   string `json:"path"`
+	Size   int64  `json:"size"`
+	SHA256 string `json:"sha256"`
 }
 
 type RestoreJournal struct {

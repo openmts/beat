@@ -66,7 +66,15 @@ func (service *Service) createArchive(
 	} else if !os.IsNotExist(statErr) {
 		return record, fmt.Errorf("inspect copied administrator key: %w", statErr)
 	}
-	manifest, err := service.buildManifest(temporary, payloads, cutoff, rows)
+	themeFiles := map[string]model.BackupThemeFile{}
+	if service.themesDir != "" {
+		themePayloads, err := service.copyThemes(temporary, themeFiles)
+		if err != nil {
+			return record, err
+		}
+		payloads = append(payloads, themePayloads...)
+	}
+	manifest, err := service.buildManifest(temporary, payloads, cutoff, rows, themeFiles)
 	if err != nil {
 		return record, err
 	}
@@ -144,16 +152,113 @@ func (service *Service) copyDataKey(temporary string) error {
 	return nil
 }
 
+// copyThemes 将主题包目录复制到工作区并登记主题文件清单。
+func (service *Service) copyThemes(
+	temporary string,
+	themeFiles map[string]model.BackupThemeFile,
+) ([]string, error) {
+	packages := filepath.Join(service.themesDir, "packages")
+	entries, err := os.ReadDir(packages)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("list theme packages for backup: %w", err)
+	}
+	payloads := []string{}
+	for _, entry := range entries {
+		if !entry.IsDir() || !isHexString(entry.Name(), 64) {
+			continue
+		}
+		digest := entry.Name()
+		sourceRoot := filepath.Join(packages, digest)
+		targetRoot := filepath.Join(temporary, "themes", digest)
+		if err := os.MkdirAll(targetRoot, 0o700); err != nil {
+			return nil, fmt.Errorf("create theme backup directory: %w", err)
+		}
+		err := filepath.WalkDir(sourceRoot, func(path string, info os.DirEntry, walkErr error) error {
+			if walkErr != nil {
+				return walkErr
+			}
+			relative, relErr := filepath.Rel(sourceRoot, path)
+			if relErr != nil {
+				return relErr
+			}
+			if relative == "." {
+				return nil
+			}
+			target := filepath.Join(targetRoot, relative)
+			if info.IsDir() {
+				return os.MkdirAll(target, 0o700)
+			}
+			if !info.Type().IsRegular() {
+				return nil
+			}
+			content, readErr := os.ReadFile(path)
+			if readErr != nil {
+				return readErr
+			}
+			if err := writePrivateFile(target, content); err != nil {
+				return err
+			}
+			digestSum := sha256.Sum256(content)
+			name := filepath.ToSlash(filepath.Join("themes", digest, relative))
+			themeFiles[name] = model.BackupThemeFile{Path: name, Size: int64(len(content)),
+				SHA256: hex.EncodeToString(digestSum[:])}
+			payloads = append(payloads, name)
+			return nil
+		})
+		if err != nil {
+			return nil, fmt.Errorf("copy theme package %s for backup: %w", digest, err)
+		}
+	}
+	sort.Strings(payloads)
+	return payloads, nil
+}
+
+func writePrivateFile(path string, content []byte) error {
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if err != nil {
+		return err
+	}
+	_, writeErr := file.Write(content)
+	syncErr := file.Sync()
+	closeErr := file.Close()
+	return errors.Join(writeErr, syncErr, closeErr)
+}
+
+func isHexString(value string, length int) bool {
+	if len(value) != length {
+		return false
+	}
+	for _, character := range value {
+		if !isHexCharacter(byte(character)) {
+			return false
+		}
+	}
+	return true
+}
+
+func isHexCharacter(character byte) bool {
+	return character >= '0' && character <= '9' || character >= 'a' && character <= 'f'
+}
+
 func (service *Service) buildManifest(
 	root string,
 	payloads []string,
 	cutoff time.Time,
 	rows int64,
+	themeFiles map[string]model.BackupThemeFile,
 ) (model.BackupManifest, error) {
-	manifest := model.BackupManifest{FormatVersion: 1, BeatVersion: service.version,
+	formatVersion := 1
+	if len(themeFiles) > 0 {
+		formatVersion = 2
+	}
+	manifest := model.BackupManifest{FormatVersion: formatVersion, BeatVersion: service.version,
 		CreatedAt: service.now(), SnapshotCutoff: cutoff, MetricRows: rows,
 		PayloadSizes: map[string]int64{}, Checksums: map[string]string{},
-		RequiredExternal: []string{"BEAT_ADMIN_TOKEN", "BEAT_AGENT_TOKEN", "TLS termination"}}
+		RequiredExternal: []string{"BEAT_ADMIN_TOKEN", "BEAT_AGENT_TOKEN", "TLS termination"},
+		ThemeFiles:       themeFiles}
 	for _, name := range payloads {
 		size, checksum, err := fileDigest(filepath.Join(root, filepath.FromSlash(name)))
 		if err != nil {
