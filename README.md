@@ -9,7 +9,7 @@ the [delivery plan](docs/beat/commercial-delivery-plan.md) and
 
 ## Requirements
 
-- Go 1.26.6+
+- Go 1.26.9+
 - Node.js 22.12+
 - Bash and Python 3 for the Linux systemd installer and cold-backup tooling
 

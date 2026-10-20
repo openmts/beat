@@ -14,7 +14,7 @@ export const zhCNAgentSetup: Record<string, string> = {
   "setup.create_body": "进入“管理节点 → 创建节点”，填写节点名称和 SSH 地址，保存返回的 agent 配置。令牌与该节点绑定；启动 agent 后，首次上报成功即可让节点上线。",
   "setup.token_hint": "令牌仅在创建或轮换时展示一次，请及时保存。“查看配置”不包含令牌，需要补回已保存的令牌；遗失后请轮换。每个节点使用独立令牌，不要填写管理员令牌或旧版共享令牌。",
   "setup.install_title": "在被采集主机上安装 agent",
-  "setup.install_body": "使用可信来源、与服务端版本及目标架构匹配的发行包，或从对应版本源码构建。以下构建命令在安装 Go 1.26.6+ 的构建机、仓库根目录执行；被采集节点无需安装 Go。",
+  "setup.install_body": "使用可信来源、与服务端版本及目标架构匹配的发行包，或从对应版本源码构建。以下构建命令在安装 Go 1.26.9+ 的构建机、仓库根目录执行；被采集节点无需安装 Go。",
   "setup.architecture": "目标主机架构",
   "setup.build_label": "构建机 · 仓库根目录",
   "setup.transfer_hint": "将生成的 beat-agent 上传到被采集节点（例如使用 scp），再在该节点执行以下命令。Linux x86_64 选择 amd64，aarch64 选择 arm64。目前发行配置面向 Linux，以下 shell 和 systemd 示例适用于 Linux。",

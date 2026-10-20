@@ -90,22 +90,29 @@ class QualityGateTests(unittest.TestCase):
         self.assertEqual(0, result.returncode, result.stderr)
         self.assertIn(["go", "mod", "verify"], self.calls())
 
-        self.log.unlink()
+        self.log.unlink(missing_ok=True)
         result = self.run_gate("backend-privileged")
         self.assertEqual(os.geteuid() == 0, result.returncode == 0, result.stderr)
 
-        self.log.unlink()
+        self.log.unlink(missing_ok=True)
         result = self.run_gate("themes")
         self.assertEqual(0, result.returncode, result.stderr)
         self.assertIn(["go", "test", "./cmd/theme/..."], self.calls())
 
-        self.log.unlink()
+        self.log.unlink(missing_ok=True)
         result = self.run_gate("backend-race", "3")
         self.assertNotEqual(0, result.returncode)
         self.assertEqual([], self.calls())
 
         result = self.run_gate("unknown")
         self.assertNotEqual(0, result.returncode)
+
+    def test_scripts_stage_runs_workflow_safety_gate(self):
+        result = self.run_gate("scripts")
+        self.assertEqual(0, result.returncode, result.stderr)
+        calls = self.calls()
+        self.assertIn(["python3", "scripts/tests/run.py"], calls)
+        self.assertIn(["actionlint"], calls)
 
     def test_frontend_audit_failure_prevents_build(self):
         result = self.run_gate("frontend", BEAT_GATE_FAIL="npm audit")

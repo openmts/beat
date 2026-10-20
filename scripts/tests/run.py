@@ -30,7 +30,7 @@ def shell_lines(source):
         if not line or line.startswith("#"):
             continue
         eligible = not continued and not line.endswith("() {")
-        eligible = eligible and not re.match(r"^(?:\}|fi|else|elif|esac|done|case\b)", line)
+        eligible = eligible and not re.match(r"^(?:\}|\)|;;|fi|else|elif|esac|done|case\b)", line)
         if eligible:
             lines.add(index)
         continued = line.endswith("\\")

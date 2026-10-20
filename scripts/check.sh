@@ -51,15 +51,10 @@ check_backend_tests() {
 race_packages() {
     local shard=$1 package relative listed index=0
     local -a all heavy all_heavy selected
-    all_heavy=(internal/applicationsecrets internal/agentrollout internal/store internal/adminauth internal/backup
-        internal/notificationqueue internal/remoteoperations internal/geoip internal/theme internal/api internal/api/handler)
+    all_heavy=(internal/applicationsecrets internal/agentrollout internal/store internal/adminauth internal/backup internal/notificationqueue internal/remoteoperations internal/geoip internal/theme internal/api internal/api/handler)
     case $shard in
-        1)
-            heavy=(internal/applicationsecrets internal/agentrollout internal/store internal/backup)
-            ;;
-        2)
-            heavy=(internal/notificationqueue internal/remoteoperations internal/geoip internal/theme internal/api internal/api/handler internal/adminauth)
-            ;;
+        1) heavy=(internal/applicationsecrets internal/agentrollout internal/store internal/backup) ;;
+        2) heavy=(internal/notificationqueue internal/remoteoperations internal/geoip internal/theme internal/api internal/api/handler internal/adminauth) ;;
         *) printf 'race shard must be 1 or 2\n' >&2; return 2 ;;
     esac
     listed=$(go list -f '{{.Dir}}' ./...)

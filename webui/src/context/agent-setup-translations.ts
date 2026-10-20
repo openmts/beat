@@ -16,7 +16,7 @@ export const agentSetupTranslations: Catalog = {
     "setup.create_body": "Open Manage nodes → Create node, enter the node name and SSH address, then save the returned agent configuration. The token binds the agent to this node; starting the agent sends its first report and brings the node online.",
     "setup.token_hint": "Save the token when creating or rotating it: it is shown only once. View configuration does not include the token; restore your saved token or rotate it if lost. Use a different token for each node, not the administrator or legacy shared token.",
     "setup.install_title": "Install the agent on the monitored machine",
-    "setup.install_body": "Use a trusted release matching the server version and the target architecture, or build from the matching source checkout. Run the build command at the repository root on a machine with Go 1.26.6+; the monitored node does not need Go.",
+    "setup.install_body": "Use a trusted release matching the server version and the target architecture, or build from the matching source checkout. Run the build command at the repository root on a machine with Go 1.26.9+; the monitored node does not need Go.",
     "setup.architecture": "Target architecture",
     "setup.build_label": "Build machine · repository root",
     "setup.transfer_hint": "Transfer the resulting beat-agent to the monitored node (for example with scp), then run the following commands there. Linux x86_64 uses amd64; aarch64 uses arm64. Existing releases target Linux; these shell and systemd examples are for Linux.",

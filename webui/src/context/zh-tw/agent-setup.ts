@@ -14,7 +14,7 @@ export const zhTWAgentSetup: Record<string, string> = {
     "setup.create_body": "進入「管理節點 → 建立節點」，填寫節點名稱與 SSH 位址，儲存回傳的 agent 設定。權杖會與此節點綁定；啟動 agent 後，首次上報成功即可讓節點上線。",
     "setup.token_hint": "權杖僅在建立或輪替時顯示一次，請即時儲存。「檢視設定」不含權杖，需補回已儲存的權杖；遺失後請輪替。每個節點使用獨立權杖，請勿填寫管理員權杖或舊版共用權杖。",
     "setup.install_title": "在被監控主機上安裝 agent",
-    "setup.install_body": "使用可信來源、與伺服器版本及目標架構相符的發行包，或從對應版本原始碼建置。以下建置指令在已安裝 Go 1.26.6+ 的建置機、儲存庫根目錄執行；被監控節點不需安裝 Go。",
+    "setup.install_body": "使用可信來源、與伺服器版本及目標架構相符的發行包，或從對應版本原始碼建置。以下建置指令在已安裝 Go 1.26.9+ 的建置機、儲存庫根目錄執行；被監控節點不需安裝 Go。",
     "setup.architecture": "目標主機架構",
     "setup.build_label": "建置機 · 儲存庫根目錄",
     "setup.transfer_hint": "將產生的 beat-agent 傳送到被監控節點（例如使用 scp），再於該節點執行以下指令。Linux x86_64 選擇 amd64，aarch64 選擇 arm64。目前發行設定以 Linux 為對象，以下 shell 與 systemd 範例適用於 Linux。",

@@ -14,7 +14,7 @@ export const idAgentSetup: Record<string, string> = {
   "setup.create_body": "Buka Kelola node → Buat node, masukkan nama node dan alamat SSH, lalu simpan konfigurasi agen yang dikembalikan. Token mengikat agen ke node ini; menjalankan agen mengirim laporan pertamanya dan membuat node online.",
   "setup.token_hint": "Simpan token saat membuat atau merotasinya: token hanya ditampilkan sekali. Lihat konfigurasi tidak memuat token; pulihkan token yang Anda simpan atau rotasikan bila hilang. Gunakan token berbeda untuk tiap node, bukan token administrator atau token bersama lama.",
   "setup.install_title": "Pasang agen di mesin yang dipantau",
-  "setup.install_body": "Gunakan rilis tepercaya yang cocok dengan versi server dan arsitektur target, atau bangun dari salinan sumber yang sesuai. Jalankan perintah build di akar repositori pada mesin dengan Go 1.26.6+; node yang dipantau tidak perlu Go.",
+  "setup.install_body": "Gunakan rilis tepercaya yang cocok dengan versi server dan arsitektur target, atau bangun dari salinan sumber yang sesuai. Jalankan perintah build di akar repositori pada mesin dengan Go 1.26.9+; node yang dipantau tidak perlu Go.",
   "setup.architecture": "Arsitektur target",
   "setup.build_label": "Mesin build · akar repositori",
   "setup.transfer_hint": "Pindahkan beat-agent hasil build ke node yang dipantau (misalnya dengan scp), lalu jalankan perintah berikut di sana. Linux x86_64 memakai amd64; aarch64 memakai arm64. Rilis yang ada menyasar Linux; contoh shell dan systemd ini untuk Linux.",
