@@ -42,8 +42,11 @@ jobs:
           args: release --clean --skip=publish
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      - name: Validate artifacts and prepare verified signature
+      - name: Validate artifacts and prepare signed Agent release
         run: scripts/prepare-release.sh dist
+        env:
+          BEAT_RELEASE_SIGNING_KEY: ${{ secrets.BEAT_RELEASE_SIGNING_KEY }}
+          BEAT_RELEASE_KEY_ID: ${{ vars.BEAT_RELEASE_KEY_ID || 'beat-release' }}
       - name: Upload prepared release draft
         uses: softprops/action-gh-release@v2
         with:
@@ -53,6 +56,13 @@ jobs:
           files: |
             dist/beat_*.tar.gz
             dist/beat_*.tar.gz.sbom.json
+            dist/beat-agent_linux_amd64
+            dist/beat-agent_linux_arm64
+            dist/beat-agent-release-notes.txt
+            dist/beat-agent-release-spec.json
+            dist/beat-agent-manifest.json
+            dist/beat-agent-manifest.sig
+            dist/beat-agent-manifest.sigstore.json
             dist/checksums.txt
             dist/checksums.txt.bundle
       - name: Publish complete release

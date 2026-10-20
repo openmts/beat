@@ -40,3 +40,21 @@ func TestProtectedRegistrationMissingGuardFailsClosed(t *testing.T) {
 		}
 	}
 }
+
+func TestRemoteReleaseRoutesUseReadAndWriteProtection(t *testing.T) {
+	expected := map[string]access{
+		"GET /api/v1/admin/agent-releases/remote":             ownerRead,
+		"POST /api/v1/admin/agent-releases/remote/{tag}/sync": ownerWrite,
+	}
+	for _, route := range New(nil).routes() {
+		if access, ok := expected[route.pattern]; ok {
+			if route.access != access {
+				t.Fatalf("%s access = %v, want %v", route.pattern, route.access, access)
+			}
+			delete(expected, route.pattern)
+		}
+	}
+	if len(expected) != 0 {
+		t.Fatalf("remote routes are not registered: %v", expected)
+	}
+}

@@ -131,6 +131,10 @@ func privateReleaseDirectory(path string) error {
 
 func (s *Service) Enabled() bool { return s.enabled }
 
+// RequiresSigstoreEvidence reports whether remote release verification must fetch
+// the Sigstore bundle in addition to the pinned Ed25519 signature.
+func (s *Service) RequiresSigstoreEvidence() bool { return s != nil && !s.pinnedOnly }
+
 func (s *Service) requireEnabled() error {
 	if !s.enabled {
 		return ErrDisabled

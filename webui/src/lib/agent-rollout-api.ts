@@ -1,6 +1,6 @@
 import { api } from "@/lib/api-client"
 import { hashOperationFile } from "@/lib/operation-transfers"
-import type { AgentArtifact, AgentPage, AgentRelease, AgentReleaseDetail, AgentRollout, AgentRolloutCommand, AgentRolloutInput, AgentRolloutTarget, AgentRolloutStatus, SignedAgentManifest } from "@/types/agent-rollouts"
+import type { AgentArtifact, AgentPage, AgentRelease, AgentReleaseDetail, AgentRemotePage, AgentRollout, AgentRolloutCommand, AgentRolloutInput, AgentRolloutTarget, AgentRolloutStatus, SignedAgentManifest } from "@/types/agent-rollouts"
 const releases = "/admin/agent-releases", rollouts = "/admin/agent-rollouts"
 // AgentRolloutKeyedError 携带文案键：本地校验在非组件模块里执行，翻译留给展示层。
 export class AgentRolloutKeyedError extends Error {
@@ -11,6 +11,8 @@ const resource = (base: string, id: string) => `${base}/${encodeURIComponent(id)
 export async function getAgentRolloutStatus(signal: AbortSignal) { return (await api.get<AgentRolloutStatus>("/admin/agent-rollout-status", { signal })).data }
 export async function listAgentReleases(cursor: string, signal: AbortSignal) { return (await api.get<AgentPage<AgentRelease>>(releases, { params: { limit: 50, cursor }, signal })).data }
 export async function listAgentRollouts(cursor: string, signal: AbortSignal) { return (await api.get<AgentPage<AgentRollout>>(rollouts, { params: { limit: 50, cursor }, signal })).data }
+export async function listAgentRemoteReleases(page: number, signal: AbortSignal) { return (await api.get<AgentRemotePage>(`${releases}/remote`, { params: { page }, signal })).data }
+export async function syncAgentRemoteRelease(tag: string) { return (await api.post<AgentReleaseDetail>(`${releases}/remote/${encodeURIComponent(tag)}/sync`)).data }
 export async function getAgentRelease(id: string, signal: AbortSignal) { return (await api.get<AgentReleaseDetail>(resource(releases, id), { signal })).data }
 export async function getAgentRollout(id: string, signal: AbortSignal) { return (await api.get<AgentRollout>(resource(rollouts, id), { signal })).data }
 export async function listAgentTargets(id: string, cursor: string, signal: AbortSignal) { return (await api.get<AgentPage<AgentRolloutTarget>>(`${resource(rollouts, id)}/targets`, { params: { limit: 50, cursor }, signal })).data }

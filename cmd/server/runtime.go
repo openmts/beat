@@ -11,6 +11,7 @@ import (
 	"github.com/beat/backend/internal/accelerators"
 	"github.com/beat/backend/internal/adminauth"
 	"github.com/beat/backend/internal/agentrollout"
+	"github.com/beat/backend/internal/agentrolloutremote"
 	"github.com/beat/backend/internal/alerter"
 	"github.com/beat/backend/internal/api/middleware"
 	"github.com/beat/backend/internal/applicationgc"
@@ -70,6 +71,7 @@ type serverStores struct {
 
 type serverServices struct {
 	agentRollouts              *agentrollout.Service
+	agentReleaseRemote         *agentrolloutremote.Service
 	agentRetention             agentrollout.RetentionPolicy
 	agentRetentionAdmin        *retentionadmin.Service
 	servicePrincipals          *serviceprincipalhttp.Handler

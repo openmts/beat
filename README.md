@@ -433,10 +433,19 @@ Commands: `health`, `nodes list`, `nodes metrics <id>`,
 and denials exit non-zero with one bounded line. See the
 [automation access design](docs/beat/automation-access-design.md).
 
-`beat-cli release keygen` and `beat-cli release sign` are local commands: they
-create the Ed25519 release key with matching Agent/Server trust files, then
-compile and sign the canonical release manifest used by the Agent rollout API.
-They read and write files only and never need a server or token. See the
+The Agent version page discovers signed releases from `openmts/beat` first and
+keeps manual signed import as an offline fallback. Synchronization is an explicit
+owner action; importing a version never starts an upgrade. Configure
+`BEAT_AGENT_RELEASE_REPOSITORY`, `BEAT_AGENT_RELEASE_API_URL` and the optional
+read-only `BEAT_AGENT_RELEASE_TOKEN` when the defaults do not fit. See
+[remote release management](docs/beat/agent-remote-release-management.md).
+
+`beat-cli release keygen` and `beat-cli release sign` create matching
+Ed25519 Agent/Server trust files and sign a canonical manifest. Tagged CI
+releases additionally produce the canonical payload, raw Ed25519 signature,
+Sigstore bundle and direct Linux Agent binaries consumed by the remote catalog.
+The manifest remains subject to the existing size, digest, compatibility and
+trust-policy checks. See the
 [Agent update runtime](docs/beat/agent-update-runtime.md).
 
 ## Container and systemd deployment

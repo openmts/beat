@@ -52,7 +52,7 @@ describe("public fleet UI", () => {
  it("labels partial rates and connection/offline/error states", async () => {
   const state: PublicFleetSnapshot = { nodes: [node], groups, loading: false, error: "", connected: true, offline: false, receivedAt: Date.now(), serverTime: Date.now(), stale: false }, retry = vi.fn()
   const view = render(<><FleetSummary nodes={[node, workspaceNode("missing")]} /><FleetConnection state={state} retry={retry} /></>)
-  expect(screen.getAllByText(/1\/2/)).toHaveLength(2)
+  expect(screen.getAllByText(/Partial data \(1\/2\)/)).toHaveLength(2)
   for (const patch of [{ offline: true }, { error: "capacity" }, { error: "denied" }, { stale: true }, { nodes: [], error: "unavailable" }]) { view.rerender(<FleetConnection state={{ ...state, ...patch }} retry={retry} />); expect(screen.getByRole("alert")).toBeInTheDocument() }
   await userEvent.click(screen.getByRole("button", { name: "Retry" })); expect(retry).toHaveBeenCalledOnce()
   view.rerender(<FleetSummary nodes={[]} unavailable />); expect(screen.getAllByText("—")).toHaveLength(6)

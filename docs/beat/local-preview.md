@@ -1,11 +1,11 @@
 # 当前工作区预览
 
-验证日期：2026-10-20。8081 预览实例当前运行 v232 包（`/readyz` 上报 `0.2.0-dev+worktree.20261020.9`），前端入口 `assets/index-Dk5_raqh.js`；本文件下方按时间倒序记录各批次部署与验证。
+验证日期：2026-10-20。8081 预览实例当前运行 v233 包（`/readyz` 上报 `0.2.0-dev+worktree.20261020.10`），前端入口 `assets/index-zCGg0-u_.js`；本文件下方按时间倒序记录各批次部署与验证。
 
 - 地址：http://192.168.1.48:8081；后台 `/admin`；指标 `/admin/metrics`。
 - systemd：`beat-preview-server.service`、`beat-preview-agent.service`（正在运行，未设置开机自启）。
 - 可执行程序及前端：`/opt/beat-preview/current`。
-- 当前发布目录：`/opt/beat-preview/releases/worktree-v232-20261020T034140Z`；升级包 `release/preview-v232-20261020/`；上一版目录 `worktree-v231-20261020T033558Z`。
+- 当前发布目录：`/opt/beat-preview/releases/worktree-v233-20261020T150734Z`；升级包 `release/preview-v233-20261020/`；上一版目录 `worktree-v232-20261020T034140Z`。
 - 独立数据：`/var/lib/beat-preview/data`；schema v30 `accelerator_public_visibility`；SQLite integrity_check=ok、外键 0 违规。
 - Agent 配置：`/var/lib/beat-preview/agent-home/agent.json`，由专用 beat-preview 用户运行，每5秒上报。
 - 登录资料：`/etc/beat-preview/access.json`，root 私有文件，不入库。
@@ -21,6 +21,16 @@
 - v221 门禁（2026-10-19 实测）：`bash scripts/check.sh backend` **exit=0**——`-race` + `-shuffle` 63 包全 `ok`/0 FAIL、
   `go tool cover -func` 总行覆盖 **92.6%** 且 63 个包全部 ≥90%、`golangci-lint` 0 issues、`go vet` 干净、
   `govulncheck` 0 可达漏洞、双端 `-trimpath` 构建通过；本批无前端改动，前端门禁沿用 v219 结果。
+
+## v233：GitHub Release 优先的 Agent 版本管理（2026-10-20）
+
+- 版本管理新增 GitHub Release 目录作为主入口，默认读取 `openmts/beat` 的正式发布；仍支持通过环境变量配置仓库、GitHub Enterprise API 地址和只读 Token。
+- 同步必须经过本地信任根校验：下载签名 Manifest、Ed25519 签名及 Sigstore 证据，再按签名中的文件名、大小和 SHA-256 下载全部产物。GitHub 只负责发现和传输，不成为信任根。
+- 同步只把完整、已验证的版本加入本机版本库；不会自动创建或推进灰度升级。本地签名文件导入保留为离线和 GitHub 不可用时的备用入口。
+- Release 工作流现在生成 Linux amd64/arm64 直出 Agent、Manifest、Ed25519 签名、Sigstore Bundle 和覆盖全部资产的校验和；GitHub Secret `BEAT_RELEASE_SIGNING_KEY` 缺失时发布明确失败。
+- 验证：前端 2 个定向文件 / 14 例通过；Go 远端与服务端路由定向测试通过，组合语句覆盖 93.5%；`golangci-lint` 0 issues；oxlint 0 error（保留仓库既有 warning）；前端生产构建及 69 项脚本测试通过。
+- 8081：v233 `0.2.0-dev+worktree.20261020.10`，入口 `assets/index-zCGg0-u_.js`。server/agent 均 active，`/readyz` 24 项全 ok，schema 30、integrity ok、外键 0 违规；Agent 重启后每 5 秒上报返回 201。
+- 部署：冷备份 `/var/backups/beat-preview/pre-v233-20261020T150734Z`，发布目录 `/opt/beat-preview/releases/worktree-v233-20261020T150734Z`。
 
 ## v232：Agent 版本与灰度升级入口易用性优化（2026-10-20）
 

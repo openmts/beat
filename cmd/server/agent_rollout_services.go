@@ -8,6 +8,7 @@ import (
 	"strconv"
 
 	"github.com/beat/backend/internal/agentrollout"
+	"github.com/beat/backend/internal/agentrolloutremote"
 	"github.com/beat/backend/internal/api"
 	"github.com/beat/backend/internal/releasesignature"
 	"github.com/beat/backend/internal/retentionadmin"
@@ -38,6 +39,13 @@ func (services *serverServices) initializeAgentRollouts(ctx context.Context, sto
 	if err != nil {
 		return fmt.Errorf("initialize Agent rollout service: %w", err)
 	}
+	var releaseRemote *agentrolloutremote.Service
+	if config.Enabled {
+		releaseRemote, err = newAgentReleaseRemote(service, os.Getenv)
+		if err != nil {
+			return fmt.Errorf("initialize Agent release source: %w", err)
+		}
+	}
 	if err := service.Recover(ctx); err != nil {
 		return fmt.Errorf("recover Agent rollouts: %w", err)
 	}
@@ -46,6 +54,7 @@ func (services *serverServices) initializeAgentRollouts(ctx context.Context, sto
 		return err
 	}
 	services.agentRollouts = service
+	services.agentReleaseRemote = releaseRemote
 	services.agentRetention = policy
 	// 后台可配置的保留期：显式配置优先，没有配置时回落到上面解析出的环境变量缺省。
 	services.agentRetentionAdmin = retentionadmin.New(store.NewAgentRetentionStore(stores.sqlite.DB), service, policy)
@@ -116,5 +125,8 @@ func configureRolloutTrust(options *agentrollout.Config, config rolloutConfigura
 }
 
 func agentRolloutRouterOption(services *serverServices) api.RouterOption {
-	return api.WithAgentRollouts(services.agentRollouts)
+	return func(router *api.Router) {
+		api.WithAgentRollouts(services.agentRollouts)(router)
+		api.WithAgentReleaseRemote(services.agentReleaseRemote)(router)
+	}
 }

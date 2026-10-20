@@ -8,6 +8,7 @@ import (
 
 	"github.com/beat/backend/internal/adminauth"
 	"github.com/beat/backend/internal/agentrollout"
+	"github.com/beat/backend/internal/agentrolloutremote"
 	"github.com/beat/backend/internal/api/handler"
 	"github.com/beat/backend/internal/api/middleware"
 	"github.com/beat/backend/internal/deploymentaccess"
@@ -23,6 +24,7 @@ import (
 
 type Router struct {
 	agentRollouts      *agentrollout.Service
+	agentReleaseRemote *agentrolloutremote.Service
 	servicePrincipals  *serviceprincipalhttp.Handler
 	serviceTokenAccess *ServiceTokenAccess
 	rolloutRequests    *rolloutAdmission

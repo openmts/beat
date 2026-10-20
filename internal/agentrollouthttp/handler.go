@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/beat/backend/internal/agentrollout"
+	"github.com/beat/backend/internal/agentrolloutremote"
 	"github.com/beat/backend/internal/api/middleware"
 )
 
@@ -24,11 +25,16 @@ const transferTimeout = 10 * time.Minute
 
 type Handler struct {
 	service *agentrollout.Service
+	remote  *agentrolloutremote.Service
 	uploads chan struct{}
 }
 
 func New(service *agentrollout.Service) *Handler {
-	return &Handler{service: service, uploads: make(chan struct{}, 4)}
+	return NewWithRemote(service, nil)
+}
+
+func NewWithRemote(service *agentrollout.Service, remote *agentrolloutremote.Service) *Handler {
+	return &Handler{service: service, remote: remote, uploads: make(chan struct{}, 4)}
 }
 
 func headers(w http.ResponseWriter) {
@@ -49,6 +55,11 @@ func respond(w http.ResponseWriter, value any, err error) {
 	if errors.Is(err, agentrollout.ErrBusy) {
 		w.Header().Set("Retry-After", "1")
 	}
+	var rateLimited *agentrolloutremote.RateLimitError
+	if errors.As(err, &rateLimited) {
+		seconds := max(int(rateLimited.RetryAfter.Seconds()), 1)
+		w.Header().Set("Retry-After", strconv.Itoa(seconds))
+	}
 	w.WriteHeader(status)
 	encodeErr := json.NewEncoder(w).Encode(struct {
 		Code    int    `json:"code"`
@@ -60,16 +71,18 @@ func respond(w http.ResponseWriter, value any, err error) {
 
 func errorStatus(err error) int {
 	switch {
-	case errors.Is(err, agentrollout.ErrInvalid), errors.Is(err, agentrollout.ErrManifest), errors.Is(err, agentrollout.ErrSignature):
+	case errors.Is(err, agentrollout.ErrInvalid), errors.Is(err, agentrollout.ErrManifest), errors.Is(err, agentrollout.ErrSignature), errors.Is(err, agentrolloutremote.ErrInvalid):
 		return 400
 	case errors.Is(err, agentrollout.ErrForbidden):
 		return 403
 	case errors.Is(err, agentrollout.ErrRecentAuth):
 		return 428
-	case errors.Is(err, agentrollout.ErrNotFound), errors.Is(err, agentrollout.ErrDisabled):
+	case errors.Is(err, agentrollout.ErrNotFound), errors.Is(err, agentrollout.ErrDisabled), errors.Is(err, agentrolloutremote.ErrNotFound):
 		return 404
 	case errors.Is(err, agentrollout.ErrConflict):
 		return 409
+	case errors.Is(err, agentrolloutremote.ErrRateLimited):
+		return http.StatusTooManyRequests
 	default:
 		return 503
 	}

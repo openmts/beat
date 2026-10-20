@@ -3,9 +3,12 @@ package agentrollouthttp
 import (
 	"context"
 	"net/http"
+	"net/url"
+	"strconv"
 
 	"github.com/beat/backend/internal/agentrollout"
 	"github.com/beat/backend/internal/agentrollout/protocol"
+	"github.com/beat/backend/internal/agentrolloutremote"
 )
 
 func (h *Handler) listReleases(w http.ResponseWriter, r *http.Request) {
@@ -16,6 +19,44 @@ func (h *Handler) listReleases(w http.ResponseWriter, r *http.Request) {
 		}
 		return h.service.ListReleases(r.Context(), a, q)
 	})
+}
+
+func (h *Handler) remoteReleases(w http.ResponseWriter, r *http.Request) {
+	h.admin(w, r, func(agentrollout.Actor) (any, error) {
+		if h.remote == nil {
+			return nil, agentrollout.ErrDisabled
+		}
+		page, err := remotePage(r)
+		if err != nil {
+			return nil, err
+		}
+		return h.remote.List(r.Context(), page)
+	})
+}
+
+func (h *Handler) syncRemoteRelease(w http.ResponseWriter, r *http.Request) {
+	h.admin(w, r, func(a agentrollout.Actor) (any, error) {
+		if h.remote == nil {
+			return nil, agentrollout.ErrDisabled
+		}
+		return h.remote.Sync(r.Context(), a, r.PathValue("tag"))
+	})
+}
+
+func remotePage(r *http.Request) (int, error) {
+	values, err := url.ParseQuery(r.URL.RawQuery)
+	if err != nil || len(values) > 1 || len(values["page"]) > 1 || len(values) == 1 && len(values["page"]) == 0 {
+		return 0, agentrolloutremote.ErrInvalid
+	}
+	value := values.Get("page")
+	if value == "" {
+		return 1, nil
+	}
+	page, err := strconv.Atoi(value)
+	if err != nil || page < 1 || page > 100 {
+		return 0, agentrolloutremote.ErrInvalid
+	}
+	return page, nil
 }
 
 func (h *Handler) listRollouts(w http.ResponseWriter, r *http.Request) {

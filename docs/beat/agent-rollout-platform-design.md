@@ -71,8 +71,11 @@ contains:
 - release notes digest, revocation state, and manifest expiry;
 - signing-key ID and optional next-key transition proof.
 
-The Server imports a manifest by verified local upload or hardened HTTPS fetch
-using the existing SSRF-safe transport pattern. It stores the verified manifest
+The Server imports a manifest through the signed GitHub release catalog, a
+verified local upload, or another hardened HTTPS fetch. GitHub discovery is an
+explicit owner action: a release appearing upstream never authorizes a fleet
+update. The synchronization path fetches assets by numeric GitHub asset ID and
+reuses the manifest and artifact verification below. It stores the verified manifest
 and artifact metadata in SQLite, but artifacts live in a private `0700` release
 directory as `0600` files. Executable permission is applied only to the final
 verified Agent staging file.

@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react"
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { MemoryRouter } from "react-router"
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest"
@@ -23,10 +23,16 @@ const t = testLocaleValue("en").t
 const mock = new AxiosMockAdapter(api)
 afterAll(() => mock.restore())
 const renderPage = () => render(<MemoryRouter><AgentReleasesPage /></MemoryRouter>)
+const remoteCatalog = () => ({ repository: "openmts/beat", next_page: 2, items: [
+ { tag_name: "v3.0.0", version: "3.0.0", channel: "stable", name: "Agent 3", published_at: "2026-10-20T00:00:00Z", prerelease: false, ready: true, reason: "ready", assets: [] },
+ { tag_name: "v2.0.0", version: "2.0.0", channel: "stable", name: "Agent 2", published_at: "2026-10-19T00:00:00Z", prerelease: false, ready: true, reason: "ready", assets: [] },
+ { tag_name: "v1.0.0", version: "1.0.0", channel: "stable", name: "Agent 1", published_at: "2026-10-18T00:00:00Z", prerelease: false, ready: false, reason: "missing_assets", assets: [] },
+] })
 beforeEach(() => {
  mock.reset(); auth.principal.user.role = "owner"; auth.principal.session.id = "session"
  mock.onGet("/admin/agent-rollout-status").reply(200, { code: 0, data: { enabled: true, configured: true, ready: true, reason: "ready" } })
  mock.onGet("/admin/agent-releases").reply(200, { code: 0, data: { items: [agentRelease()], next_cursor: "" } })
+ mock.onGet("/admin/agent-releases/remote").reply(200, { code: 0, data: remoteCatalog() })
  mock.onGet("/admin/agent-rollouts").reply(200, { code: 0, data: { items: [agentRollout()], next_cursor: "" } })
  mock.onGet("/admin/agent-releases/release%2Fone").reply(200, { code: 0, data: agentRelease() })
  mock.onGet("/admin/agent-rollouts/rollout%2Fone").reply(200, { code: 0, data: agentRollout() })
@@ -49,6 +55,23 @@ describe("Agent release workspace", () => {
   expect(document.querySelectorAll('a[href="/admin/agent-setup"]')).toHaveLength(2)
   expect(agentRolloutError("unknown", t)).toBe("Request failed"); expect(agentRolloutError(new APIError("denied", 403), t)).toBe("denied")
  })
+ it("prioritizes the GitHub catalog and syncs an unsigned local version only after confirmation", async () => {
+  mock.onPost("/admin/agent-releases/remote/v3.0.0/sync").reply(200, { code: 0, data: agentRelease() })
+  renderPage()
+  const catalog = await screen.findByRole("region", { name: "GitHub release catalog" })
+  expect(await within(catalog).findByRole("link", { name: /openmts\/beat/ })).toHaveAttribute("href", "https://github.com/openmts/beat")
+  expect(within(catalog).getByText("Synced")).toBeInTheDocument()
+  expect(within(catalog).getByRole("button", { name: "View local copy" })).toBeInTheDocument()
+  const syncButtons = within(catalog).getAllByRole("button", { name: "Sync version" })
+  expect(syncButtons).toHaveLength(2)
+  expect(syncButtons.some(button => button.hasAttribute("disabled"))).toBe(true)
+  await userEvent.click(syncButtons.find(button => !button.hasAttribute("disabled"))!)
+  expect(mock.history.post).toHaveLength(0)
+  await userEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Confirm" }))
+  await waitFor(() => expect(mock.history.post[0].url).toBe("/admin/agent-releases/remote/v3.0.0/sync"))
+  expect(await within(catalog).findByText("Agent 3.0.0 was synchronized and verified.")).toBeInTheDocument()
+  expect(mock.history.post).toHaveLength(1)
+ })
  it("reports real disabled and unconfigured status before loading release data", async () => {
   mock.onGet("/admin/agent-rollout-status").reply(200, { code: 0, data: { enabled: false, configured: false, ready: false, reason: "disabled" } })
   renderPage(); expect(await screen.findByRole("status")).toHaveTextContent("Rollout module: disabled")
@@ -69,9 +92,13 @@ describe("Agent release workspace", () => {
  })
  it("preserves release pagination cursors and shows empty pages with back navigation", async () => {
   mock.onGet("/admin/agent-releases").reply(config => [200, { code: 0, data: config.params.cursor ? { items: [], next_cursor: "" } : { items: [agentRelease()], next_cursor: "opaque+/=" } }])
-  renderPage(); await screen.findByRole("button", { name: "View 2.0.0" }); await userEvent.click(screen.getByRole("button", { name: "Next page" }))
+  renderPage(); await screen.findByRole("button", { name: "View 2.0.0" })
+  const local = screen.getByRole("heading", { name: "Versions on this server" }).closest("section")!
+  await userEvent.click(within(local).getByRole("button", { name: "Next page" }))
   expect(await screen.findByText("No version packages imported")).toBeInTheDocument(); expect(mock.history.get.some(request => request.params?.cursor === "opaque+/=")).toBe(true)
-  await userEvent.click(screen.getByRole("button", { name: "Previous page" })); expect(await screen.findByRole("button", { name: "View 2.0.0" })).toBeInTheDocument()
+  const emptyLocal = screen.getByRole("heading", { name: "Versions on this server" }).closest("section")!
+  await userEvent.click(within(emptyLocal).getByRole("button", { name: "Previous page" }))
+  expect(await screen.findByRole("button", { name: "View 2.0.0" })).toBeInTheDocument()
   await userEvent.click(screen.getByRole("button", { name: "Refresh workspace" })); expect(mock.history.get.length).toBeGreaterThan(4)
  })
  it("freezes named private nodes, groups and tags only after rollback acknowledgement and confirmation", async () => {

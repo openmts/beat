@@ -8,6 +8,7 @@ import (
 
 	"github.com/beat/backend/internal/agentrollout"
 	"github.com/beat/backend/internal/agentrollouthttp"
+	"github.com/beat/backend/internal/agentrolloutremote"
 	"github.com/beat/backend/internal/api/middleware"
 	"github.com/beat/backend/internal/model"
 )
@@ -24,13 +25,17 @@ func WithAgentRollouts(service *agentrollout.Service) RouterOption {
 	return func(r *Router) { r.agentRollouts = service }
 }
 
+func WithAgentReleaseRemote(service *agentrolloutremote.Service) RouterOption {
+	return func(r *Router) { r.agentReleaseRemote = service }
+}
+
 func (r *Router) registerAgentRolloutRoutes(mux *http.ServeMux) {
 	if r.agentRollouts == nil {
 		return
 	}
 	admission := newRolloutAdmission()
 	r.rolloutRequests = admission
-	h := agentrollouthttp.New(r.agentRollouts)
+	h := agentrollouthttp.NewWithRemote(r.agentRollouts, r.agentReleaseRemote)
 	h.RegisterProtected(mux, agentrollouthttp.Protection{
 		OwnerRead: func(next http.Handler) http.Handler {
 			return admission.incomingGuard(r.rolloutOwner(admission.identityGuard(next, false), false))

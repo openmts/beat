@@ -60,6 +60,8 @@ func (h *Handler) routes() []route {
 	routes := []route{
 		{"GET /api/v1/admin/agent-rollout-status", ownerRead, h.status},
 		{"GET /api/v1/admin/agent-releases", ownerRead, h.listReleases},
+		{"GET /api/v1/admin/agent-releases/remote", ownerRead, h.remoteReleases},
+		{"POST /api/v1/admin/agent-releases/remote/{tag}/sync", ownerWrite, h.syncRemoteRelease},
 		{"GET /api/v1/admin/agent-releases/{release_id}", ownerRead, h.release},
 		{"POST /api/v1/admin/agent-releases/import", ownerWrite, h.importManifest},
 		{"PUT /api/v1/admin/agent-releases/{release_id}/artifacts/{artifact_id}", ownerWrite, h.upload},

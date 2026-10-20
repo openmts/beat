@@ -3,6 +3,9 @@ export interface AgentManifest { schema_version: number; version: string; commit
 export interface SignedAgentManifest { payload: string; signature: string; sigstore_bundle: string }
 export interface AgentRelease { id: string; manifest: AgentManifest; verified: boolean; revoked: boolean }
 export interface AgentReleaseDetail extends AgentRelease { artifacts: { id: string; state: string; size: number; sha256: string }[] }
+export interface AgentRemoteAsset { name: string; size: number }
+export interface AgentRemoteRelease { tag_name: string; version: string; channel: string; name: string; published_at: string; prerelease: boolean; ready: boolean; reason: string; assets: AgentRemoteAsset[] }
+export interface AgentRemotePage { repository: string; items: AgentRemoteRelease[]; next_page?: number }
 export interface AgentRolloutPolicy { canary_count: number; wave_size: number; max_concurrent: number; observation_seconds: number; report_freshness_seconds: number; max_restarts: number; max_protocol_errors: number; max_metric_errors: number; max_task_failures: number; allow_preview: boolean; window_start: string; window_end: string }
 export interface AgentRolloutInput { name: string; release_id: string; node_ids: string[]; group_ids: string[]; tags: string[]; policy: AgentRolloutPolicy; action: "upgrade" | "rollback"; acknowledge_rollback: boolean }
 export interface AgentRollout { id: string; release_id: string; name: string; action: string; state: string; reason: string; current_wave: number; total_waves: number; policy: AgentRolloutPolicy }

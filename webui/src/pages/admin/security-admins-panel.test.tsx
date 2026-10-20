@@ -26,7 +26,7 @@ describe("administrator account permissions and confirmation", () => {
  })
  it("edits role, display name and enabled state through a separate confirmation", async () => {
   mount(); await screen.findByText("@other · Administrator"); await userEvent.click(screen.getAllByRole("button", { name: "Edit" })[1]); const dialog = screen.getByRole("dialog")
-  fireEvent.change(within(dialog).getByLabelText("Display name"), { target: { value: "New display" } }); await userEvent.click(within(dialog).getByRole("combobox")); await userEvent.click(screen.getByRole("option", { name: "Owner" })); await userEvent.click(within(dialog).getByRole("checkbox", { name: "Enabled" })); await userEvent.click(within(dialog).getByRole("button", { name: "Save" })); expect(security.updateAdminUser).not.toHaveBeenCalled()
+  fireEvent.change(within(dialog).getByLabelText("Display name"), { target: { value: "New display" } }); await userEvent.click(within(dialog).getByRole("combobox")); await userEvent.click(await screen.findByRole("option", { name: "Owner" })); await userEvent.click(within(dialog).getByRole("checkbox", { name: "Enabled" })); await userEvent.click(within(dialog).getByRole("button", { name: "Save" })); expect(security.updateAdminUser).not.toHaveBeenCalled()
   await userEvent.click(screen.getByRole("button", { name: "Confirm" })); await waitFor(() => expect(security.updateAdminUser).toHaveBeenCalledWith("other", { display_name: "New display", role: "owner", enabled: false }))
  })
  it("clears edits when session identity changes and rejects abandoned list results", async () => {
