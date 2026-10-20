@@ -3,24 +3,39 @@ package handler
 import (
 	"context"
 	"log/slog"
-	"math"
 	"net/http"
-	"strings"
-	"time"
 
-	"github.com/beat/backend/internal/api/middleware"
+	"github.com/beat/backend/internal/metricquery"
 	"github.com/beat/backend/internal/model"
 	"github.com/beat/backend/internal/service"
 	"github.com/beat/backend/internal/store"
 )
 
 type NodeHandler struct {
-	nodeStore     *store.NodeStore
-	mtsStore      *store.MTSStore
-	settingsStore *store.SiteSettingsStore
-	taskEnqueuer  AgentTaskEnqueuer
-	agentHub      *service.AgentHub
-	customMetrics *store.CustomMetricStore
+	accelerators    AcceleratorService
+	lifecycleViews  NodeLifecycleViews
+	locationViews   NodeLocationViews
+	nodeStore       *store.NodeStore
+	erasure         *store.MetricErasureStore
+	mtsStore        *store.MTSStore
+	settingsStore   *store.SiteSettingsStore
+	taskEnqueuer    AgentTaskEnqueuer
+	agentHub        *service.AgentHub
+	customMetrics   *store.CustomMetricStore
+	metricCatalog   *store.MetricCatalogStore
+	queryBudget     *metricquery.Service
+	ingestBudget    agentIngestBudget
+	trafficResolver *store.TrafficAccountingResolver
+	// publicSnapshot 复用指标流生产者的公共节点快照；nil 时始终直连查询。
+	publicSnapshot publicSnapshotSource
+	// historyShare 合并在途的相同公共历史读取；nil 时逐次直读。
+	historyShare *metricHistoryShare
+}
+
+// WithPublicSnapshot 注入公共快照来源；未注入或快照过期时保持直连查询。
+func (h *NodeHandler) WithPublicSnapshot(source publicSnapshotSource) *NodeHandler {
+	h.publicSnapshot = source
+	return h
 }
 
 // AgentTaskEnqueuer queues agent tasks for a node.
@@ -33,7 +48,7 @@ func NewNodeHandler(
 	mtsStore *store.MTSStore,
 	settingsStores ...*store.SiteSettingsStore,
 ) *NodeHandler {
-	handler := &NodeHandler{nodeStore: nodeStore, mtsStore: mtsStore}
+	handler := &NodeHandler{nodeStore: nodeStore, mtsStore: mtsStore, historyShare: newHistoryShare[map[string][]store.TimePoint]()}
 	if len(settingsStores) > 0 {
 		handler.settingsStore = settingsStores[0]
 	}
@@ -55,8 +70,36 @@ func (h *NodeHandler) WithCustomMetrics(store *store.CustomMetricStore) *NodeHan
 	return h
 }
 
+// WithTrafficResolver 注入校准感知的周期流量解析器；未注入时退回原始 MTS 聚合。
+func (h *NodeHandler) WithTrafficResolver(resolver *store.TrafficAccountingResolver) *NodeHandler {
+	h.trafficResolver = resolver
+	return h
+}
+
+func (h *NodeHandler) WithMetricCatalog(catalog *store.MetricCatalogStore) *NodeHandler {
+	h.metricCatalog = catalog
+	return h
+}
+
+func (h *NodeHandler) WithMetricQueryBudget(queries *metricquery.Service) *NodeHandler {
+	h.queryBudget = queries
+	return h
+}
+
 func (h *NodeHandler) HandleListNodes(w http.ResponseWriter, r *http.Request) {
 	groupID := r.URL.Query().Get("group_id")
+	settings, err := loadSiteSettings(r.Context(), h.settingsStore)
+	if err != nil {
+		JSONError(w, http.StatusInternalServerError, "failed to load site settings")
+		return
+	}
+	if snapshot, ok := h.cachedPublicSnapshot(settings.ShowAccelerators); ok {
+		if writeConditionalNodes(w, r, snapshot.Generation) {
+			return
+		}
+		JSONResponse(w, http.StatusOK, filterPublicNodes(snapshot.Nodes, groupID, model.NowUTC()))
+		return
+	}
 
 	nodes, err := h.nodeStore.ListPublicNodes(r.Context(), groupID)
 	if err != nil {
@@ -64,15 +107,10 @@ func (h *NodeHandler) HandleListNodes(w http.ResponseWriter, r *http.Request) {
 
 		return
 	}
-	settings, err := loadSiteSettings(r.Context(), h.settingsStore)
-	if err != nil {
-		JSONError(w, http.StatusInternalServerError, "failed to load site settings")
-		return
-	}
 
-	output := make([]nodeResponse, 0, len(nodes))
+	output := make([]publicNodeResponse, 0, len(nodes))
 	for _, node := range nodes {
-		response, err := buildNodeResponse(r.Context(), publicNode(node, settings), h.mtsStore)
+		response, err := h.buildPublicNodeResponse(r.Context(), publicNode(node, settings), settings)
 		if err != nil {
 			JSONError(w, http.StatusInternalServerError, "failed to load node metrics")
 			return
@@ -94,6 +132,23 @@ var defaultMetrics = model.MetricNames()
 
 func (h *NodeHandler) HandleGetNode(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
+	settings, err := loadSiteSettings(r.Context(), h.settingsStore)
+	if err != nil {
+		JSONError(w, http.StatusInternalServerError, "failed to load site settings")
+		return
+	}
+	if snapshot, ok := h.cachedPublicSnapshot(settings.ShowAccelerators); ok {
+		response, found := findPublicNode(snapshot.Nodes, id)
+		if !found {
+			JSONError(w, http.StatusNotFound, "node not found")
+			return
+		}
+		if writeConditionalNodes(w, r, snapshot.Generation) {
+			return
+		}
+		JSONResponse(w, http.StatusOK, response)
+		return
+	}
 
 	node, err := h.nodeStore.GetPublicNode(r.Context(), id)
 	if err != nil {
@@ -107,13 +162,7 @@ func (h *NodeHandler) HandleGetNode(w http.ResponseWriter, r *http.Request) {
 
 		return
 	}
-	settings, err := loadSiteSettings(r.Context(), h.settingsStore)
-	if err != nil {
-		JSONError(w, http.StatusInternalServerError, "failed to load site settings")
-		return
-	}
-
-	response, err := buildNodeResponse(r.Context(), publicNode(*node, settings), h.mtsStore)
+	response, err := h.buildPublicNodeResponse(r.Context(), publicNode(*node, settings), settings)
 	if err != nil {
 		JSONError(w, http.StatusInternalServerError, "failed to load node metrics")
 		return
@@ -125,8 +174,8 @@ func (h *NodeHandler) HandleUpdateNode(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 
 	var body nodeUpdateRequest
-	if err := ParseJSON(r, &body); err != nil {
-		JSONError(w, http.StatusBadRequest, "invalid request body")
+	if err := ParseJSONStrict(r, &body); err != nil {
+		WriteBodyError(w, err)
 
 		return
 	}
@@ -147,6 +196,12 @@ func (h *NodeHandler) HandleUpdateNode(w http.ResponseWriter, r *http.Request) {
 	}
 
 	node, err := h.nodeStore.UpdateNode(r.Context(), id, body.storeUpdate())
+	if respondMetadataMutationError(w, err) {
+		return
+	}
+	if respondAlertScopeCapacity(w, err) {
+		return
+	}
 	if err != nil {
 		JSONError(w, http.StatusInternalServerError, "failed to update node")
 
@@ -202,111 +257,23 @@ func validateTrafficUpdate(limit *int64, limitType *string, resetDay *int) error
 	return policy.Validate()
 }
 
+// WithErasureStore 注入耐久擦除账本；删除节点因此变成可重试的异步生命周期请求。
+func (h *NodeHandler) WithErasureStore(jobs *store.MetricErasureStore) *NodeHandler {
+	h.erasure = jobs
+	return h
+}
+
 func (h *NodeHandler) HandleDeleteNode(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-
-	if err := h.nodeStore.DeleteNode(r.Context(), id); err != nil {
-		JSONError(w, http.StatusInternalServerError, "failed to delete node")
-
+	view, replayed, ok := createDeletionJob(w, r, h.erasure, model.MetricErasureDeleteNode,
+		r.PathValue("id"), model.NowUTC())
+	if !ok {
 		return
 	}
-
-	w.WriteHeader(http.StatusNoContent)
+	JSONResponse(w, http.StatusAccepted, deletionAcceptedResponse{Job: view, Replayed: replayed})
 }
 
 func (h *NodeHandler) HandleNodeReport(w http.ResponseWriter, r *http.Request) {
-	identity, ok := middleware.AgentIdentity(r.Context())
-	if !ok {
-		JSONError(w, http.StatusUnauthorized, "unauthorized")
-		return
-	}
-	var body struct {
-		Name          string             `json:"name"`
-		Host          string             `json:"host"`
-		Port          int                `json:"port"`
-		System        model.SystemInfo   `json:"system"`
-		Metrics       *model.NodeMetrics `json:"metrics"`
-		CustomMetrics map[string]float64 `json:"custom_metrics"`
-	}
-	if err := ParseJSON(r, &body); err != nil {
-		JSONError(w, http.StatusBadRequest, "invalid request body")
-
-		return
-	}
-
-	if body.Host == "" {
-		JSONError(w, http.StatusBadRequest, "host is required")
-
-		return
-	}
-	if body.Port < 1 || body.Port > 65535 {
-		JSONError(w, http.StatusBadRequest, "port must be between 1 and 65535")
-		return
-	}
-	if body.Metrics != nil {
-		if err := body.Metrics.Validate(); err != nil {
-			JSONError(w, http.StatusBadRequest, "invalid metrics")
-			return
-		}
-	}
-
-	node, err := h.nodeStore.UpdateNodeHeartbeat(r.Context(), identity.NodeID, store.NodeHeartbeat{
-		Name: identity.NodeName, Host: body.Host, Port: body.Port, System: body.System,
-	})
-	if err != nil {
-		JSONError(w, http.StatusInternalServerError, "failed to update node")
-
-		return
-	}
-	if node == nil {
-		JSONError(w, http.StatusUnauthorized, "unauthorized")
-		return
-	}
-
-	if body.Metrics != nil {
-		now := model.NowUTC()
-
-		if h.mtsStore == nil {
-			JSONError(w, http.StatusServiceUnavailable, "metrics storage is unavailable")
-			return
-		}
-		if err := h.mtsStore.WriteNodeMetrics(r.Context(), store.NodeMetricSample{
-			NodeID: node.ID, Metrics: *body.Metrics, Timestamp: now,
-		}); err != nil {
-			JSONError(w, http.StatusInternalServerError, "failed to store node metrics")
-			return
-		}
-	}
-
-	for name, value := range body.CustomMetrics {
-		if !isValidCustomMetricName(name) || !isFiniteMetricValue(value) {
-			JSONError(w, http.StatusBadRequest, "invalid custom metrics")
-			return
-		}
-		if err := h.mtsStore.WriteMetric(r.Context(), node.ID, model.CustomMetricPrefix+name, value, model.NowUTC()); err != nil {
-			JSONError(w, http.StatusInternalServerError, "failed to store custom metric")
-			return
-		}
-	}
-
-	JSONResponse(w, http.StatusCreated, node)
-}
-
-func isValidCustomMetricName(name string) bool {
-	if name == "" || len(name) > 100 {
-		return false
-	}
-	for _, r := range name {
-		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_' || r == '.' || r == '-' {
-			continue
-		}
-		return false
-	}
-	return true
-}
-
-func isFiniteMetricValue(value float64) bool {
-	return !math.IsNaN(value) && !math.IsInf(value, 0)
+	h.handleMetricReport(w, r)
 }
 
 // HandleGetNodeCustomMetrics returns the enabled custom metrics bound to a node.
@@ -330,8 +297,19 @@ func (h *NodeHandler) HandleGetNodeCustomMetrics(w http.ResponseWriter, r *http.
 		JSONError(w, http.StatusInternalServerError, "failed to list custom metrics")
 		return
 	}
+	var allowed map[string]bool
+	if h.metricCatalog != nil {
+		allowed, err = h.metricCatalog.PublicKeys(r.Context())
+		if err != nil {
+			JSONError(w, http.StatusServiceUnavailable, "metric catalog is unavailable")
+			return
+		}
+	}
 	response := make([]customMetricNodeResponse, 0, len(metrics))
 	for _, metric := range metrics {
+		if allowed != nil && !allowed[model.CustomMetricPrefix+metric.Name] {
+			continue
+		}
 		response = append(response, customMetricNodeResponse{
 			ID:              metric.ID,
 			Name:            metric.Name,
@@ -345,61 +323,4 @@ type customMetricNodeResponse struct {
 	ID              string `json:"id"`
 	Name            string `json:"name"`
 	IntervalSeconds int    `json:"interval_seconds"`
-}
-
-func (h *NodeHandler) HandleGetNodeMetrics(w http.ResponseWriter, r *http.Request) {
-	nodeID := r.PathValue("id")
-	node, err := h.nodeStore.GetPublicNode(r.Context(), nodeID)
-	if err != nil {
-		JSONError(w, http.StatusInternalServerError, "failed to get node")
-		return
-	}
-	if node == nil {
-		JSONError(w, http.StatusNotFound, "node not found")
-		return
-	}
-
-	metricParam := r.URL.Query().Get("metric")
-	fromStr := r.URL.Query().Get("from")
-	toStr := r.URL.Query().Get("to")
-
-	from, err := time.Parse(time.RFC3339, fromStr)
-	if err != nil {
-		JSONError(w, http.StatusBadRequest, "invalid from timestamp")
-
-		return
-	}
-
-	to, err := time.Parse(time.RFC3339, toStr)
-	if err != nil {
-		JSONError(w, http.StatusBadRequest, "invalid to timestamp")
-
-		return
-	}
-
-	metrics := defaultMetrics
-	if metricParam != "" {
-		metrics = strings.Split(metricParam, ",")
-	}
-
-	result, err := h.mtsStore.QueryMetrics(r.Context(), metrics, from, to, nodeID)
-	if err != nil {
-		JSONError(w, http.StatusInternalServerError, "failed to read metrics")
-
-		return
-	}
-
-	output := make(map[string][]metricResponse, len(result))
-	for metric, points := range result {
-		values := make([]metricResponse, 0, len(points))
-		for _, p := range points {
-			values = append(values, metricResponse{
-				NodeID: nodeID, Metric: metric, Value: p.Value,
-				Timestamp: p.Timestamp.Unix(),
-			})
-		}
-		output[metric] = values
-	}
-
-	JSONResponse(w, http.StatusOK, output)
 }

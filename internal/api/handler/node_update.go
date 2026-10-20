@@ -55,11 +55,18 @@ func (h *NodeHandler) HandleSortNodes(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		IDs []string `json:"ids"`
 	}
-	if err := ParseJSON(r, &body); err != nil || len(body.IDs) == 0 {
+	if err := ParseJSONStrict(r, &body); err != nil {
+		WriteBodyError(w, err)
+		return
+	}
+	if len(body.IDs) == 0 {
 		JSONError(w, http.StatusBadRequest, "invalid node sort order")
 		return
 	}
 	if err := h.nodeStore.UpdateNodeSort(r.Context(), body.IDs); err != nil {
+		if respondMetadataMutationError(w, err) {
+			return
+		}
 		if errors.Is(err, store.ErrInvalidNodeSort) {
 			JSONError(w, http.StatusBadRequest, "invalid node sort order")
 			return

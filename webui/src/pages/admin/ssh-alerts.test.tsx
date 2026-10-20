@@ -1,3 +1,4 @@
+import { notificationChannel } from "@/test/notification-fixtures"
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react"
 import { MemoryRouter } from "react-router"
 import { beforeEach, describe, expect, it, vi } from "vitest"
@@ -11,6 +12,8 @@ import { buildAlertMetricOptions, isValidWebhookURL, messageFromError } from "@/
 import * as hooks from "@/hooks/use-api"
 import * as api from "@/lib/api"
 
+vi.mock("@/context/auth", () => ({ useAuth: () => ({ principal: { user: { role: "owner" }, session: { reauthenticated_until: "2099-01-01T00:00:00Z" } } }) }))
+vi.mock("@/pages/admin/evaluation-rules-panel", () => ({ default: () => <div>CPU high</div> }))
 vi.mock("@/hooks/use-api")
 vi.mock("@/lib/api")
 vi.mock("@/components/ui/dialog", async () => {
@@ -54,13 +57,7 @@ const rule = {
   threshold: 80, duration: 300, severity: "critical", enabled: true,
   created_at: "", updated_at: "",
 }
-const channel = {
-  id: "c1", name: "Primary webhook", channel_type: "webhook",
-  config: `{"url":"https://example.com/hook"}`,
-  enabled: true,
-  last_delivery: { state: "success", message: "delivered", delivered_at: "2026-01-01T00:00:00Z" },
-  created_at: "", updated_at: "",
-}
+const channel = notificationChannel({ name: "Primary webhook" })
 
 function view(element: React.ReactNode) {
   return render(<LocaleProvider><MemoryRouter>{element}</MemoryRouter></LocaleProvider>)
@@ -87,12 +84,14 @@ describe("SSH keys", () => {
     fireEvent.click(rowButtons[0])
     await waitFor(() => expect(navigator.clipboard.writeText).toHaveBeenCalledWith(key.public_key))
     fireEvent.click(rowButtons[1])
+    expect(api.getSSHKey).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole("button", { name: "Confirm" }))
     expect(await screen.findByText(/BEGIN PRIVATE KEY/)).toBeInTheDocument()
     expect(screen.getByText(key.public_key)).toBeInTheDocument()
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }))
     fireEvent.click(rowButtons[2])
     const confirmDialog = screen.getAllByRole("dialog")[0]
-    fireEvent.click(within(confirmDialog).getByRole("button", { name: "Delete" }))
+    fireEvent.click(within(confirmDialog).getByRole("button", { name: "Confirm" }))
     await waitFor(() => expect(api.deleteSSHKey).toHaveBeenCalledWith("k1"))
   })
 
@@ -112,6 +111,8 @@ describe("SSH keys", () => {
     fireEvent.change(inputs[1], { target: { value: " ssh-rsa AAA " } })
     fireEvent.change(inputs[2], { target: { value: " private " } })
     fireEvent.click(within(dialog).getByRole("button", { name: "Confirm" }))
+    expect(api.createSSHKey).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole("button", { name: "Confirm" }))
     await waitFor(() => expect(api.createSSHKey).toHaveBeenCalledWith({
       name: "Imported", public_key: "ssh-rsa AAA", private_key: "private", key_type: "imported",
     }))
@@ -123,15 +124,17 @@ describe("SSH keys", () => {
     fireEvent.change(keyTypeSelect, { target: { value: "rsa" } })
     expect(keyTypeSelect).toHaveAttribute("data-selected-label", "RSA 2048")
     fireEvent.click(screen.getByRole("button", { name: "Confirm" }))
+    expect(api.generateSSHKey).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole("button", { name: "Confirm" }))
     await waitFor(() => expect(api.generateSSHKey).toHaveBeenCalledWith("Generated", "rsa"))
     const generatedDialog = await screen.findByRole("dialog")
     expect(within(generatedDialog).getByText(generated.public_key)).toBeInTheDocument()
     expect(within(generatedDialog).getByText(/BEGIN RSA PRIVATE KEY/)).toBeInTheDocument()
-    fireEvent.click(within(generatedDialog).getByRole("button", { name: "Public Key" }))
+    fireEvent.click(within(generatedDialog).getByRole("button", { name: /Public Key/ }))
     await waitFor(() => expect(navigator.clipboard.writeText).toHaveBeenCalledWith(generated.public_key))
     fireEvent.click(within(generatedDialog).getByRole("button", { name: /Private Key/ }))
     await waitFor(() => expect(navigator.clipboard.writeText).toHaveBeenCalledWith(generated.private_key))
-    expect(await within(generatedDialog).findByText("Copied")).toBeInTheDocument()
+    expect(await within(generatedDialog).findAllByText("Copied")).toHaveLength(2)
     fireEvent.click(within(generatedDialog).getByRole("button", { name: "Cancel" }))
     await waitFor(() => expect(screen.queryByText(generated.public_key)).not.toBeInTheDocument())
   })
@@ -142,7 +145,7 @@ describe("SSH keys", () => {
     expect(screen.getByText("fetch failed")).toBeInTheDocument()
     vi.mocked(hooks.useSSHKeys).mockReturnValue(state([], { loading: true }) as never)
     rerender(<LocaleProvider><MemoryRouter><SSHKeys /></MemoryRouter></LocaleProvider>)
-    expect(document.querySelectorAll("tbody tr")).toHaveLength(3)
+    expect(document.querySelectorAll("tbody tr")).toHaveLength(1)
     vi.mocked(hooks.useSSHKeys).mockReturnValue(state([key]) as never)
     vi.mocked(navigator.clipboard.writeText).mockRejectedValue(new Error("copy failed"))
     rerender(<LocaleProvider><MemoryRouter><SSHKeys /></MemoryRouter></LocaleProvider>)
@@ -157,13 +160,19 @@ describe("alerts", () => {
     vi.mocked(hooks.useCustomMetrics).mockReturnValue(state([]) as never)
     vi.mocked(hooks.useAlertRules).mockReturnValue(state([rule]) as never)
     vi.mocked(hooks.useAlertChannels).mockReturnValue(state([channel]) as never)
-    vi.mocked(hooks.useAlertEvents).mockReturnValue(state([{
+    // 服务端按状态筛选；快照缺失时只渲染“已删除”，不再回退到节点 ID。
+    const events = [{
       id: "e1", rule_id: "r1", node_id: "n1", message: "high", value: 91,
       status: "triggered", triggered_at: "2026-01-01T00:00:00Z", resolved_at: null,
+      rule_name_snapshot: "CPU high", node_name_snapshot: "Node One",
     }, {
       id: "e2", rule_id: "r1", node_id: "missing", message: "ok", value: 10,
       status: "resolved", triggered_at: "2026-01-01T00:00:00Z", resolved_at: "2026-01-01T00:01:00Z",
-    }]) as never)
+      rule_name_snapshot: "CPU high", node_name_snapshot: "",
+    }]
+    vi.mocked(hooks.useAlertEvents).mockImplementation(
+      (status?: string) => state(status === "resolved" ? [events[1]] : events) as never,
+    )
     vi.mocked(hooks.useNodes).mockReturnValue(state([{
       id: "n1", name: "Node One", alias: "", group_id: "", host: "host", port: 22,
       status: "online", ssh_public_key: "", last_seen: "", created_at: "", updated_at: "",
@@ -228,69 +237,32 @@ describe("alerts", () => {
     })))
   })
 
-  it("validates and manages channels", async () => {
-    view(<AlertChannelsPanel />)
-    expect(screen.getByText("Delivered")).toBeInTheDocument()
-    fireEvent.click(screen.getByRole("switch"))
-    await waitFor(() => expect(api.updateAlertChannel).toHaveBeenCalledWith("c1", expect.objectContaining({ enabled: false })))
-    const row = within(screen.getByText("Primary webhook").closest("tr")!)
-    fireEvent.click(row.getByRole("button", { name: "Test" }))
-    await waitFor(() => expect(api.testAlertChannel).toHaveBeenCalledWith("c1"))
-    fireEvent.click(row.getByRole("button", { name: "Edit" }))
-    expect(screen.getByTestId("select")).toHaveAttribute("data-selected-label", "Webhook")
-    fireEvent.change(screen.getByLabelText("Webhook URL"), { target: { value: "invalid" } })
-    fireEvent.click(screen.getByRole("button", { name: "Save" }))
-    expect(screen.getByText("Enter a valid webhook URL")).toBeInTheDocument()
-    fireEvent.change(screen.getByLabelText("Webhook URL"), { target: { value: "https://new.example/hook" } })
-    fireEvent.click(screen.getByRole("button", { name: "Save" }))
-    await waitFor(() => expect(api.updateAlertChannel).toHaveBeenCalledWith("c1", expect.objectContaining({
-      config: `{"url":"https://new.example/hook"}`,
-    })))
-    fireEvent.click(row.getByRole("button", { name: "Delete" }))
-    fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Delete" }))
-    await waitFor(() => expect(api.deleteAlertChannel).toHaveBeenCalledWith("c1"))
-  })
-
-  it("creates Telegram channels without exposing internal select values", async () => {
-    view(<AlertChannelsPanel />)
-    fireEvent.click(screen.getByRole("button", { name: "Create" }))
-    const typeSelect = screen.getByTestId("select")
-    expect(typeSelect).toHaveAttribute("data-selected-label", "Webhook")
-    fireEvent.change(typeSelect, { target: { value: "telegram" } })
-    expect(typeSelect).toHaveAttribute("data-selected-label", "Telegram")
-    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Telegram ops" } })
-    fireEvent.change(screen.getByLabelText("Bot token"), { target: { value: "123:secret" } })
-    fireEvent.change(screen.getByLabelText("Chat ID"), { target: { value: "42" } })
-    fireEvent.click(screen.getByRole("button", { name: "Save" }))
-    await waitFor(() => expect(api.createAlertChannel).toHaveBeenCalledWith(expect.objectContaining({
-      name: "Telegram ops", channel_type: "telegram",
-      config: `{"bot_token":"123:secret","chat_id":"42"}`,
-    })))
-  })
-
-  it("shows readable email channel and SMTP security labels", () => {
-    view(<AlertChannelsPanel />)
-    fireEvent.click(screen.getByRole("button", { name: "Create" }))
-    const typeSelect = screen.getByTestId("select")
-    fireEvent.change(typeSelect, { target: { value: "email" } })
-    const selects = screen.getAllByTestId("select")
-    expect(selects[0]).toHaveAttribute("data-selected-label", "Email")
-    expect(selects[1]).toHaveAttribute("data-selected-label", "STARTTLS")
-    fireEvent.change(selects[1], { target: { value: "tls" } })
-    expect(selects[1]).toHaveAttribute("data-selected-label", "TLS")
-  })
-
-  it("filters events and renders panel states", () => {
-    view(<AlertEventsPanel />)
+  it("filters events server-side and renders deleted-name fallbacks", () => {
+    const { rerender } = view(<AlertEventsPanel />)
     expect(screen.getByText("Node One")).toBeInTheDocument()
-    expect(screen.getByText("Hidden Node")).toBeInTheDocument()
+    expect(hooks.useAlertEvents).toHaveBeenCalledWith("all")
     expect(within(screen.getByText("Node One").closest("tr")!).getByText("Triggered")).toBeInTheDocument()
     const statusSelect = screen.getByTestId("select")
     expect(statusSelect).toHaveAttribute("data-selected-label", "All")
     fireEvent.change(statusSelect, { target: { value: "resolved" } })
-    expect(statusSelect).toHaveAttribute("data-selected-label", "Resolved")
+    rerender(<LocaleProvider><MemoryRouter><AlertEventsPanel /></MemoryRouter></LocaleProvider>)
+    // 请求交给服务端分页接口，节点 ID 不再作为显示兜底。
+    expect(hooks.useAlertEvents).toHaveBeenLastCalledWith("resolved")
+    expect(screen.getByText("Deleted node")).toBeInTheDocument()
     expect(screen.queryByText("Node One")).not.toBeInTheDocument()
-    expect(screen.getByText("Hidden Node")).toBeInTheDocument()
+    expect(screen.queryByText("missing")).not.toBeInTheDocument()
+  })
+
+  it("loads the next cursor page from the server", () => {
+    const loadMore = vi.fn().mockResolvedValue(undefined)
+    vi.mocked(hooks.useAlertEvents).mockReturnValue(state([{
+      id: "e1", rule_id: "r1", node_id: "n1", message: "high", value: 91,
+      status: "triggered", triggered_at: "2026-01-01T00:00:00Z", resolved_at: null,
+      rule_name_snapshot: "CPU high", node_name_snapshot: "Node One",
+    }], { nextCursor: "page-2", loadMore }) as never)
+    view(<AlertEventsPanel />)
+    fireEvent.click(screen.getByRole("button", { name: "Load more" }))
+    expect(loadMore).toHaveBeenCalledOnce()
   })
 
   it("covers alert errors, loading, empty, and utilities", () => {
@@ -298,7 +270,7 @@ describe("alerts", () => {
     expect(view(<AlertRulesPanel />).getByText("rules failed")).toBeInTheDocument()
     vi.mocked(hooks.useAlertChannels).mockReturnValue(state([], { loading: true }) as never)
     const { unmount } = view(<AlertChannelsPanel />)
-    expect(document.querySelectorAll("tbody tr")).toHaveLength(2)
+    expect(document.querySelectorAll("tbody tr")).toHaveLength(1)
     unmount()
     vi.mocked(hooks.useAlertEvents).mockReturnValue(state([]) as never)
     expect(view(<AlertEventsPanel />).getByText("No data")).toBeInTheDocument()

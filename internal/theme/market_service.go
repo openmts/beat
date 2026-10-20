@@ -2,8 +2,9 @@ package theme
 
 import (
 	"context"
-	"errors"
-	"fmt"
+	"encoding/base64"
+	"net/url"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -12,18 +13,15 @@ import (
 	"github.com/beat/backend/internal/store"
 )
 
-// MarketService 管理市场源、目录刷新与市场安装。
 type MarketService struct {
-	store  *store.ThemeStore
-	client *MarketClient
-	theme  *Service
-	now    func() time.Time
+	store      *store.ThemeStore
+	client     *MarketClient
+	theme      *Service
+	now        func() time.Time
+	sourceGate operationGate
 }
 
-// NewMarketService 构造市场服务。
-func NewMarketService(
-	store *store.ThemeStore, client *MarketClient, theme *Service, now func() time.Time,
-) *MarketService {
+func NewMarketService(store *store.ThemeStore, client *MarketClient, theme *Service, now func() time.Time) *MarketService {
 	if now == nil {
 		now = time.Now
 	}
@@ -34,24 +32,28 @@ func (service *MarketService) ListSources(ctx context.Context) ([]model.ThemeMar
 	return service.store.ListMarketSources(ctx)
 }
 
-func (service *MarketService) CreateSource(
-	ctx context.Context, source *model.ThemeMarketSource,
-) (*model.ThemeMarketSource, error) {
-	source.ID = uuid.NewString()
-	source.CreatedAt = service.now()
-	source.UpdatedAt = service.now()
-	if err := validateMarketURLInput(source); err != nil {
+func (service *MarketService) CreateSource(ctx context.Context, input *model.ThemeMarketSource) (*model.ThemeMarketSource, error) {
+	if input == nil {
+		return nil, ErrMarketInvalid
+	}
+	source := *input
+	if err := service.validateSource(&source); err != nil {
 		return nil, err
 	}
-	if err := service.store.CreateMarketSource(ctx, source); err != nil {
+	source.ID, source.CreatedAt, source.UpdatedAt = uuid.NewString(), service.now(), service.now()
+	clearMarketCache(&source)
+	if err := service.store.CreateMarketSource(ctx, &source); err != nil {
 		return nil, err
 	}
-	return source, nil
+	return &source, nil
 }
 
-func (service *MarketService) UpdateSource(
-	ctx context.Context, id string, input model.ThemeMarketSource,
-) (*model.ThemeMarketSource, error) {
+func (service *MarketService) UpdateSource(ctx context.Context, id string, input model.ThemeMarketSource) (*model.ThemeMarketSource, error) {
+	release, err := service.sourceGate.enter(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 	existing, err := service.store.GetMarketSource(ctx, id)
 	if err != nil {
 		return nil, err
@@ -59,152 +61,87 @@ func (service *MarketService) UpdateSource(
 	if existing == nil {
 		return nil, store.ErrThemeMarketNotFound
 	}
-	if input.CatalogURL != "" && input.CatalogURL != existing.CatalogURL {
-		if err := validateMarketURLInput(&input); err != nil {
-			return nil, err
-		}
-		existing.CatalogURL = input.CatalogURL
-		existing.CacheETag = ""
-		existing.CacheLastModified = ""
-	}
-	if input.Name != "" {
-		existing.Name = input.Name
-	}
-	if input.PublicKey != "" && input.PublicKey != existing.PublicKey {
-		existing.PublicKey = input.PublicKey
-		existing.KeyFingerprint = input.KeyFingerprint
-		existing.CacheETag = ""
-		existing.CacheLastModified = ""
-	}
-	existing.Enabled = input.Enabled
-	existing.SortOrder = input.SortOrder
-	existing.UpdatedAt = service.now()
-	if err := service.store.UpdateMarketSource(ctx, existing); err != nil {
+	next := mergeMarketSource(*existing, input)
+	if err := service.validateSource(&next); err != nil {
 		return nil, err
 	}
-	return existing, nil
+	if err := service.client.invalidateSource(ctx, id); err != nil {
+		return nil, err
+	}
+	if existing.PublicKey != next.PublicKey || existing.CatalogURL != next.CatalogURL || existing.Enabled != next.Enabled {
+		clearMarketCache(&next)
+	}
+	next.UpdatedAt = service.now()
+	if err := service.store.UpdateMarketSource(ctx, &next); err != nil {
+		return nil, err
+	}
+	return &next, nil
 }
 
 func (service *MarketService) DeleteSource(ctx context.Context, id string) error {
+	release, err := service.sourceGate.enter(ctx)
+	if err != nil {
+		return err
+	}
+	defer release()
+	if err := service.client.invalidateSource(ctx, id); err != nil {
+		return err
+	}
 	return service.store.DeleteMarketSource(ctx, id)
 }
 
-// RefreshCatalog 拉取并缓存已签名目录（有界缓存）。
-func (service *MarketService) RefreshCatalog(ctx context.Context, sourceID string) (*model.ThemeCatalog, error) {
-	source, err := service.store.GetMarketSource(ctx, sourceID)
+// RefreshCatalog 强制联系源；304 与有界回退均返回完整已验签目录。
+func (service *MarketService) RefreshCatalog(ctx context.Context, sourceID string) (*CatalogResult, error) {
+	source, err := service.enabledSource(ctx, sourceID)
 	if err != nil {
 		return nil, err
 	}
-	if source == nil {
-		return nil, store.ErrThemeMarketNotFound
-	}
-	if !source.Enabled {
-		return nil, ErrMarketUnavailable
-	}
-	now := service.now()
-	if source.ExpiresAt != nil && now.Before(*source.ExpiresAt) && source.CatalogDigest != "" {
-		return nil, nil // 缓存有效
-	}
-	catalog, digest, err := service.client.FetchCatalog(ctx, source)
-	if err != nil {
-		source.LastStatus = "failed"
-		source.LastErrorCategory = errorCategory(err)
-		source.UpdatedAt = now
-		_ = service.store.UpdateMarketSource(ctx, source)
-		return nil, err
-	}
-	if catalog == nil {
-		return nil, nil // 304 未修改
-	}
-	source.CatalogDigest = digest
-	source.FetchedAt = &now
-	expiry := now.Add(15 * time.Minute)
-	source.ExpiresAt = &expiry
-	source.LastStatus = "ok"
-	source.LastErrorCategory = ""
-	source.UpdatedAt = now
-	if err := service.store.UpdateMarketSource(ctx, source); err != nil {
-		return nil, err
-	}
-	return catalog, nil
+	return service.catalog(ctx, source, true)
 }
 
-// InstallFromMarket 下载、校验摘要并按清单安装市场主题。
-func (service *MarketService) InstallFromMarket(
-	ctx context.Context, sourceID, themeID, actorID string,
-) (*model.ThemePackage, error) {
-	source, err := service.store.GetMarketSource(ctx, sourceID)
-	if err != nil {
-		return nil, err
+func mergeMarketSource(existing, input model.ThemeMarketSource) model.ThemeMarketSource {
+	if input.Name != "" {
+		existing.Name = input.Name
 	}
-	if source == nil {
-		return nil, store.ErrThemeMarketNotFound
+	if input.CatalogURL != "" {
+		existing.CatalogURL = input.CatalogURL
 	}
-	if !source.Enabled {
-		return nil, ErrMarketUnavailable
+	if input.PublicKey != "" {
+		existing.PublicKey = input.PublicKey
 	}
-	// 安装需要新鲜且经过完整校验的目录，不使用缓存。
-	catalog, digest, err := service.client.FetchCatalog(ctx, source)
-	if err != nil {
-		source.LastStatus = "failed"
-		source.LastErrorCategory = errorCategory(err)
-		source.UpdatedAt = service.now()
-		_ = service.store.UpdateMarketSource(ctx, source)
-		return nil, err
-	}
-	now := service.now()
-	source.CatalogDigest = digest
-	fetched := now
-	source.FetchedAt = &fetched
-	expiry := now.Add(15 * time.Minute)
-	source.ExpiresAt = &expiry
-	source.LastStatus = "ok"
-	source.LastErrorCategory = ""
-	source.UpdatedAt = now
-	if err := service.store.UpdateMarketSource(ctx, source); err != nil {
-		return nil, err
-	}
-	var entry *model.ThemeCatalogEntry
-	for index := range catalog.Themes {
-		if catalog.Themes[index].ThemeID == themeID {
-			entry = &catalog.Themes[index]
-			break
-		}
-	}
-	if entry == nil {
-		return nil, ErrMarketInvalid
-	}
-	raw, digest, err := service.client.DownloadPackage(ctx, entry.PackageURL)
-	if err != nil {
-		return nil, err
-	}
-	if digest != entry.PackageSHA256 {
-		return nil, ErrMarketInvalid
-	}
-	validated, err := ValidateArchive(raw)
-	if err != nil {
-		return nil, err
-	}
-	if validated.Manifest.ID != entry.ThemeID || validated.Manifest.Version != entry.Version {
-		return nil, ErrMarketInvalid
-	}
-	return service.theme.Install(ctx, raw, model.ThemeSourceMarket, sourceID, actorID)
+	existing.KeyFingerprint = input.KeyFingerprint
+	existing.Enabled, existing.SortOrder = input.Enabled, input.SortOrder
+	return existing
 }
 
-func validateMarketURLInput(source *model.ThemeMarketSource) error {
-	if source.Name == "" || source.CatalogURL == "" || source.PublicKey == "" {
-		return fmt.Errorf("theme: market source requires name, catalog url and public key")
+func (service *MarketService) validateSource(source *model.ThemeMarketSource) error {
+	source.Name, source.CatalogURL = strings.TrimSpace(source.Name), strings.TrimSpace(source.CatalogURL)
+	source.PublicKey = strings.TrimSpace(source.PublicKey)
+	identity, err := MarketIdentity(source.PublicKey)
+	if err != nil {
+		return err
 	}
+	if source.Name == "" || len(source.Name) > 200 || len(source.CatalogURL) > 2048 ||
+		source.KeyFingerprint != "" && source.KeyFingerprint != identity {
+		return ErrMarketInvalid
+	}
+	target, err := url.Parse(source.CatalogURL)
+	if err != nil {
+		return ErrMarketInvalid
+	}
+	if err := validateMarketURL(target, service.client.allowPrivate); err != nil {
+		return err
+	}
+	raw, err := base64.StdEncoding.Strict().DecodeString(source.PublicKey)
+	if err != nil {
+		return ErrMarketInvalid
+	}
+	source.PublicKey, source.KeyFingerprint = base64.StdEncoding.EncodeToString(raw), identity
 	return nil
 }
 
-func errorCategory(err error) string {
-	switch {
-	case errors.Is(err, ErrMarketInvalid):
-		return "invalid_catalog"
-	case errors.Is(err, ErrMarketUnavailable):
-		return "unavailable"
-	default:
-		return "unknown"
-	}
+func clearMarketCache(source *model.ThemeMarketSource) {
+	source.CacheETag, source.CacheLastModified, source.CatalogDigest = "", "", ""
+	source.FetchedAt, source.ExpiresAt = nil, nil
+	source.LastStatus, source.LastErrorCategory = "", ""
 }

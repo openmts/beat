@@ -1,6 +1,6 @@
 # Theme packages and market
 
-Updated: 2026-07-30
+Updated: 2026-09-14
 
 ## Goal and scope
 
@@ -72,30 +72,45 @@ Required manifest fields:
   non-manifest file.
 
 Optional fields include homepage URL, release notes, supported locales, and a
-managed settings schema. Versions use canonical semantic versioning. An
+`configuration` block declaring which display fields the site owner may adjust
+(see below). Versions use canonical semantic versioning. An
 installed `(theme_id, version)` is immutable; an archive with the same identity
 and different digest is rejected instead of silently replacing it.
 
 ### Declarative runtime
 
-Declarative packages contain typed JSON and passive assets only. Beat's trusted
-React application interprets them. They may configure:
+Declarative packages contain strict `theme.json` schema 1 and passive assets. The
+implemented configuration supports cards/table/tiles/list overviews, balanced/compact/
+spotlight details, comfortable/compact density, a 0–8 px radius, validated light/
+dark color tokens, an ordered `resources` subset (cpu/memory/disk), the content
+switches `show_network`/`show_host`/`show_tags`/`show_remark`, and an optional
+`font` token (`system`/`serif`/`mono`). Unknown fields,
+CSS selectors, arbitrary component names and scripts are rejected. Owner overrides
+are stored in the existing `configuration_json` field and accept only the keys the
+package declares, so content changes require a new package version.
+The [author guide](theme-author-guide.md) is the complete supported schema.
 
-- light and dark color tokens with contrast validation;
-- radius from 0 to 8 px, density, content width, and card column limits;
-- header mode and public section ordering;
-- group presentation and node-card field ordering;
-- node-detail inventory, resource, network, traffic, and quality section
-  ordering;
-- chart palette, line weight, and grid visibility;
-- bundled raster branding and WOFF2 fonts;
-- managed string, number, select, switch, and color settings with explicit
-  lengths, ranges, options, and defaults.
+#### Declared configuration (`configuration`)
 
-Token values are parsed into typed values; raw CSS, selectors, HTML, JavaScript,
-URLs in CSS, and arbitrary Tailwind classes are rejected. Component and metric
-names come from fixed allowlists. This mode gives the strongest accessibility,
-responsive-layout, and compatibility guarantees.
+A declarative package may declare `"configuration": {"type": "managed", "items": [...]}`
+so the owner sees the relevant controls instead of a fixed four-field form. Items
+are `{key, name?, options?}`, at most 12, without duplicates. Keys are limited to
+the enum/number/switch fields the renderer already implements: `overview`,
+`detail`, `density`, `font` (enums), `radius` (0–8) and
+`show_network`/`show_host`/`show_tags`/`show_remark` (switches). `options` may only
+narrow the legal values of an enum key. Field type and legal values are derived from
+the key, so authors cannot declare a type, and array fields such as `resources` are
+not configurable.
+
+The stored configuration stays an overlay: keys the site did not set fall back to
+the package's own `theme.json` values, and `{}` restores them. Manifests without
+`configuration` keep the historical four-field behavior, and client-side limits are
+optional hints only — the server re-validates every key and value on save.
+
+`raw` (author-supplied configuration HTML) and `redirect` (third-party configuration
+page) are deliberately not implemented: both would hand the owner session to the
+theme or to an arbitrary site. Configurable fields therefore remain a closed set that
+cannot change colors, structure, or code.
 
 ### Sandboxed runtime
 
@@ -105,13 +120,10 @@ rendered only inside a full-size iframe with `sandbox="allow-scripts"` and no
 `allow-same-origin`, forms, popups, downloads, top navigation, or storage
 authority.
 
-The sandbox has no direct API or network access. Its response CSP is:
-
-```text
-default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline';
-img-src 'self' data:; font-src 'self'; connect-src 'none'; frame-src 'none';
-worker-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'
-```
+The sandbox has no direct API or network access. Response-level sandbox and CSP
+restrict assets to the validated package's digest path, including when the entry
+HTML is opened directly. The implemented policy and protocol 2 messages are defined
+in [theme-sandbox-contract.md](theme-sandbox-contract.md).
 
 A trusted parent runtime sends only sanitized public site, group, node, metric,
 traffic, and quality snapshots through a versioned `postMessage` protocol. The
@@ -183,7 +195,7 @@ no-cache plus the sandbox CSP. Theme files cannot shadow `/api`, `/admin`,
 
 ## Persistence model
 
-Theme packages use canonical SQLite migration `v3` after OIDC `v2`, as assigned
+Theme packages use canonical SQLite migration `v6` after OIDC `v5`, as assigned
 by
 [`commercial-parity-implementation-sequence.md`](./commercial-parity-implementation-sequence.md).
 Metrics and theme runtime samples remain outside SQLite; operational metrics
@@ -243,45 +255,68 @@ The server continuously protects availability:
 
 - missing/corrupt content, manifest mismatch, iframe timeout, or repeated
   runtime protocol errors trigger the built-in theme for that request;
-- an activation is marked unhealthy after a bounded failure threshold;
-- owner-visible status and Prometheus counters identify fallback without
-  exposing filesystem details publicly;
+- request-local sandbox failures fall back without changing global activation;
+- stored unhealthy activations and packages with missing/corrupt files are excluded
+  from rollback candidates;
 - one action rolls back to the most recent healthy package or built-in theme.
 
-An active package cannot be deleted. Deletion requires deactivation, recent
-reauthentication, and confirmation. Metadata is first marked deleted and the
-content directory moved to a private quarantine; bounded cleanup removes it
-after rollback retention. Export streams the exact validated archive with a
-safe filename and private/no-store response headers.
+An active package cannot be deleted. Deletion checks current activation and the
+site pointer inside the same owner-authorized transaction, writes `deleted` and a
+resource audit, then moves files to private quarantine. Assets and export immediately
+reject `deleted` packages. Completed cleanup returns 204; committed deletion with
+pending cleanup returns 202 and `{package_id,state:"deleted",cleanup_pending:true}`.
+A repeat DELETE and startup reconciliation retry cleanup. Only owned staging and
+content directories are reconciled; unknown paths are preserved.
+
+Reinstalling the exact archive requires complete archive/manifest validation and
+restores the same package ID, configuration and provenance. It never activates the
+package. A different digest under the same theme ID and version remains a conflict.
+Install/restore failures remove the new owned content; interrupted writes are
+reconciled at startup. Export verifies the installed archive digest before returning
+it with private/no-store headers.
 
 ## Remote market security
 
-A market source is an HTTPS catalog plus an Ed25519 public key. Catalog schema
-version 1 contains source identity and a sorted theme list with theme ID, name,
-version, author, description, homepage, preview metadata, package URL, package
-SHA-256, manifest SHA-256, compatibility range, and release notes. The catalog
-signature covers canonical JSON bytes.
+A market source is an HTTPS catalog plus a Base64 Ed25519 public key. Its public
+`source_id` is `sha256:` followed by the lowercase SHA-256 of the raw 32-byte key;
+the local database UUID is only a locator. A key change is a new public identity.
+Catalog schema 1 requires a future `expires_at` no more than seven days away, at
+most 200 unique theme IDs, exact archive/manifest digests and valid compatibility
+ranges. Signatures cover the exact downloaded bytes, including whitespace.
 
-Catalog and package retrieval use a dedicated SSRF-resistant client that:
+The dedicated client ignores proxies, resolves every hop once, rejects any private
+or special-use address in the entire DNS answer, and dials only validated numeric
+IPs. `BEAT_THEME_MARKET_ALLOW_PRIVATE=true` at server startup turns that address
+policy off for self-hosted markets inside offline networks: literal private or
+loopback URLs then pass validation and DNS answers are no longer required to be
+public. It is an explicit operator opt-in, defaults to off, fails startup on a
+non-boolean value, and only relaxes address policy - HTTPS-only, single
+resolution, preserved Host/SNI, the three-redirect bound, and the 2 MiB/25 MiB
+size limits still apply. Every other security property in this section is
+unchanged. It preserves the original Host and TLS/SNI identity. At most three HTTPS
+redirects are allowed. Connections, TLS and headers have 10-second bounds; each
+request has a 30-second total bound. Catalogs are limited to 2 MiB and archives to
+25 MiB. The browser does not load remote catalog preview URLs.
 
-- permits HTTPS only, with no URL user information or fragments;
-- validates every DNS answer and every actual dial destination;
-- rejects loopback, private, link-local, multicast, unspecified, and other
-  non-global addresses, including after DNS rebinding;
-- permits at most three redirects, each revalidated and never downgrading TLS;
-- sets explicit connect, TLS, response-header, and total timeouts;
-- limits catalogs to 2 MiB, preview images to 4 MiB, and packages to 25 MiB;
-- closes bodies, honors cancellation, and returns generic failure categories.
+Up to 16 verified catalog bodies are retained in memory, keyed by local source ID,
+URL and public key identity. Conditional requests use validators only from a verified
+body. A 304 revalidates and returns that full body; database-only validators after
+restart cannot produce success. Cache lifetime is at most 15 minutes and never
+exceeds signed expiry. A network failure can return a still-valid last-known-good
+catalog with explicit `stale` and `error_category`; signature/schema failures clear
+the cache. Refresh always contacts the source, and URL/key/enabled changes invalidate
+cached data and observations.
 
-Beat verifies, in order: catalog signature, catalog schema/source identity,
-entry syntax, compatibility, downloaded package digest, package manifest
-digest, and manifest identity/version matching the selected catalog entry.
-Only then can the owner install the package.
+Installation binds the client's selected version and archive digest before download,
+then verifies the raw archive and raw `beat-theme.json` digests plus theme ID,
+version, runtime and compatibility range. The final install transaction rechecks
+source enabled state, URL, key, catalog digest and expiry, along with the live owner
+account, session and recent authentication. Source changes during download cannot
+commit a package. There is no unattended update or activation and no new C09 schema.
 
-There is no unattended update. Beat may report that a higher compatible version
-exists, but an owner must install it side by side, preview it, and explicitly
-activate it. Removing or changing a market key invalidates its cache and never
-rewrites already installed immutable packages.
+The [publisher guide](theme-market-publishing.md) documents `beat-theme market
+keygen`, `identity` and `publish`, which generate this format using the production
+validator. Signing keys are kept outside the public artifact directory.
 
 ## API and authorization
 
@@ -299,14 +334,22 @@ Owner-only theme routes; every mutation also requires recent reauthentication:
 - `PUT /api/v1/admin/themes/{id}/configuration`;
 - `POST /api/v1/admin/themes/{id}/activate`;
 - `POST /api/v1/admin/themes/rollback`;
+- `POST /api/v1/admin/themes/built-in`;
 - `DELETE /api/v1/admin/themes/{id}`.
 
 Owner-only market routes with recent reauthentication on mutations/install:
 
 - `GET/POST /api/v1/admin/theme-markets`;
 - `PUT/DELETE /api/v1/admin/theme-markets/{id}`;
-- `GET /api/v1/admin/theme-markets/catalog` with bounded refresh;
-- `POST /api/v1/admin/theme-markets/{source_id}/themes/{theme_id}/install`.
+- `GET /api/v1/admin/theme-markets/{id}/catalog` with forced, bounded refresh;
+- `POST /api/v1/admin/theme-markets/{source_id}/themes/{theme_id}/install`,
+  with required `{version,package_sha256}`. A changed selection/source returns 409
+  and requires refresh and explicit reselection; missing selection fields return 400.
+
+All HTTP mutations bind a real owner/session to a transaction-level authority check.
+Resource-specific audit insertion is atomic with package/configuration/activation or
+source changes; the existing HTTP access audit remains separate. Missing recent proof
+returns 428 for the same confirmed operation to retry after local reauthentication.
 
 Upload uses an exact binary body/content type and `http.MaxBytesReader` before
 temporary storage. APIs return provider/theme names and versions instead of
@@ -325,14 +368,14 @@ an operational library rather than a marketing gallery:
   tooltips;
 - upload and market-source dialogs using existing shadcn fields and recent-auth
   dialog patterns;
-- a side-by-side preview surface with desktop/mobile viewport controls;
-- explicit warnings for sandboxed code themes and unsigned local uploads;
+- a side-by-side preview surface with desktop/mobile viewport controls, whose
+  display-settings form renders exactly the fields the package declared
+  (enum selects, integer input, switches) and never undeclared keys;
+- distinct runtime labels, verified/stale catalog status and explicit cleanup retry;
 - names in selects and confirmation text, never raw package/source IDs.
 
-The built-in theme stays visible as a recovery choice. Long URLs, digests, and
-authors truncate with tooltips; text never overflows. Status uses icon plus text,
-keyboard focus is visible, reduced motion is respected, and mobile actions move
-into a menu. No theme package can restyle this administrator UI.
+The built-in theme stays visible as a recovery choice. Long URLs and public-key identities wrap within their source card; text never overflows. Status uses icon plus text,
+keyboard focus is visible, reduced motion is respected, and mobile actions wrap within the card. No theme package can restyle this administrator UI.
 
 ## Backup, restore, and operations
 
@@ -413,7 +456,7 @@ payloads.
 
 Implementation requires explicit approval for this complete batch:
 
-1. Canonical SQLite migration `v3` with theme package, activation,
+1. Canonical SQLite migration `v6` with theme package, activation,
    market-source, and active-site-theme persistence.
 2. A new writable `<data-dir>/themes` hierarchy and dedicated theme asset and
    sandbox runtime handlers.

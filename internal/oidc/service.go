@@ -74,7 +74,7 @@ type IdentityClaims struct {
 type Service struct {
 	store   *store.OIDCStore
 	users   *store.AdminStore
-	secrets *secretbox.Manager
+	secrets secretbox.ResourceService
 	auth    *adminauth.Service
 	client  *ProviderClient
 	now     func() time.Time
@@ -85,7 +85,7 @@ type Service struct {
 func NewService(
 	store *store.OIDCStore,
 	users *store.AdminStore,
-	secrets *secretbox.Manager,
+	secrets secretbox.ResourceService,
 	auth *adminauth.Service,
 	client *ProviderClient,
 	now func() time.Time,
@@ -173,22 +173,17 @@ func (service *Service) begin(
 	}
 
 	transactionID := uuid.NewString()
-	encryptedVerifier, err := service.secrets.EncryptEnvelope([]byte(verifier),
-		TransactionVerifierAAD(transactionID, provider.ID))
-	if err != nil {
-		return BeginResult{}, fmt.Errorf("encrypt pkce verifier: %w", err)
-	}
 	redirectURI := strings.TrimRight(schemeHost, "/") + "/api/v1/auth/oidc/callback"
 	now := service.now()
 	transaction := &model.OIDCTransaction{
 		ID: transactionID, StateHash: hashBytes([]byte(state)),
 		BrowserBindingHash: hashBytes([]byte(binding)), NonceHash: hashBytes([]byte(nonce)),
-		CodeVerifierEncrypted: encryptedVerifier, ProviderID: provider.ID,
+		ProviderID:                   provider.ID,
 		ProviderConfigurationVersion: provider.ConfigurationVersion, Purpose: purpose,
 		UserID: userID, RedirectURI: redirectURI, ReturnPath: returnPath,
 		CreatedAt: now, ExpiresAt: now.Add(transactionLifetime),
 	}
-	if err := service.store.CreateTransaction(ctx, transaction); err != nil {
+	if err := service.persistTransaction(ctx, transaction, verifier); err != nil {
 		return BeginResult{}, err
 	}
 
@@ -234,11 +229,12 @@ func (service *Service) HandleCallback(
 	if !provider.Enabled || provider.ConfigurationVersion != transaction.ProviderConfigurationVersion {
 		return "", "", ErrProviderDisabled
 	}
-	verifierBytesRaw, err := service.secrets.DecryptEnvelope(transaction.CodeVerifierEncrypted,
+	verifierBytesRaw, err := service.secrets.OpenResource(ctx, transaction.CodeVerifierEncrypted,
 		TransactionVerifierAAD(transaction.ID, provider.ID))
 	if err != nil {
 		return "", "", fmt.Errorf("decrypt pkce verifier: %w", err)
 	}
+	defer clear(verifierBytesRaw)
 	clientSecret, err := service.providerSecret(provider)
 	if err != nil {
 		return "", "", err
@@ -276,22 +272,15 @@ func (service *Service) completeLogin(
 	if err != nil || identity == nil {
 		return "", "", ErrIdentityNotLinked
 	}
-	user, err := service.authUser(ctx, identity.UserID)
-	if err != nil {
-		return "", "", err
-	}
-	if err := service.store.TouchIdentityLogin(ctx, identity.ID, service.now()); err != nil {
-		return "", "", err
-	}
-	result, err := service.auth.CreateOIDCSession(ctx, user.ID, identity.ID, ipAddress, userAgent)
-	if err != nil {
-		return "", "", err
-	}
-	_ = service.auth.RecordAudit(ctx, adminauth.AuditInput{
-		RequestID: "", Principal: &result.Principal, Action: "auth.oidc.login",
-		ResourceType: "provider", ResourceID: provider.ID, Outcome: model.AuditOutcomeSuccess,
-		IPAddress: ipAddress, UserAgent: userAgent,
+	result, err := service.auth.CreateOIDCSession(ctx, adminauth.OIDCSessionRequest{
+		Provider: *provider, Identity: *identity, IPAddress: ipAddress, UserAgent: userAgent,
 	})
+	if errors.Is(err, adminauth.ErrInvalidCredentials) {
+		return "", "", ErrIdentityNotLinked
+	}
+	if err != nil {
+		return "", "", err
+	}
 	return transaction.ReturnPath, result.Token, nil
 }
 
@@ -421,13 +410,7 @@ func (service *Service) CreateProvider(
 		Scopes: input.Scopes, Enabled: input.Enabled, ConfigurationVersion: 1,
 		SortOrder: input.SortOrder, CreatedAt: now, UpdatedAt: now,
 	}
-	secret, err := service.secrets.EncryptEnvelope([]byte(input.ClientSecret),
-		ProviderSecretAAD(provider.ID, 1))
-	if err != nil {
-		return nil, fmt.Errorf("encrypt provider secret: %w", err)
-	}
-	provider.ClientSecretEncrypted = secret
-	if err := service.store.CreateProvider(ctx, provider); err != nil {
+	if err := service.persistNewProvider(ctx, provider, input.ClientSecret); err != nil {
 		return nil, err
 	}
 	_ = service.auth.RecordAudit(ctx, adminauth.AuditInput{
@@ -467,15 +450,7 @@ func (service *Service) UpdateProvider(
 	provider.SortOrder = input.SortOrder
 	provider.ConfigurationVersion = version
 	provider.UpdatedAt = service.now()
-	if secretChanged {
-		encrypted, err := service.secrets.EncryptEnvelope([]byte(input.ClientSecret),
-			ProviderSecretAAD(provider.ID, version))
-		if err != nil {
-			return nil, fmt.Errorf("encrypt provider secret: %w", err)
-		}
-		provider.ClientSecretEncrypted = encrypted
-	}
-	if err := service.store.UpdateProvider(ctx, provider); err != nil {
+	if err := service.persistUpdatedProvider(ctx, provider, input.ClientSecret); err != nil {
 		return nil, err
 	}
 	action := "auth.oidc.provider.update"
@@ -536,29 +511,23 @@ func (service *Service) providerSecret(provider *model.OIDCProvider) (string, er
 	if len(provider.ClientSecretEncrypted) == 0 {
 		return "", nil
 	}
-	plaintext, err := service.secrets.DecryptEnvelope(provider.ClientSecretEncrypted,
+	plaintext, err := service.secrets.OpenResource(context.Background(), provider.ClientSecretEncrypted,
 		ProviderSecretAAD(provider.ID, provider.ConfigurationVersion))
 	if err != nil {
 		return "", fmt.Errorf("decrypt provider secret: %w", err)
 	}
+	defer clear(plaintext)
 	return string(plaintext), nil
 }
 
 // ProviderSecretAAD 返回提供方客户端密钥的资源绑定 AAD；备份校验复用同一构造。
 func ProviderSecretAAD(providerID string, configurationVersion int) secretbox.ResourceAAD {
-	return secretbox.ResourceAAD{
-		Domain: "beat", Namespace: "oidc_provider", RowID: providerID,
-		Field: "client_secret", Revision: fmt.Sprintf("%d", configurationVersion),
-		PayloadVersion: "v1",
-	}
+	return secretbox.OIDCProviderAAD(providerID, configurationVersion)
 }
 
 // TransactionVerifierAAD 返回 PKCE 验证器的资源绑定 AAD；备份校验复用同一构造。
 func TransactionVerifierAAD(transactionID, providerID string) secretbox.ResourceAAD {
-	return secretbox.ResourceAAD{
-		Domain: "beat", Namespace: "oidc_transaction", RowID: transactionID,
-		Field: "pkce_verifier", Revision: providerID, PayloadVersion: "v1",
-	}
+	return secretbox.OIDCTransactionAAD(transactionID, providerID)
 }
 
 func (service *Service) authUser(ctx context.Context, userID string) (*model.AdminUser, error) {

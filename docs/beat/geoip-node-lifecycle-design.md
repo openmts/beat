@@ -1,6 +1,6 @@
 # GeoIP and node lifecycle
 
-Status: Reviewed design; implementation requires explicit approval
+Status: Reviewed design; owner approved implementation on 2026-10-15 (blanket approval of all pending items); the `v13` batch is implemented in the current worktree
 
 ## Goal
 
@@ -42,8 +42,8 @@ Relevant current boundaries:
 - `internal/store/node.go` and `node_heartbeat.go`;
 - `internal/api/handler/node.go` and `node_response.go`;
 - `internal/api/handler/node_update.go`;
-- `frontend/src/components/admin-node-card.tsx`;
-- `frontend/src/types/index.ts`.
+- `webui/src/components/admin-node-card.tsx`;
+- `webui/src/types/index.ts`.
 
 ## Competitor audit
 
@@ -362,8 +362,8 @@ with `not routed` status.
 
 ## Persistence and migration
 
-This batch uses canonical SQLite migration `v7` and introduces backup archive
-format `v3`, after notification delivery `v6` and theme backup format `v2`.
+This batch uses canonical SQLite migration `v13` and introduces backup archive
+format `v4`, after notification delivery `v10` and theme backup format `v2`.
 The assignments are maintained in
 [`commercial-parity-implementation-sequence.md`](./commercial-parity-implementation-sequence.md).
 
@@ -418,9 +418,9 @@ Migration backfills no inferred country, price, or expiry. Existing nodes start
 with `observed` location mode but are scheduled only when GeoIP is enabled; all
 lifecycle fields remain untracked. No Agent metric is copied into SQLite.
 
-## Backup format v3 and recovery
+## Backup format v4 and recovery
 
-Backup format v3 retains format v2 payloads and may add:
+Backup format v4 retains format v3 payloads and may add:
 
 - `geoip/country.mmdb` for the managed live local database;
 - `geoip/country.mmdb.previous` when rollback retention is enabled;
@@ -428,7 +428,7 @@ Backup format v3 retains format v2 payloads and may add:
 
 External read-only MMDB paths are not copied; the manifest records the required
 mount path and readiness remains degraded until it is restored. Provider tokens
-and encrypted location sources remain inside SQLite, use the `v5` wrapped-key
+and encrypted location sources remain inside SQLite, use the `v9` wrapped-key
 registry, and are authenticated against the backed-up root key during archive
 validation.
 
@@ -439,7 +439,7 @@ Expired GeoIP leases reset to due; manual locations are untouched. Lifecycle
 scheduler state is reconciled by deterministic date/event keys, so restore may
 re-evaluate a stage but cannot create a duplicate SQLite event or outbox row.
 
-Migration v7 and backup v3 are forward-only. Rollback requires the pre-migration
+Migration v13 and backup v4 are forward-only. Rollback requires the pre-migration
 backup and previous binary.
 
 ## API and authorization
@@ -556,7 +556,7 @@ Implementation is not accepted until all of the following pass:
 8. public/private API and frontend tests proving location/price/expiry redaction,
    readable select labels, 3/7/30/expired filters, sorting, background refresh,
    mobile layout, keyboard use, and accessibility;
-9. migration v7 and backup v3 create/upload/restore/rollback tests, SQLite
+9. migration v13 and backup v4 create/upload/restore/rollback tests, SQLite
    integrity, MMDB payload validation, external mount readiness, and MTS
    isolation;
 10. Go statement and frontend line coverage at or above 90%, `go test -race`,

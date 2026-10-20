@@ -41,7 +41,7 @@ login; it does not introduce a second session implementation.
    use envelope format 1 and resource-bound AAD from
    [`application-secret-lifecycle-design.md`](./application-secret-lifecycle-design.md).
    This migration extends the existing AES-GCM `secretbox` without creating an
-   OIDC-only cipher; `v8` later converts retained envelopes to wrapped data keys.
+   OIDC-only cipher; `v9` converts retained envelopes to wrapped data keys.
    Raw state, browser-binding tokens, and nonces are never stored.
 9. Discovery, JWKS, and token calls use bounded, SSRF-resistant HTTP clients;
    the application never uses `http.DefaultClient` for provider traffic.

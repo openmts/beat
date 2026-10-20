@@ -73,7 +73,7 @@ func TestArchiveMetadataAndPublishErrors(t *testing.T) {
 		t.Fatalf("close in-memory ZIP: %v", err)
 	}
 	if backupFilename(time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC), "12345678-rest") !=
-		"beat-backup-v1-20260102T030405Z-12345678.zip" {
+		"beat-backup-v4-20260102T030405Z-12345678.zip" {
 		t.Fatal("backup filename format is incorrect")
 	}
 	if !errors.Is(errorsJoin(context.Canceled, nil), context.Canceled) {

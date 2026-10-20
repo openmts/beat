@@ -2,7 +2,7 @@
 
 Updated: 2026-07-30
 
-Status: reviewed design; implementation requires explicit approval
+Status: reviewed design; owner approved implementation on 2026-10-15 (blanket approval of all pending items)
 
 ## Goal and product boundary
 
@@ -245,13 +245,13 @@ a lost completion. An explicit retry creates a new attempt and job-run ID.
 
 ## Storage boundary
 
-Advanced diagnostics use canonical SQLite migration `v14` after secure
-enrollment `v4`, remote operations `v5`, metric catalog `v8`, and Agent rollout
-`v10`. Diagnostic measurements extend the catalog-governed backup format `v4`
+Advanced diagnostics use canonical SQLite migration `v19` after secure
+enrollment `v7`, remote operations `v11`, metric catalog `v8`, and Agent rollout
+`v15`. Diagnostic measurements extend the catalog-governed backup format `v4`
 without creating a new archive envelope. The assignment is maintained in
 [`commercial-parity-implementation-sequence.md`](./commercial-parity-implementation-sequence.md).
 Encrypted diagnostic metadata registers its AAD, size, rotation enumerator, and
-backup validator with the deployed `v5`
+backup validator with the deployed `v9`
 [`application-secret-lifecycle-design.md`](./application-secret-lifecycle-design.md)
 and does not add another key or envelope.
 
@@ -387,10 +387,71 @@ samples, MTS restart/backup/restore survival, at least 90 percent coverage, race
 tests, `goimports-reviser`, `golangci-lint`, production build, browser tests,
 resource/load tests, and deployed administrator/public authorization checks.
 
+## Implementation status, 2026-10-15
+
+The server control plane is implemented: SQLite migration `v19`, the
+`internal/model/diagnostic*.go` contract, the `internal/diagnostics` service
+(policy, approved targets with DNS pinning and forbidden-range denial, durable
+jobs with transactional daily-byte reservations, at-most-once leases, ordered
+progress that reaches MTS before its cursor, budget settlement,
+cancel/retry/reconcile, encrypted hop identities, MTS result reads), the
+MTS-only writer and reader in `internal/store/mts_diagnostic.go`, the
+`diagnostic_*` metric-catalog entries with their fixed tag sets, the
+`diagnostic_hop` rotation source in `internal/applicationsecrets`, and the
+owner/admin plus per-node Agent HTTP surface registered by
+`internal/api/routes_diagnostics.go`.
+
+Two implementation decisions refine the text above and are recorded here for
+review:
+
+1. Agent protocol endpoints live under `/api/v1/agent-diagnostics/*` instead of
+   being merged into the deployed `/api/v1/agent-operations/*` routes. The
+   semantics are identical (per-node credential, nonce, at-most-once start,
+   sequence acknowledgement, cancellation, policy intersection), but a
+   separate surface keeps the reviewed operations tables, dispatch query and
+   spool untouched. Merging them would have required the operations lease query
+   to union diagnostics state and would have changed the signature of an
+   already-reviewed subsystem.
+The Agent runtime and the admin workspace are implemented in the same working
+tree: `internal/diagnosticprotocol` is the shared wire and destination policy,
+`internal/agentdiagnostics` advertises capability, leases one job at a time,
+journals before acknowledging start, streams bounded sample batches, cancels on
+heartbeat and leaves unprovable leftovers for a startup `unknown` verdict, and
+`/admin/network` carries the advanced-diagnostics tab (filters, create dialog,
+job table, detail sheet with masked hops) beside the reviewed quality tasks.
+
+2. A DNS target is approved only when the server resolves it during approval.
+   Resolution uses the standard resolver with a five-second bound and no
+   separate configuration surface, and every resolved address must fall inside
+   the target allowlist. Managed-node endpoints expressed as approved address
+   targets are supported; a node-advertised endpoint resource is not.
+
+The Agent runtime is implemented as well. `internal/diagnosticprotocol` is now
+the shared wire contract (capability document with canonical bytes and digest,
+lease/payload, samples, progress and completion frames), and it also owns the
+destination policy so server approval and the Agent allowlist cannot drift.
+`internal/agentdiagnostics` provides the local configuration with hard maxima,
+an address/CIDR allowlist that never resolves DNS, 0700/0600 private state,
+per-attempt journals, a fixed-argument `mtr`/`iperf3` executor that clears the
+environment and kills the whole process group on cancel, the per-node HTTP
+client, and a runner that advertises capability, leases one job at a time,
+journals before acknowledging start, streams bounded batches, cancels on
+heartbeat, reports the terminal state, and reclassifies leftovers as `unknown`
+on startup. `internal/agent/config.go` accepts an optional `diagnostics`
+section, `cmd/agent` runs it beside the existing components, and the admin
+node-setup page documents every field with a drift test.
+
+The `/admin/network` diagnostics workspace remains pending, together with the
+consolidated coverage, race and deployment evidence listed under test gates.
+
 ## Approval boundary
 
-This design authorizes no implementation. It is canonical SQLite migration
-`v14` and adds high-impact network traffic,
+The complete design was approved and implemented in the working tree on
+2026-10-15 (blanket approval of the pending commercial-parity batch). The
+original boundary text is kept for traceability.
+
+This design authorizes no implementation by itself. It is canonical SQLite migration
+`v19` and adds high-impact network traffic,
 Agent capabilities, external binary dependencies, SQLite application tables,
 MTS measurements, administrator APIs, and deployment requirements. It depends
 on the approved remote-operations, metric-catalog, signed-rollout, and secure-

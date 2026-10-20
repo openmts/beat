@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "id": "beat-canvas",
+  "name": "Canvas",
+  "description": "Spacious public tiles with a spotlight resource overview.",
+  "version": "1.0.0",
+  "author": "Beat contributors",
+  "license": "MIT",
+  "runtime": "declarative",
+  "minimum_beat_version": "0.1.0",
+  "preview": "preview.png",
+  "supported_locales": [
+    "en",
+    "zh-CN"
+  ]
+}

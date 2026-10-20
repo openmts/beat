@@ -4,12 +4,9 @@ After=network-online.target
 Wants=network-online.target
 
 [Service]
-Type=simple
-DynamicUser=yes
-StateDirectory=beat
-StateDirectoryMode=0700
-ConfigurationDirectory=beat
-ConfigurationDirectoryMode=0700
+Type=exec
+User=beat
+Group=beat
 EnvironmentFile=/etc/beat/beat.env
 ExecStart=/opt/beat/current/beat-server -db-path /var/lib/beat/beat.db -mts-path /var/lib/beat/beat_mts -static-dir /opt/beat/current/static -listen-addr :8080
 Restart=on-failure
@@ -19,6 +16,9 @@ NoNewPrivileges=yes
 PrivateTmp=yes
 PrivateDevices=yes
 ProtectSystem=strict
+ReadOnlyPaths=/opt/beat
+ReadWritePaths=/var/lib/beat
+ReadWritePaths=/var/lib/.beat-lifecycle-729cd0f7e88680c81c72252f3c1df5c4f2c3f1306e3bb7320c3a530273c4a160.lock
 ProtectHome=yes
 ProtectKernelTunables=yes
 ProtectKernelModules=yes

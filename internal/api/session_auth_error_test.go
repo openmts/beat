@@ -11,8 +11,8 @@ import (
 	"github.com/beat/backend/internal/adminauth"
 	"github.com/beat/backend/internal/api/handler"
 	"github.com/beat/backend/internal/model"
-	"github.com/beat/backend/internal/secretbox"
 	"github.com/beat/backend/internal/store"
+	"github.com/beat/backend/internal/testutil"
 )
 
 func TestSessionAuthenticationStoreFailures(t *testing.T) {
@@ -84,10 +84,7 @@ func closedRouterSecurity(t *testing.T) *adminauth.Service {
 		t.Fatalf("new router store: %v", err)
 	}
 	random := bytes.NewReader(bytes.Repeat([]byte{6}, 4096))
-	secrets, err := secretbox.New(filepath.Join(t.TempDir(), "admin-data.key"), random)
-	if err != nil {
-		t.Fatalf("new router secrets: %v", err)
-	}
+	secrets := testutil.NewSecrets(t, sqliteStore.DB)
 	security, err := adminauth.NewService(adminauth.ServiceConfig{
 		Store: store.NewAdminStore(sqliteStore.DB), Secrets: secrets, Random: random, Now: time.Now,
 		Passwords: adminauth.NewPasswordHasher(adminauth.PasswordParams{
@@ -102,4 +99,17 @@ func closedRouterSecurity(t *testing.T) *adminauth.Service {
 		t.Fatalf("close router store: %v", err)
 	}
 	return security
+}
+
+func TestCookiePrincipalStoreFailureIsServiceUnavailable(t *testing.T) {
+	router := &Router{security: closedRouterSecurity(t), adminToken: "token"}
+	request := httptest.NewRequest(http.MethodGet, "http://example.com/", nil)
+	request.AddCookie(&http.Cookie{Name: handler.AdminSessionCookieName, Value: "token"})
+	response := httptest.NewRecorder()
+	if _, ok := router.cookiePrincipal(response, request); ok {
+		t.Fatal("closed store authenticated a session")
+	}
+	if response.Code != http.StatusServiceUnavailable {
+		t.Fatalf("closed store status = %d, want %d", response.Code, http.StatusServiceUnavailable)
+	}
 }

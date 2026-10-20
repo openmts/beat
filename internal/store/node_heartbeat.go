@@ -33,6 +33,9 @@ func (s *NodeStore) UpsertNodeWithSystem(ctx context.Context, heartbeat NodeHear
 		if err != nil {
 			return nil, err
 		}
+		if err := guardAlertScopeMutation(ctx, tx); err != nil {
+			return nil, err
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		return nil, fmt.Errorf("commit node heartbeat: %w", err)
@@ -157,7 +160,8 @@ func (s *NodeStore) getNodeByName(ctx context.Context, name string) (*model.Node
 
 func getNodeByNameFrom(ctx context.Context, db heartbeatExecutor, name string) (*model.Node, error) {
 	node, err := scanNode(db.QueryRowContext(ctx,
-		"SELECT "+nodeSelectColumns+" FROM nodes WHERE name = ?", name,
+		"SELECT "+nodeSelectColumns+" FROM nodes WHERE "+hiddenNodeFilter+
+			" AND name = ? AND lifecycle_state = 'active'", name,
 	))
 	if err != nil {
 		if err == sql.ErrNoRows {

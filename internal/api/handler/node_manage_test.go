@@ -135,7 +135,7 @@ func TestManagedNodeHandlerMetricErrors(t *testing.T) {
 	revoke := managedNodeRequestForTest(
 		handler.HandleRevokeAgentToken, http.MethodPost, "/", "", node.ID,
 	)
-	if revoke.Code != http.StatusInternalServerError {
+	if revoke.Code != http.StatusOK {
 		t.Fatalf("revoke metric error status = %d", revoke.Code)
 	}
 }
@@ -191,14 +191,13 @@ func TestManagedNodeValidationHelpers(t *testing.T) {
 	}
 }
 
-func TestWriteNodeCredentialHandlesInvalidTrafficPolicy(t *testing.T) {
+func TestWriteNodeCredentialDoesNotReadTrafficPolicy(t *testing.T) {
 	handler := NewNodeHandler(nil, nil)
 	response := httptest.NewRecorder()
-	request := httptest.NewRequest(http.MethodPost, "/", nil)
-	handler.writeNodeCredential(response, request, http.StatusCreated, model.Node{
+	handler.writeNodeCredential(response, credentialOutput{http.StatusCreated, model.Node{
 		TrafficLimitType: "invalid", TrafficResetDay: 1,
-	}, "token", managedNodeRequest{ServerURL: "https://beat.example"})
-	if response.Code != http.StatusInternalServerError {
+	}, "token", managedNodeRequest{ServerURL: "https://beat.example"}})
+	if response.Code != http.StatusCreated {
 		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
 	}
 }
@@ -214,6 +213,9 @@ func managedNodeRequestForTest(
 		path = "/"
 	}
 	request := httptest.NewRequest(method, path, strings.NewReader(body))
+	if body != "" {
+		request.Header.Set("Content-Type", "application/json")
+	}
 	if nodeID != "" {
 		request.SetPathValue("id", nodeID)
 	}

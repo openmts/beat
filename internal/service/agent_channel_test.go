@@ -43,7 +43,7 @@ func TestAgentChannelServiceEnqueueAndComplete(t *testing.T) {
 		t.Fatalf("pending = %#v, want task %s", pending, task.ID)
 	}
 
-	if err := svc.CompleteAgentTask(ctx, task.ID, model.AgentTaskStatusDone, ""); err != nil {
+	if err := svc.CompleteAgentTask(ctx, model.AgentTaskResult{TaskID: task.ID, Success: true}); err != nil {
 		t.Fatalf("complete: %v", err)
 	}
 	pending, err = svc.RegisterAgent(ctx, nodeID)
@@ -63,7 +63,7 @@ func TestAgentChannelServiceCompleteFailed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("enqueue: %v", err)
 	}
-	if err := svc.CompleteAgentTask(ctx, task.ID, model.AgentTaskStatusFailed, "boom"); err != nil {
+	if err := svc.CompleteAgentTask(ctx, model.AgentTaskResult{TaskID: task.ID, Error: "boom"}); err != nil {
 		t.Fatalf("complete failed: %v", err)
 	}
 	pending, err := svc.RegisterAgent(ctx, nodeID)

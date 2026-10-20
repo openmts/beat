@@ -8,14 +8,18 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/beat/backend/internal/model"
+	"github.com/beat/backend/internal/notificationqueue"
+	"github.com/beat/backend/internal/store"
 )
 
-func (a *Alerter) triggerAlert(
-	ctx context.Context,
-	rule *model.AlertRule,
-	node *model.Node,
-	value float64,
-) error {
+type alertEvaluation struct {
+	rule  *model.AlertRule
+	node  *model.Node
+	value float64
+}
+
+func (a *Alerter) triggerAlert(ctx context.Context, evaluation alertEvaluation) error {
+	rule, node, value := evaluation.rule, evaluation.node, evaluation.value
 	activeEvent, err := a.alertEventStore.GetActiveEvent(ctx, rule.ID, node.ID)
 	if err != nil {
 		return fmt.Errorf("get active event: %w", err)
@@ -30,22 +34,22 @@ func (a *Alerter) triggerAlert(
 		RuleName: rule.Name, NodeName: node.Name, Metric: rule.Metric,
 		Severity: rule.Severity,
 	}
-	if err := a.alertEventStore.CreateEvent(ctx, event); err != nil {
-		return fmt.Errorf("create event: %w", err)
+	if a.notifications == nil {
+		return notificationqueue.ErrQueueUnavailable
 	}
-	if err := a.pushToChannels(ctx, event); err != nil {
-		return fmt.Errorf("push to channels: %w", err)
+	receipt, err := a.notifications.Trigger(ctx, event)
+	if err != nil {
+		return fmt.Errorf("queue alert event: %w", err)
+	}
+	if receipt.Skipped || receipt.Duplicate {
+		return nil
 	}
 	slog.InfoContext(ctx, "alert triggered", "rule_id", rule.ID, "node_id", node.ID, "value", value)
 	return nil
 }
 
-func (a *Alerter) resolveAlert(
-	ctx context.Context,
-	rule *model.AlertRule,
-	node *model.Node,
-	value float64,
-) error {
+func (a *Alerter) resolveAlert(ctx context.Context, evaluation alertEvaluation) error {
+	rule, node, value := evaluation.rule, evaluation.node, evaluation.value
 	activeEvent, err := a.alertEventStore.GetActiveEvent(ctx, rule.ID, node.ID)
 	if err != nil {
 		return fmt.Errorf("get active event: %w", err)
@@ -58,36 +62,27 @@ func (a *Alerter) resolveAlert(
 	if activeEvent.Status == model.AlertStatusAcknowledged {
 		return nil
 	}
-	now := a.now()
-	activeEvent.Status = model.AlertStatusResolved
-	activeEvent.ResolvedAt = &now
-	if err := a.alertEventStore.UpdateEvent(ctx, activeEvent); err != nil {
-		return fmt.Errorf("update event: %w", err)
+	if a.notifications == nil {
+		return notificationqueue.ErrQueueUnavailable
 	}
+	now := a.now()
 	recovery := *activeEvent
+	recovery.Status = model.AlertStatusResolved
+	recovery.ResolvedAt = &now
 	recovery.Message = formatRecoveryMessage(rule, node, value)
 	recovery.Value = value
 	recovery.RuleName = rule.Name
 	recovery.NodeName = node.Name
 	recovery.Metric = rule.Metric
 	recovery.Severity = rule.Severity
-	if err := a.pushToChannels(ctx, &recovery); err != nil {
-		return fmt.Errorf("push recovery to channels: %w", err)
+	change := store.AlertEventTransition{Event: recovery, Previous: activeEvent.Status}
+	receipt, err := a.notifications.Transition(ctx, change)
+	if err != nil {
+		return fmt.Errorf("queue alert recovery: %w", err)
+	}
+	if receipt.Skipped || receipt.Duplicate {
+		return nil
 	}
 	slog.InfoContext(ctx, "alert resolved", "rule_id", rule.ID, "node_id", node.ID, "value", value)
-	return nil
-}
-
-func (a *Alerter) pushToChannels(ctx context.Context, event *model.AlertEvent) error {
-	channels, err := a.alertChannelStore.ListEnabledChannels(ctx)
-	if err != nil {
-		return fmt.Errorf("list enabled channels: %w", err)
-	}
-	for _, channel := range channels {
-		if _, err := a.delivery.Send(ctx, &channel, event); err != nil {
-			slog.ErrorContext(ctx, "alert notification failed", "channel_id", channel.ID,
-				"channel_type", channel.ChannelType, "error", err)
-		}
-	}
 	return nil
 }

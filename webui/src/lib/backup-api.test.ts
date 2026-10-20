@@ -15,8 +15,11 @@ describe("backup API", () => {
   afterEach(() => mock.restore())
 
   it("maps backup lifecycle requests and downloads a blob", async () => {
-    mock.onGet("/admin/backups").reply(200, [record])
-    expect(await listBackups()).toEqual([record])
+    // 服务端只按不透明游标分页：参数必须原样转发。
+    mock.onGet("/admin/backups").reply((config) => [200,
+      config.params?.cursor === "next" ? { items: [] } : { items: [record] }])
+    expect((await listBackups()).items).toEqual([record])
+    expect((await listBackups({ cursor: "next", limit: 2 })).items).toEqual([])
     mock.onPost("/admin/backups").reply(202, record)
     expect(await createBackup()).toEqual(record)
 

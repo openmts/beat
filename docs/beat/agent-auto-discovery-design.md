@@ -1,8 +1,14 @@
 # Agent auto-discovery and secure enrollment
 
-Updated: 2026-07-30
+Updated: 2026-10-15
 
-Status: reviewed design; implementation requires explicit approval
+Status: implemented; owner approved all pending items on 2026-10-15
+
+The narrower single-command automatic join workflow is implemented in
+[`agent-join-design.md`](./agent-join-design.md). The approval inbox and policy
+grant workflows described here are implemented on SQLite `v26`; the protocol,
+store, administrative API, Agent enrollment client and admin `Enrollment` view
+ship together.
 
 ## Goal
 
@@ -275,8 +281,7 @@ lifecycle controls.
 
 ## SQLite application data
 
-Secure enrollment uses canonical SQLite migration `v4` after OIDC `v2` and
-theme packages `v3`, as assigned by
+Secure enrollment uses canonical SQLite migration `v26`, allocated by
 [`commercial-parity-implementation-sequence.md`](./commercial-parity-implementation-sequence.md).
 
 `agent_enrollment_grants` contains:
@@ -331,6 +336,16 @@ only, same-origin independent, rate limited, and JSON-body bounded:
 - `POST /api/v1/agent-enrollment/requests/{id}/status`
 - `POST /api/v1/agent-enrollment/requests/{id}/claim`
 
+As implemented, the transport gate accepts a request only when
+`middleware.IsSecure` reports TLS (including the trusted-proxy `https` result)
+or when the request `Host` is a loopback address; that loopback exception is the
+"explicit local development" case. Every other plain-HTTP call is rejected with
+`enrollment requires https` before any grant or token is looked at, and each of
+the four routes always answers `Cache-Control: no-store`. The canonical origin
+bound into every signature comes from the configured
+`BEAT_PUBLIC_BASE_URL`; when that is unset the handler falls back to the
+request's effective scheme and host.
+
 Owner-only, recently reauthenticated grant routes:
 
 - `GET/POST /api/v1/admin/agent-enrollment/grants`
@@ -383,8 +398,10 @@ the field that needs correction without exposing secrets.
 Grant management shows name, mode, default group name, source scope, hostname
 constraint, occupied/maximum slots, expiry, and status. Creation and rotation
 use the existing one-time-secret dialog pattern; closing it clears plaintext
-from React state. Revoke requires recent reauthentication and a clear impact
-summary for pending and approved requests.
+from React state. The dialog also renders the ready-to-run `beat-agent enroll`
+command built from the current browser origin, so the operator copies one block
+instead of assembling flags. Revoke requires recent reauthentication and a
+clear impact summary for pending and approved requests.
 
 Desktop uses a dense queue with stable columns and a side sheet for review.
 Mobile converts each request to one flat card with actions in an overflow menu;
@@ -415,6 +432,24 @@ liveness failure. Alert recommendations cover sustained registration failures,
 queue age, capacity exhaustion, repeated bad signatures, cleanup failure, and
 claim recovery spikes. Optional discovery notifications use the existing
 delivery service and contain no credentials.
+
+### Implementation status, 2026-10-15
+
+The audit and metrics contract above is implemented in the working tree.
+`internal/store/agent_enrollment_audit.go` writes the redacted
+`agent.enrollment.*` actions atomically with the mutation, and
+`internal/observability/enrollment_metrics.go` exports
+`beat_agent_enrollment_{challenges,requests,polls,claims}_total{outcome}`,
+`beat_agent_enrollment_cleanup_total{result}`,
+`beat_agent_enrollment_request_resumes_total`,
+`beat_agent_enrollment_requests{status}`, `beat_agent_enrollment_grants{state}`,
+`beat_agent_enrollment_pending_age_seconds`,
+`beat_agent_enrollment_approval_seconds` and
+`beat_agent_enrollment_claim_seconds`. The aggregate snapshot comes from
+`AgentEnrollmentStore.EnrollmentStatistics` and keeps the last good values when a
+scrape fails. Readiness continues to cover the `agent_enrollment` cleanup worker
+through the worker supervisor. The exact label sets and recommended alerts are
+recorded in [the operations runbook](./operations-runbook.md).
 
 ## Backup, restore, deployment, and rollback
 
@@ -489,3 +524,31 @@ Approval must also confirm:
    Agent-reported connection target.
 4. Migration numbering relative to OIDC and theme packages.
 5. The one-way quota consumption rule and grant-revocation behavior.
+
+## Agent-side command
+
+Owners create or rotate a grant in **Enrollment → Enrollment grants**; the plaintext
+secret is shown once. On the monitored machine the whole handshake is one command:
+
+```bash
+sudo ./beat-agent enroll --server https://beat.example.com --grant-stdin
+# paste the grant secret when prompted, then press Ctrl-D
+```
+
+- The secret never appears in process arguments or shell history. `--grant-file`
+  accepts an alternative 0600 file; anything looser is rejected.
+- The Agent stores its Ed25519 key pair in `/etc/beat-agent/identity.json` (0600) and
+  keeps resumable progress in `/etc/beat-agent/discovery.json` (0600). Rerunning the
+  same command after a restart, a timeout, or a crash continues the same request
+  instead of registering a second node.
+- While waiting for approval the command reports progress and exits after `--wait`
+  (10 minutes by default). Approval happens in the server's **Pending approval** tab;
+  rerun the same command to claim the credential after approving.
+- On success the Agent writes `/etc/beat-agent/agent.json`, installs the systemd unit
+  and starts `beat-agent.service`. `--name`, `--host`, `--ssh-port` and `--allow-http`
+  mirror the one-shot join flags. Plain HTTP is rejected unless the server is
+  reached through a loopback address, so a remote deployment always needs TLS.
+- The grant dialog emits exactly this form, with the secret delivered through a
+  quoted heredoc, and adds `--allow-http` only when the address the operator is
+  already using is plain HTTP. Assembling or copying the command never writes the
+  secret to `localStorage`, the URL, or a log line.

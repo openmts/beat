@@ -87,7 +87,7 @@ func TestSSHKeyStoreClosedDatabase(t *testing.T) {
 	if _, err := store.ListSSHKeys(ctx); err == nil {
 		t.Fatal("expected list error")
 	}
-	if _, err := store.CreateSSHKey(ctx, "key", "ed25519", "public", "private", "fingerprint"); err == nil {
+	if _, err := store.CreateSSHKey(ctx, SSHKeyInput{Name: "key", KeyType: "ed25519", PublicKey: "public", PrivateKey: "private", Fingerprint: "fingerprint"}); err == nil {
 		t.Fatal("expected create error")
 	}
 	if err := store.DeleteSSHKey(ctx, "id"); err == nil {
@@ -182,7 +182,7 @@ func TestAdminStoreClosedDatabase(t *testing.T) {
 		func() error { return adminStore.CreateSession(ctx, &session) },
 		func() error { _, err := adminStore.GetSessionByTokenHash(ctx, session.TokenHash); return err },
 		func() error { _, err := adminStore.GetSessionByID(ctx, session.ID); return err },
-		func() error { _, err := adminStore.ListSessions(ctx, user.ID); return err },
+		func() error { _, err := adminStore.ListSessions(ctx, user.ID, model.NowUTC(), 10); return err },
 		func() error { return adminStore.TouchSession(ctx, session.ID, now, now) },
 		func() error { return adminStore.MarkSessionReauthenticated(ctx, session.ID, now) },
 		func() error { return adminStore.RevokeSession(ctx, session.ID, now) },
@@ -205,7 +205,7 @@ func TestBackupStoreClosedDatabase(t *testing.T) {
 		func() error { return backupStore.Create(ctx, &record) },
 		func() error { return backupStore.Update(ctx, &record) },
 		func() error { _, err := backupStore.Get(ctx, record.ID); return err },
-		func() error { _, err := backupStore.List(ctx); return err },
+		func() error { _, err := backupStore.ListBackupsPage(ctx, BackupQuery{}); return err },
 		func() error { return backupStore.Delete(ctx, record.ID) },
 	}
 	assertStoreCallsFail(t, calls)

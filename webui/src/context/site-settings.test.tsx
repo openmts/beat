@@ -15,7 +15,7 @@ const customSettings = {
   site_description: "Public infrastructure status",
   favicon_url: "/custom.svg",
   default_theme: "dark" as const,
-  show_ip_addresses: false,
+  public_address_mode: "masked" as const,
   updated_at: "2026-07-30T00:00:00Z",
 }
 

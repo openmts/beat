@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/beat/backend/internal/api/middleware"
 	"github.com/beat/backend/internal/model"
 	"github.com/beat/backend/internal/trafficreport"
 )
@@ -79,12 +80,13 @@ func (f *fakeTrafficReports) TestRun(
 
 func TestTrafficReportHandlerLifecycle(t *testing.T) {
 	service := &fakeTrafficReports{result: model.TrafficReportRunResult{
-		Delivery: model.TrafficReportDeliveryStatus{State: model.TrafficReportDeliverySuccess},
+		Delivery: model.TrafficReportDeliveryStatus{State: model.TrafficReportDeliveryQueued},
 	}}
 	handler := NewTrafficReportHandler(service)
 
 	createBody := `{"name":"Daily","cadence":"daily","timezone":"UTC","send_hour":8,"all_nodes":true,"all_channels":true,"enabled":true}`
-	request := httptest.NewRequest(http.MethodPost, "/", bytes.NewBufferString(createBody))
+	request := jsonRequest(http.MethodPost, "/", bytes.NewBufferString(createBody))
+	request.Header.Set("Content-Type", "application/json")
 	recorder := httptest.NewRecorder()
 	handler.HandleCreate(recorder, request)
 	if recorder.Code != http.StatusCreated {
@@ -101,8 +103,9 @@ func TestTrafficReportHandlerLifecycle(t *testing.T) {
 	request = httptest.NewRequest(http.MethodPost, "/created/test", nil)
 	request.SetPathValue("id", "created")
 	recorder = httptest.NewRecorder()
+	request = request.WithContext(middleware.WithAdminPrincipal(request.Context(), model.AdminPrincipal{User: model.AdminUser{ID: "admin"}, Session: model.AdminSession{ID: "session"}}))
 	handler.HandleTestRun(recorder, request)
-	if recorder.Code != http.StatusOK || !bytes.Contains(recorder.Body.Bytes(), []byte("success")) {
+	if recorder.Code != http.StatusAccepted || !bytes.Contains(recorder.Body.Bytes(), []byte("queued")) {
 		t.Fatalf("test status = %d, body = %s", recorder.Code, recorder.Body.String())
 	}
 
@@ -118,12 +121,13 @@ func TestTrafficReportHandlerLifecycle(t *testing.T) {
 func TestTrafficReportHandlerValidatesRequestsAndMissingSchedules(t *testing.T) {
 	handler := NewTrafficReportHandler(&fakeTrafficReports{})
 	recorder := httptest.NewRecorder()
-	handler.HandleCreate(recorder, httptest.NewRequest(http.MethodPost, "/", bytes.NewBufferString("{")))
+	handler.HandleCreate(recorder, jsonRequest(http.MethodPost, "/", bytes.NewBufferString("{")))
 	if recorder.Code != http.StatusBadRequest {
 		t.Fatalf("invalid JSON status = %d", recorder.Code)
 	}
 
-	request := httptest.NewRequest(http.MethodPut, "/missing", bytes.NewBufferString(`{"name":"Daily"}`))
+	request := jsonRequest(http.MethodPut, "/missing", bytes.NewBufferString(`{"name":"Daily"}`))
+	request.Header.Set("Content-Type", "application/json")
 	request.SetPathValue("id", "missing")
 	recorder = httptest.NewRecorder()
 	handler.HandleUpdate(recorder, request)
@@ -134,6 +138,7 @@ func TestTrafficReportHandlerValidatesRequestsAndMissingSchedules(t *testing.T) 
 	request = httptest.NewRequest(http.MethodPost, "/missing/test", nil)
 	request.SetPathValue("id", "missing")
 	recorder = httptest.NewRecorder()
+	request = request.WithContext(middleware.WithAdminPrincipal(request.Context(), model.AdminPrincipal{User: model.AdminUser{ID: "admin"}, Session: model.AdminSession{ID: "session"}}))
 	handler.HandleTestRun(recorder, request)
 	if recorder.Code != http.StatusNotFound {
 		t.Fatalf("missing test status = %d", recorder.Code)
@@ -156,7 +161,7 @@ func TestTrafficReportHandlerServiceErrors(t *testing.T) {
 	service := &fakeTrafficReports{listErr: errors.New("list failed")}
 	handler := NewTrafficReportHandler(service)
 	recorder := httptest.NewRecorder()
-	handler.HandleList(recorder, httptest.NewRequest(http.MethodGet, "/", nil))
+	handler.HandleList(recorder, jsonRequest(http.MethodGet, "/", nil))
 	if recorder.Code != http.StatusInternalServerError {
 		t.Fatalf("list error status = %d", recorder.Code)
 	}
@@ -164,13 +169,13 @@ func TestTrafficReportHandlerServiceErrors(t *testing.T) {
 	service.listErr = nil
 	service.createErr = trafficreport.ErrInvalidSchedule
 	recorder = httptest.NewRecorder()
-	handler.HandleCreate(recorder, httptest.NewRequest(http.MethodPost, "/", bytes.NewBufferString(`{"name":"bad"}`)))
+	handler.HandleCreate(recorder, jsonRequest(http.MethodPost, "/", bytes.NewBufferString(`{"name":"bad"}`)))
 	if recorder.Code != http.StatusBadRequest {
 		t.Fatalf("create validation status = %d", recorder.Code)
 	}
 	service.createErr = errors.New("create failed")
 	recorder = httptest.NewRecorder()
-	handler.HandleCreate(recorder, httptest.NewRequest(http.MethodPost, "/", bytes.NewBufferString(`{"name":"bad"}`)))
+	handler.HandleCreate(recorder, jsonRequest(http.MethodPost, "/", bytes.NewBufferString(`{"name":"bad"}`)))
 	if recorder.Code != http.StatusInternalServerError {
 		t.Fatalf("create error status = %d", recorder.Code)
 	}
@@ -189,8 +194,9 @@ func TestTrafficReportHandlerServiceErrors(t *testing.T) {
 	request = httptest.NewRequest(http.MethodPost, "/schedule/test", nil)
 	request.SetPathValue("id", "schedule")
 	recorder = httptest.NewRecorder()
+	request = request.WithContext(middleware.WithAdminPrincipal(request.Context(), model.AdminPrincipal{User: model.AdminUser{ID: "admin"}, Session: model.AdminSession{ID: "session"}}))
 	handler.HandleTestRun(recorder, request)
-	if recorder.Code != http.StatusOK {
+	if recorder.Code != http.StatusInternalServerError {
 		t.Fatalf("delivery failure status = %d", recorder.Code)
 	}
 }

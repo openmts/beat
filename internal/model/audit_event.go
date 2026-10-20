@@ -5,11 +5,14 @@ import "time"
 const (
 	AuditOutcomeSuccess = "success"
 	AuditOutcomeFailure = "failure"
+	AuditActorAdmin     = "admin"
+	AuditActorService   = "service"
 )
 
 type AdminAuditEvent struct {
 	ID            string    `json:"id"`
 	RequestID     string    `json:"request_id"`
+	ActorType     string    `json:"actor_type"`
 	ActorID       string    `json:"actor_id"`
 	ActorUsername string    `json:"actor_username"`
 	Action        string    `json:"action"`
@@ -23,16 +26,16 @@ type AdminAuditEvent struct {
 	CreatedAt     time.Time `json:"created_at"`
 }
 
+// AuditFilter 是服务端筛选与游标分页的输入；offset 遍历已被不透明游标取代。
 type AuditFilter struct {
 	Action  string
 	ActorID string
+	Cursor  string
 	Limit   int
-	Offset  int
 }
 
+// AuditPage 只返回一页审计事件与下一页游标，不再回传总数与偏移。
 type AuditPage struct {
-	Events []AdminAuditEvent `json:"events"`
-	Total  int               `json:"total"`
-	Limit  int               `json:"limit"`
-	Offset int               `json:"offset"`
+	Events     []AdminAuditEvent `json:"events"`
+	NextCursor string            `json:"next_cursor,omitempty"`
 }

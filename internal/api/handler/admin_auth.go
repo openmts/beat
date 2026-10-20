@@ -1,9 +1,7 @@
 package handler
 
 import (
-	"encoding/json"
 	"errors"
-	"io"
 	"net/http"
 	"time"
 
@@ -25,6 +23,7 @@ func NewAdminAuthHandler(service *adminauth.Service) *AdminAuthHandler {
 }
 
 func (handler *AdminAuthHandler) HandleState(w http.ResponseWriter, request *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
 	state, err := handler.service.State(request.Context())
 	if err != nil {
 		JSONError(w, http.StatusInternalServerError, "authentication state is unavailable")
@@ -34,6 +33,8 @@ func (handler *AdminAuthHandler) HandleState(w http.ResponseWriter, request *htt
 }
 
 func (handler *AdminAuthHandler) HandleBootstrap(w http.ResponseWriter, request *http.Request) {
+	request = withAuthenticationAudit(request)
+	w.Header().Set("Cache-Control", "no-store")
 	var body struct {
 		BootstrapToken string `json:"bootstrap_token"`
 		Username       string `json:"username"`
@@ -41,7 +42,7 @@ func (handler *AdminAuthHandler) HandleBootstrap(w http.ResponseWriter, request 
 		Password       string `json:"password"`
 	}
 	if err := decodeAuthBody(w, request, &body); err != nil {
-		JSONError(w, http.StatusBadRequest, "invalid authentication request")
+		WriteBodyError(w, err)
 		return
 	}
 	result, err := handler.service.Bootstrap(request.Context(), adminauth.BootstrapRequest{
@@ -57,13 +58,15 @@ func (handler *AdminAuthHandler) HandleBootstrap(w http.ResponseWriter, request 
 }
 
 func (handler *AdminAuthHandler) HandleLogin(w http.ResponseWriter, request *http.Request) {
+	request = withAuthenticationAudit(request)
+	w.Header().Set("Cache-Control", "no-store")
 	var body struct {
 		Username string `json:"username"`
 		Password string `json:"password"`
 		TOTPCode string `json:"totp_code"`
 	}
 	if err := decodeAuthBody(w, request, &body); err != nil {
-		JSONError(w, http.StatusBadRequest, "invalid authentication request")
+		WriteBodyError(w, err)
 		return
 	}
 	result, err := handler.service.Login(request.Context(), adminauth.LoginRequest{
@@ -88,6 +91,7 @@ func (handler *AdminAuthHandler) HandleSession(w http.ResponseWriter, request *h
 }
 
 func (handler *AdminAuthHandler) HandleLogout(w http.ResponseWriter, request *http.Request) {
+	request = withAuthenticationAudit(request)
 	principal, ok := middleware.AdminPrincipal(request.Context())
 	if !ok {
 		JSONError(w, http.StatusUnauthorized, "unauthorized")
@@ -102,6 +106,8 @@ func (handler *AdminAuthHandler) HandleLogout(w http.ResponseWriter, request *ht
 }
 
 func (handler *AdminAuthHandler) HandleReauthenticate(w http.ResponseWriter, request *http.Request) {
+	request = withAuthenticationAudit(request)
+	w.Header().Set("Cache-Control", "no-store")
 	principal, ok := middleware.AdminPrincipal(request.Context())
 	if !ok {
 		JSONError(w, http.StatusUnauthorized, "unauthorized")
@@ -112,32 +118,33 @@ func (handler *AdminAuthHandler) HandleReauthenticate(w http.ResponseWriter, req
 		TOTPCode string `json:"totp_code"`
 	}
 	if err := decodeAuthBody(w, request, &body); err != nil {
-		JSONError(w, http.StatusBadRequest, "invalid authentication request")
+		WriteBodyError(w, err)
 		return
 	}
 	if err := handler.service.Reauthenticate(request.Context(), &principal, body.Password, body.TOTPCode); err != nil {
-		writeAuthenticationError(w, err)
+		writeIdentityProofError(w, err)
 		return
 	}
 	JSONResponse(w, http.StatusOK, principal.Session)
 }
 
+func writeIdentityProofError(w http.ResponseWriter, err error) {
+	if errors.Is(err, adminauth.ErrInvalidCredentials) || errors.Is(err, adminauth.ErrInvalidTOTP) {
+		JSONError(w, http.StatusForbidden, "identity confirmation failed")
+		return
+	}
+	writeSecurityError(w, err)
+}
+
+// decodeAuthBody 复用统一的有界解码助手：认证与管理面载荷拒绝未知字段。
 func decodeAuthBody(w http.ResponseWriter, request *http.Request, destination any) error {
-	request.Body = http.MaxBytesReader(w, request.Body, maximumAuthBody)
-	decoder := json.NewDecoder(request.Body)
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(destination); err != nil {
-		return err
-	}
-	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
-		return errors.New("authentication request contains trailing data")
-	}
-	return nil
+	return DecodeJSONBody(request, destination, maximumAuthBody, true)
 }
 
 func writeAuthenticationError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, adminauth.ErrLocked):
+		w.Header().Set("Retry-After", "60")
 		JSONError(w, http.StatusTooManyRequests, "too many login attempts")
 	case errors.Is(err, adminauth.ErrBootstrapComplete):
 		JSONError(w, http.StatusConflict, "administrator setup is already complete")
@@ -165,4 +172,9 @@ func expireAdminSessionCookie(w http.ResponseWriter, request *http.Request) {
 
 func remoteIP(request *http.Request) string {
 	return middleware.ClientIP(request)
+}
+
+func withAuthenticationAudit(request *http.Request) *http.Request {
+	metadata := adminauth.AuditMetadata{RequestID: middleware.RequestID(request.Context()), IPAddress: remoteIP(request), UserAgent: request.UserAgent()}
+	return request.WithContext(adminauth.WithAuditMetadata(request.Context(), metadata))
 }

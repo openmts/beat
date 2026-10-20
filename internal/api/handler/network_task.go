@@ -2,6 +2,9 @@ package handler
 
 import (
 	"net/http"
+
+	"github.com/beat/backend/internal/model"
+	"github.com/beat/backend/internal/store"
 )
 
 func (h *NetworkHandler) HandleListNetworkTasks(w http.ResponseWriter, r *http.Request) {
@@ -10,7 +13,7 @@ func (h *NetworkHandler) HandleListNetworkTasks(w http.ResponseWriter, r *http.R
 		JSONError(w, http.StatusInternalServerError, "failed to list network tasks")
 		return
 	}
-	views, err := h.buildTaskViews(r, tasks, false)
+	views, err := h.buildTaskViews(r.Context(), tasks, false)
 	if err != nil {
 		JSONError(w, http.StatusInternalServerError, "failed to load network task state")
 		return
@@ -20,8 +23,8 @@ func (h *NetworkHandler) HandleListNetworkTasks(w http.ResponseWriter, r *http.R
 
 func (h *NetworkHandler) HandleCreateNetworkTask(w http.ResponseWriter, r *http.Request) {
 	var body networkTaskRequest
-	if err := ParseJSON(r, &body); err != nil {
-		JSONError(w, http.StatusBadRequest, "invalid request body")
+	if err := ParseJSONStrict(r, &body); err != nil {
+		WriteBodyError(w, err)
 		return
 	}
 	task, err := h.tasks.CreateTask(r.Context(), body.task(), body.NodeIDs)
@@ -29,13 +32,14 @@ func (h *NetworkHandler) HandleCreateNetworkTask(w http.ResponseWriter, r *http.
 		JSONError(w, http.StatusBadRequest, "invalid network task")
 		return
 	}
+	h.invalidateNetworkQuality()
 	JSONResponse(w, http.StatusCreated, task)
 }
 
 func (h *NetworkHandler) HandleUpdateNetworkTask(w http.ResponseWriter, r *http.Request) {
 	var body networkTaskRequest
-	if err := ParseJSON(r, &body); err != nil {
-		JSONError(w, http.StatusBadRequest, "invalid request body")
+	if err := ParseJSONStrict(r, &body); err != nil {
+		WriteBodyError(w, err)
 		return
 	}
 	task, err := h.tasks.UpdateTask(r.Context(), r.PathValue("task_id"), body.task(), body.NodeIDs)
@@ -47,37 +51,35 @@ func (h *NetworkHandler) HandleUpdateNetworkTask(w http.ResponseWriter, r *http.
 		JSONError(w, http.StatusNotFound, "network task not found")
 		return
 	}
+	h.invalidateNetworkQuality()
 	JSONResponse(w, http.StatusOK, task)
 }
 
+// WithErasureStore 注入耐久擦除账本；任务删除因此先发布 tombstone 再删除应用行。
+func (h *NetworkHandler) WithErasureStore(jobs *store.MetricErasureStore) *NetworkHandler {
+	h.erasure = jobs
+	return h
+}
+
 func (h *NetworkHandler) HandleDeleteNetworkTask(w http.ResponseWriter, r *http.Request) {
-	taskID := r.PathValue("task_id")
-	task, err := h.tasks.GetTask(r.Context(), taskID)
-	if err != nil {
-		JSONError(w, http.StatusInternalServerError, "failed to read network task")
+	view, replayed, ok := createDeletionJob(w, r, h.erasure, model.MetricErasureDeleteNetworkTask,
+		r.PathValue("task_id"), model.NowUTC())
+	if !ok {
 		return
 	}
-	if task == nil {
-		JSONError(w, http.StatusNotFound, "network task not found")
-		return
-	}
-	if err := h.mts.DeleteNetworkTask(r.Context(), taskID); err != nil {
-		JSONError(w, http.StatusInternalServerError, "failed to delete network task history")
-		return
-	}
-	deleted, err := h.tasks.DeleteTask(r.Context(), taskID)
-	if err != nil || !deleted {
-		JSONError(w, http.StatusInternalServerError, "failed to delete network task")
-		return
-	}
-	w.WriteHeader(http.StatusNoContent)
+	h.invalidateNetworkQuality()
+	JSONResponse(w, http.StatusAccepted, deletionAcceptedResponse{Job: view, Replayed: replayed})
 }
 
 func (h *NetworkHandler) HandleSortNetworkTasks(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		IDs []string `json:"ids"`
 	}
-	if err := ParseJSON(r, &body); err != nil || len(body.IDs) == 0 {
+	if err := ParseJSONStrict(r, &body); err != nil {
+		WriteBodyError(w, err)
+		return
+	}
+	if len(body.IDs) == 0 {
 		JSONError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
@@ -85,5 +87,6 @@ func (h *NetworkHandler) HandleSortNetworkTasks(w http.ResponseWriter, r *http.R
 		JSONError(w, http.StatusBadRequest, "invalid network task order")
 		return
 	}
+	h.invalidateNetworkQuality()
 	JSONResponse(w, http.StatusOK, struct{}{})
 }

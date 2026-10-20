@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react"
-import { DatabaseIcon, PlayIcon, RefreshCwIcon, SaveIcon } from "lucide-react"
+import { PlayIcon, RefreshCwIcon, SaveIcon } from "lucide-react"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import {
@@ -27,7 +27,9 @@ import {
   updateMaintenanceSettings,
 } from "@/lib/api"
 import { formatBytes } from "@/lib/metric-format"
+import { retryAfterDelay } from "@/lib/retry-after"
 import type { MaintenanceOverview, MaintenanceSettings } from "@/types"
+import { formatDateTime } from "@/lib/intl-format"
 
 function MaintenancePanel() {
   const { locale, t } = useLocale()
@@ -43,16 +45,24 @@ function MaintenancePanel() {
       setOverview(next)
       setForm(next.settings)
       setError(null)
+      return 0
     } catch (reason) {
       setError(errorMessage(reason, t("app.error")))
+      return retryAfterDelay(reason)
     }
   }, [t])
 
   useEffect(() => { void load() }, [load])
   useEffect(() => {
     if (!overview?.status.running) return
-    const timer = window.setInterval(() => void load(), 2000)
-    return () => window.clearInterval(timer)
+    let stopped = false
+    let timer: ReturnType<typeof setTimeout>
+    const tick = async () => {
+      const retryDelay = await load()
+      if (!stopped) timer = setTimeout(() => void tick(), Math.max(2000, retryDelay))
+    }
+    timer = setTimeout(() => void tick(), 2000)
+    return () => { stopped = true; clearTimeout(timer) }
   }, [load, overview?.status.running])
 
   const hours = useMemo<SelectOption[]>(() => Array.from({ length: 24 }, (_, hour) => ({
@@ -93,15 +103,7 @@ function MaintenancePanel() {
   }
 
   return (
-    <section className="border-t pt-7">
-      <div className="mb-5 flex items-start gap-3">
-        <DatabaseIcon className="mt-0.5 size-5 text-muted-foreground" />
-        <div>
-          <h2 className="text-base font-semibold">{t("maintenance.title")}</h2>
-          <p className="mt-1 text-sm text-muted-foreground">{t("maintenance.description")}</p>
-        </div>
-      </div>
-
+    <div className="space-y-5">
       {error && <Alert variant="destructive" className="mb-5"><AlertDescription>{error}</AlertDescription></Alert>}
       {message && <Alert className="mb-5"><AlertDescription>{message}</AlertDescription></Alert>}
 
@@ -172,7 +174,7 @@ function MaintenancePanel() {
           <Button type="submit" disabled={busy || !form}><SaveIcon />{t("app.save")}</Button>
         </div>
       </form>
-    </section>
+    </div>
   )
 }
 
@@ -222,7 +224,7 @@ function patchForm(
 
 function formatDate(value: string | null, locale: string): string {
   if (!value) return "--"
-  return new Intl.DateTimeFormat(locale, { dateStyle: "medium", timeStyle: "short" }).format(new Date(value))
+  return formatDateTime(locale, value)
 }
 
 function errorMessage(reason: unknown, fallback: string): string {

@@ -27,11 +27,12 @@ import (
 
 func setupThemeHandler(t *testing.T) (*ThemeHandler, *theme.Service, *store.SQLiteStore) {
 	t.Helper()
-	sqlite, err := store.NewSQLiteStore(filepath.Join(t.TempDir(), "beat.db"))
+	sqlite, err := store.NewSQLiteStore(handlerFixturePath(t))
 	if err != nil {
 		t.Fatalf("new sqlite: %v", err)
 	}
 	t.Cleanup(func() { _ = sqlite.Close() })
+	seedThemeOwner(t, sqlite)
 	service, err := theme.NewService(store.NewThemeStore(sqlite.DB), store.NewAdminStore(sqlite.DB),
 		filepath.Join(t.TempDir(), "themes"), "0.1.0", time.Now)
 	if err != nil {
@@ -44,8 +45,9 @@ func setupThemeHandler(t *testing.T) (*ThemeHandler, *theme.Service, *store.SQLi
 
 func themeUploadManifest() string {
 	files := []model.ThemeManifestFile{
-		{Path: "preview.png", Size: 1, SHA256: sha256HexBytes([]byte("p"))},
+		{Path: "preview.png", Size: int64(len(themeFixturePNG)), SHA256: sha256HexBytes([]byte(themeFixturePNG))},
 		{Path: "assets/theme.css", Size: 1, SHA256: sha256HexBytes([]byte("c"))},
+		{Path: "theme.json", Size: int64(len(themeFixtureDefinitionJSON)), SHA256: sha256HexBytes([]byte(themeFixtureDefinitionJSON))},
 	}
 	raw, _ := json.Marshal(map[string]any{
 		"schema_version": 1, "id": "test-theme", "name": "Test Theme",
@@ -63,8 +65,9 @@ func themeUploadZip(t *testing.T) []byte {
 	manifest := themeUploadManifest()
 	entries := map[string]string{
 		"beat-theme.json":  manifest,
-		"preview.png":      "p",
+		"preview.png":      themeFixturePNG,
 		"assets/theme.css": "c",
+		"theme.json":       themeFixtureDefinitionJSON,
 	}
 	for name, content := range entries {
 		entry, err := writer.Create(name)
@@ -163,6 +166,7 @@ func TestThemeHandlerUploadActivateRollbackDelete(t *testing.T) {
 	// 无效上传
 	badUpload := httptest.NewRequest(http.MethodPost, "/api/v1/admin/themes/upload",
 		bytes.NewReader([]byte("not-a-zip")))
+	badUpload.Header.Set("Content-Type", "application/json")
 	badUpload = badUpload.WithContext(themeOwnerContext().Context())
 	badResponse := httptest.NewRecorder()
 	handler.HandleUpload(badResponse, badUpload)
@@ -225,7 +229,8 @@ func TestThemeHandlerMarketSources(t *testing.T) {
 	ctx := themeOwnerContext().Context()
 
 	create := httptest.NewRequest(http.MethodPost, "/api/v1/admin/theme-markets",
-		strings.NewReader(`{"name":"Market","catalog_url":"https://market.example/c","public_key":"`+strings.Repeat("k", 44)+`"}`))
+		strings.NewReader(`{"name":"Market","catalog_url":"https://market.example/c","public_key":"`+base64.StdEncoding.EncodeToString(make([]byte, ed25519.PublicKeySize))+`"}`))
+	create.Header.Set("Content-Type", "application/json")
 	create = create.WithContext(ctx)
 	createResponse := httptest.NewRecorder()
 	handler.HandleCreateMarket(createResponse, create)
@@ -247,8 +252,8 @@ func TestThemeHandlerMarketSources(t *testing.T) {
 		t.Fatalf("list markets = %d", listResponse.Code)
 	}
 
-	update := httptest.NewRequest(http.MethodPut, "/api/v1/admin/theme-markets/"+created.Data.ID,
-		strings.NewReader(`{"name":"Renamed","enabled":false}`))
+	update := withJSONBody(httptest.NewRequest(http.MethodPut, "/api/v1/admin/theme-markets/"+created.Data.ID,
+		strings.NewReader(`{"name":"Renamed","enabled":false}`)))
 	update.SetPathValue("id", created.Data.ID)
 	update = update.WithContext(ctx)
 	updateResponse := httptest.NewRecorder()
@@ -286,6 +291,7 @@ func TestThemeHandlerErrorPathsWithClosedStore(t *testing.T) {
 	ctx := themeOwnerContext().Context()
 
 	list := httptest.NewRequest(http.MethodGet, "/api/v1/admin/themes", nil).WithContext(ctx)
+	list.Header.Set("Content-Type", "application/json")
 	listResponse := httptest.NewRecorder()
 	handler.HandleList(listResponse, list)
 	if listResponse.Code != http.StatusInternalServerError {
@@ -299,6 +305,7 @@ func TestThemeHandlerErrorPathsWithClosedStore(t *testing.T) {
 	}
 	upload := httptest.NewRequest(http.MethodPost, "/api/v1/admin/themes/upload",
 		bytes.NewReader(themeUploadZip(t))).WithContext(ctx)
+	upload.Header.Set("Content-Type", "application/json")
 	uploadResponse := httptest.NewRecorder()
 	handler.HandleUpload(uploadResponse, upload)
 	if uploadResponse.Code != http.StatusBadRequest {
@@ -329,8 +336,8 @@ func TestThemeHandlerAllMethodsClosedStore(t *testing.T) {
 		"delete":   httptest.NewRequest(http.MethodDelete, "/api/v1/admin/themes/p1", nil),
 		"export":   httptest.NewRequest(http.MethodGet, "/api/v1/admin/themes/p1/export", nil),
 		"markets":  httptest.NewRequest(http.MethodGet, "/api/v1/admin/theme-markets", nil),
-		"create_mk": httptest.NewRequest(http.MethodPost, "/api/v1/admin/theme-markets",
-			strings.NewReader(`{"name":"M","catalog_url":"https://m.example/c","public_key":"k"}`)),
+		"create_mk": withJSONBody(httptest.NewRequest(http.MethodPost, "/api/v1/admin/theme-markets",
+			strings.NewReader(`{"name":"M","catalog_url":"https://m.example/c","public_key":"k"}`))),
 		"refresh": httptest.NewRequest(http.MethodGet, "/api/v1/admin/theme-markets/m1/catalog", nil),
 		"install": httptest.NewRequest(http.MethodPost, "/api/v1/admin/theme-markets/m1/themes/t/install", nil),
 	} {
@@ -364,16 +371,22 @@ func TestThemeHandlerAllMethodsClosedStore(t *testing.T) {
 
 func TestWriteThemeErrorStatusMapping(t *testing.T) {
 	cases := map[error]int{
-		theme.ErrArchiveInvalid:      http.StatusBadRequest,
-		theme.ErrManifestInvalid:     http.StatusBadRequest,
-		theme.ErrPackageConflict:     http.StatusConflict,
-		theme.ErrRuntimeIncompatible: http.StatusBadRequest,
-		theme.ErrContentUnavailable:  http.StatusNotFound,
-		theme.ErrActivePackage:       http.StatusConflict,
-		theme.ErrNoHealthyRollback:   http.StatusConflict,
-		theme.ErrMarketInvalid:       http.StatusBadRequest,
-		theme.ErrMarketUnavailable:   http.StatusServiceUnavailable,
-		errors.New("unexpected"):     http.StatusBadRequest,
+		theme.ErrArchiveInvalid:       http.StatusBadRequest,
+		theme.ErrManifestInvalid:      http.StatusBadRequest,
+		theme.ErrPackageConflict:      http.StatusConflict,
+		theme.ErrRuntimeIncompatible:  http.StatusBadRequest,
+		theme.ErrContentUnavailable:   http.StatusNotFound,
+		theme.ErrActivePackage:        http.StatusConflict,
+		theme.ErrNoHealthyRollback:    http.StatusConflict,
+		theme.ErrMarketInvalid:        http.StatusBadRequest,
+		theme.ErrMarketUnavailable:    http.StatusServiceUnavailable,
+		theme.ErrMarketChanged:        http.StatusConflict,
+		store.ErrThemeForbidden:       http.StatusForbidden,
+		store.ErrThemeRecentAuth:      http.StatusPreconditionRequired,
+		store.ErrThemeMarketNotFound:  http.StatusNotFound,
+		store.ErrThemeMarketSourceID:  http.StatusConflict,
+		store.ErrThemePackageConflict: http.StatusConflict,
+		errors.New("unexpected"):      http.StatusBadRequest,
 	}
 	for err, want := range cases {
 		response := httptest.NewRecorder()
@@ -426,6 +439,7 @@ func TestThemeHandlerUploadTooLarge(t *testing.T) {
 	handler, _, _ := setupThemeHandler(t)
 	request := httptest.NewRequest(http.MethodPost, "/api/v1/admin/themes/upload",
 		bytes.NewReader(make([]byte, maxThemeUploadBytes+1)))
+	request.Header.Set("Content-Type", "application/json")
 	request = request.WithContext(themeOwnerContext().Context())
 	response := httptest.NewRecorder()
 	handler.HandleUpload(response, request)
@@ -438,9 +452,9 @@ func TestThemeHandlerMarketSourceSuccess(t *testing.T) {
 	handler, _, _ := setupThemeHandler(t)
 	ctx := themeOwnerContext().Context()
 
-	create := httptest.NewRequest(http.MethodPost, "/api/v1/admin/theme-markets",
+	create := withJSONBody(httptest.NewRequest(http.MethodPost, "/api/v1/admin/theme-markets",
 		strings.NewReader(`{"name":"Market","catalog_url":"https://market.example/c","public_key":"`+
-			strings.Repeat("k", 44)+`","enabled":true}`))
+			base64.StdEncoding.EncodeToString(make([]byte, ed25519.PublicKeySize))+`","enabled":true}`)))
 	create = create.WithContext(ctx)
 	createResponse := httptest.NewRecorder()
 	handler.HandleCreateMarket(createResponse, create)
@@ -455,14 +469,15 @@ func TestThemeHandlerMarketSourceSuccess(t *testing.T) {
 	_ = json.Unmarshal(createResponse.Body.Bytes(), &created)
 
 	list := httptest.NewRequest(http.MethodGet, "/api/v1/admin/theme-markets", nil).WithContext(ctx)
+	list.Header.Set("Content-Type", "application/json")
 	listResponse := httptest.NewRecorder()
 	handler.HandleListMarkets(listResponse, list)
 	if listResponse.Code != http.StatusOK || !strings.Contains(listResponse.Body.String(), "Market") {
 		t.Fatalf("list = %d %s", listResponse.Code, listResponse.Body.String())
 	}
 
-	update := httptest.NewRequest(http.MethodPut, "/api/v1/admin/theme-markets/"+created.Data.ID,
-		strings.NewReader(`{"name":"Renamed","enabled":false}`))
+	update := withJSONBody(httptest.NewRequest(http.MethodPut, "/api/v1/admin/theme-markets/"+created.Data.ID,
+		strings.NewReader(`{"name":"Renamed","enabled":false}`)))
 	update.SetPathValue("id", created.Data.ID)
 	update = update.WithContext(ctx)
 	updateResponse := httptest.NewRecorder()
@@ -510,6 +525,7 @@ func TestThemeHandlerMarketFullFlow(t *testing.T) {
 		t.Fatalf("new sqlite: %v", err)
 	}
 	t.Cleanup(func() { _ = sqlite.Close() })
+	seedThemeOwner(t, sqlite)
 	service, err := theme.NewService(store.NewThemeStore(sqlite.DB), store.NewAdminStore(sqlite.DB),
 		filepath.Join(t.TempDir(), "themes"), "0.1.0", time.Now)
 	if err != nil {
@@ -523,17 +539,25 @@ func TestThemeHandlerMarketFullFlow(t *testing.T) {
 	// 先建源
 	source, err := markets.CreateSource(ctx, &model.ThemeMarketSource{
 		Name: "Market", CatalogURL: "https://placeholder.invalid/c",
-		PublicKey: base64.StdEncoding.EncodeToString(publicKey), KeyFingerprint: "fp", Enabled: true,
+		PublicKey: base64.StdEncoding.EncodeToString(publicKey), KeyFingerprint: "", Enabled: true,
 	})
 	if err != nil {
 		t.Fatalf("create source: %v", err)
 	}
+	identity, err := theme.MarketIdentity(base64.StdEncoding.EncodeToString(publicKey))
+	if err != nil {
+		t.Fatal(err)
+	}
+	validated, err := theme.ValidateArchive(packageBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
 	catalog := model.ThemeCatalog{
-		SchemaVersion: 1, SourceID: source.ID,
+		SchemaVersion: 1, SourceID: identity, ExpiresAt: time.Now().Add(time.Hour),
 		Themes: []model.ThemeCatalogEntry{{
 			ThemeID: "test-theme", Name: "Test Theme", Version: "1.0.0", Author: "a",
 			Description: "d", Runtime: model.ThemeRuntimeDeclarative, PackageURL: packageServer.URL,
-			PackageSHA256: packageDigest, MinimumBeat: "0.1.0",
+			PackageSHA256: packageDigest, ManifestSHA256: sha256HexBytes(validated.ManifestBytes), MinimumBeat: "0.1.0",
 		}},
 	}
 	body, _ := json.Marshal(catalog)
@@ -565,7 +589,8 @@ func TestThemeHandlerMarketFullFlow(t *testing.T) {
 
 	// 市场安装（成功）
 	install := httptest.NewRequest(http.MethodPost,
-		"/api/v1/admin/theme-markets/"+source.ID+"/themes/test-theme/install", nil)
+		"/api/v1/admin/theme-markets/"+source.ID+"/themes/test-theme/install", strings.NewReader(`{"version":"1.0.0","package_sha256":"`+packageDigest+`"}`))
+	install.Header.Set("Content-Type", "application/json")
 	install.SetPathValue("id", source.ID)
 	install.SetPathValue("theme_id", "test-theme")
 	install = install.WithContext(ctx)

@@ -1,0 +1,11 @@
+export interface LocationPublic { scope: string; country_code?: string; resolved_at?: string }
+export interface NodeLocation extends LocationPublic { node_id: string; mode: "observed" | "managed_target" | "manual" | "disabled"; visibility: "inherit" | "public" | "private"; provider: string; revision: string; stale: boolean; error_code?: string; last_attempt_at?: string; next_refresh_at?: string; has_source: boolean }
+export interface LocationWrite { mode: NodeLocation["mode"]; scope: string; country_code: string; visibility: NodeLocation["visibility"]; managed_target?: string; purge: boolean; confirm_managed_target: boolean }
+export interface MMDBMetadata { edition: string; source: string; build_epoch: number; sha256: string; size_bytes: number; state: string; error_code?: string }
+export interface GeoIPSettings { provider: string; revision: number; remote_consent: boolean; has_credential: boolean; mmdb: MMDBMetadata }
+export interface GeoIPSettingsWrite { provider: string; remote_consent: boolean; credential?: string; expected_revision: number; purge: boolean }
+export interface LifecycleSettings { timezone: string; lead_days: number[]; post_days: number[]; public_country: boolean; public_expiry: boolean; public_price: boolean }
+export interface LifecycleWrite { provider: string; plan: string; price_micros: string | null; currency: string; interval_unit: "day" | "month" | "year"; interval_count: number; expires_on: string; renewal_mode: "manual" | "calendar_auto_advance"; private_notes: string; expiry_visibility: "inherit" | "public" | "private"; price_visibility: "inherit" | "public" | "private"; confirm_auto_advance: boolean }
+export interface NodeLifecycle extends LifecycleWrite { node_id: string; status: string; days_remaining: number | null; anchor_month: number; anchor_day: number; anchor_end_of_month: boolean; updated_at: string }
+export interface LifecyclePublic { expires_on?: string; status?: string; days_remaining?: number; price_micros?: string; currency?: string; interval_unit?: string; interval_count?: number }
+export interface LifecycleEvent { id: string; node_id: string; kind: string; period_key: string; stage: number; old_expires_on: string; new_expires_on: string; skipped_intervals: number; actor: string; routing_status: string; message_id?: string; created_at: string }

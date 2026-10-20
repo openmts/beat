@@ -24,6 +24,7 @@ func (handler *AdminAuthHandler) HandleListUsers(w http.ResponseWriter, request 
 }
 
 func (handler *AdminAuthHandler) HandleCreateUser(w http.ResponseWriter, request *http.Request) {
+	request = withAuthenticationAudit(request)
 	principal, ok := requirePrincipal(w, request)
 	if !ok {
 		return
@@ -35,7 +36,7 @@ func (handler *AdminAuthHandler) HandleCreateUser(w http.ResponseWriter, request
 		Password    string          `json:"password"`
 	}
 	if err := decodeAuthBody(w, request, &body); err != nil {
-		JSONError(w, http.StatusBadRequest, "invalid administrator request")
+		WriteBodyError(w, err)
 		return
 	}
 	user, err := handler.service.CreateUser(request.Context(), &principal, adminauth.CreateUserRequest{
@@ -49,6 +50,7 @@ func (handler *AdminAuthHandler) HandleCreateUser(w http.ResponseWriter, request
 }
 
 func (handler *AdminAuthHandler) HandleUpdateUser(w http.ResponseWriter, request *http.Request) {
+	request = withAuthenticationAudit(request)
 	principal, ok := requirePrincipal(w, request)
 	if !ok {
 		return
@@ -59,7 +61,7 @@ func (handler *AdminAuthHandler) HandleUpdateUser(w http.ResponseWriter, request
 		Enabled     bool            `json:"enabled"`
 	}
 	if err := decodeAuthBody(w, request, &body); err != nil {
-		JSONError(w, http.StatusBadRequest, "invalid administrator request")
+		WriteBodyError(w, err)
 		return
 	}
 	err := handler.service.UpdateUser(request.Context(), &principal, request.PathValue("id"),
@@ -72,6 +74,7 @@ func (handler *AdminAuthHandler) HandleUpdateUser(w http.ResponseWriter, request
 }
 
 func (handler *AdminAuthHandler) HandleDeleteUser(w http.ResponseWriter, request *http.Request) {
+	request = withAuthenticationAudit(request)
 	principal, ok := requirePrincipal(w, request)
 	if !ok {
 		return
@@ -84,6 +87,7 @@ func (handler *AdminAuthHandler) HandleDeleteUser(w http.ResponseWriter, request
 }
 
 func (handler *AdminAuthHandler) HandleChangePassword(w http.ResponseWriter, request *http.Request) {
+	request = withAuthenticationAudit(request)
 	principal, ok := requirePrincipal(w, request)
 	if !ok {
 		return
@@ -94,7 +98,7 @@ func (handler *AdminAuthHandler) HandleChangePassword(w http.ResponseWriter, req
 		TOTPCode        string `json:"totp_code"`
 	}
 	if err := decodeAuthBody(w, request, &body); err != nil {
-		JSONError(w, http.StatusBadRequest, "invalid password request")
+		WriteBodyError(w, err)
 		return
 	}
 	if err := handler.service.ChangePassword(request.Context(), &principal,
@@ -115,10 +119,23 @@ func requirePrincipal(w http.ResponseWriter, request *http.Request) (model.Admin
 
 func writeSecurityError(w http.ResponseWriter, err error) {
 	switch {
+	case errors.Is(err, store.ErrAdminMutationUnavailable):
+		JSONError(w, http.StatusInternalServerError, "administrator change could not be persisted")
+	case errors.Is(err, store.ErrAdminUsernameConflict):
+		JSONError(w, http.StatusConflict, "administrator username already exists")
+	case errors.Is(err, store.ErrAdminMutationConflict):
+		JSONError(w, http.StatusConflict, "administrator security state changed; confirm your identity again")
 	case errors.Is(err, adminauth.ErrForbidden):
 		JSONError(w, http.StatusForbidden, "owner permission is required")
 	case errors.Is(err, adminauth.ErrRecentAuthRequired):
 		JSONError(w, http.StatusPreconditionRequired, "recent authentication is required")
+	case errors.Is(err, adminauth.ErrTOTPSetupExpired):
+		JSONError(w, http.StatusConflict, "authenticator setup is missing or expired; start setup again")
+	case errors.Is(err, adminauth.ErrTOTPSetupCapacity), errors.Is(err, adminauth.ErrLocked):
+		w.Header().Set("Retry-After", "60")
+		JSONError(w, http.StatusTooManyRequests, "too many authentication requests; try again later")
+	case errors.Is(err, adminauth.ErrSessionInvalid):
+		JSONError(w, http.StatusUnauthorized, "unauthorized")
 	case errors.Is(err, store.ErrLastOwner):
 		JSONError(w, http.StatusConflict, "at least one enabled owner is required")
 	case errors.Is(err, store.ErrAdminUserNotFound), errors.Is(err, store.ErrAdminSessionNotFound):

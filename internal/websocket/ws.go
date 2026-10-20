@@ -210,19 +210,6 @@ func computeAcceptKey(key string) string {
 	return base64.StdEncoding.EncodeToString(hasher.Sum(nil))
 }
 
-func writeWSFrame(conn net.Conn, payload []byte) error {
-	frame := make([]byte, 2+len(payload))
-	frame[0] = 0x81
-	frame[1] = byte(len(payload))
-	copy(frame[2:], payload)
-
-	if _, err := conn.Write(frame); err != nil {
-		return fmt.Errorf("write frame: %w", err)
-	}
-
-	return nil
-}
-
 // readFrame 读取并跳过一个完整的 WebSocket 帧，仅用于对端活性检测。
 // 客户端帧按规范必须带掩码，掩码键包含在负载内一并读取丢弃。
 func readFrame(conn net.Conn) (byte, []byte, error) {

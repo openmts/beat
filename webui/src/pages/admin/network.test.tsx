@@ -6,12 +6,27 @@ import { LocaleProvider } from "@/context/locale"
 import * as apiHooks from "@/hooks/use-api"
 import * as networkHooks from "@/hooks/use-network"
 import * as networkApi from "@/lib/network-api"
+import * as backupApi from "@/lib/backup-api"
 import Network from "@/pages/admin/network"
 import type { NetworkTaskPayload, NetworkTaskView } from "@/types"
 
 vi.mock("@/hooks/use-api")
 vi.mock("@/hooks/use-network")
 vi.mock("@/lib/network-api")
+vi.mock("@/lib/backup-api", () => ({ listBackups: vi.fn(), listBackupQuarantine: vi.fn(), createBackup: vi.fn() }))
+vi.mock("@/components/ui/alert-dialog", async () => {
+  const mocks = await vi.importActual<typeof import("@/test/admin-ui-mocks")>("@/test/admin-ui-mocks")
+  return {
+    AlertDialog: mocks.MockDialog,
+    AlertDialogContent: mocks.PassThrough,
+    AlertDialogHeader: mocks.PassThrough,
+    AlertDialogTitle: mocks.PassThrough,
+    AlertDialogDescription: mocks.PassThrough,
+    AlertDialogFooter: mocks.PassThrough,
+    AlertDialogCancel: mocks.PassThrough,
+    AlertDialogAction: ({ children, ...rest }: { children: ReactNode }) => <button {...rest}>{children}</button>,
+  }
+})
 vi.mock("@/components/ui/dialog", async () => {
   const mocks = await vi.importActual<typeof import("@/test/admin-ui-mocks")>("@/test/admin-ui-mocks")
   return {
@@ -47,6 +62,9 @@ vi.mock("@/components/network-task-card", () => ({
       <button onClick={onMoveDown}>down</button>
     </article>
   ),
+}))
+vi.mock("@/components/diagnostics/diagnostics-panel", () => ({
+  DiagnosticsPanel: () => <div data-testid="diagnostics-panel" />,
 }))
 vi.mock("@/components/network-history-dialog", () => ({
   NetworkHistoryDialog: ({ open, view }: { open: boolean; view: NetworkTaskView | null }) => (
@@ -86,7 +104,9 @@ describe("admin network page", () => {
     vi.mocked(apiHooks.useNodes).mockReturnValue(state([]) as never)
     vi.mocked(networkApi.createNetworkTask).mockResolvedValue({} as never)
     vi.mocked(networkApi.updateNetworkTask).mockResolvedValue({} as never)
-    vi.mocked(networkApi.deleteNetworkTask).mockResolvedValue(undefined)
+    vi.mocked(networkApi.deleteNetworkTask).mockResolvedValue({ id: "job" } as never)
+    vi.mocked(backupApi.listBackups).mockResolvedValue({ items: [] })
+
     vi.mocked(networkApi.sortNetworkTasks).mockResolvedValue(undefined)
   })
 
@@ -107,9 +127,22 @@ describe("admin network page", () => {
     await waitFor(() => expect(networkApi.sortNetworkTasks).toHaveBeenCalledWith(["two", "one", "three"]))
 
     fireEvent.click(within(first).getByRole("button", { name: "remove" }))
-    fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Delete" }))
-    await waitFor(() => expect(networkApi.deleteNetworkTask).toHaveBeenCalledWith("one"))
+    const deleteDialog = await screen.findByRole("dialog")
+    fireEvent.change(within(deleteDialog).getByLabelText("Entity display name"), { target: { value: "One" } })
+    fireEvent.click(within(deleteDialog).getByRole("checkbox"))
+    fireEvent.click(within(deleteDialog).getByRole("button", { name: "Delete" }))
+    await waitFor(() => expect(networkApi.deleteNetworkTask).toHaveBeenCalledWith("one", "One", expect.any(String)))
     expect(refresh).toHaveBeenCalled()
+  })
+
+  it("keeps the scheduled quality tasks as the default tab and reveals diagnostics on demand", () => {
+    view(<Network />)
+    expect(screen.getByRole("article", { name: "One" })).toBeInTheDocument()
+    expect(screen.queryByTestId("diagnostics-panel")).toBeNull()
+
+    fireEvent.click(screen.getByRole("tab", { name: "Advanced diagnostics" }))
+    expect(screen.getByTestId("diagnostics-panel")).toBeInTheDocument()
+    expect(screen.queryByRole("article", { name: "One" })).toBeNull()
   })
 
   it("renders loading, empty, fetch errors, and action errors", async () => {

@@ -3,91 +3,92 @@ package backup
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 
-	_ "modernc.org/sqlite"
-
-	"github.com/beat/backend/internal/oidc"
 	"github.com/beat/backend/internal/secretbox"
 )
 
-// validateOIDCCiphertexts 使用归档根密钥认证每个 OIDC 提供方密钥与 PKCE
-// 验证器密文（信封格式 1 + 资源绑定 AAD），证明归档可在恢复后解密。
-func validateOIDCCiphertexts(ctx context.Context, sqlitePath, dataKeyPath string) error {
-	key, err := os.ReadFile(dataKeyPath)
+// validateOIDCCiphertexts 认证归档中的 OIDC 与 TOTP 密文，缺密钥不能跳过检查。
+func validateOIDCCiphertexts(ctx context.Context, sqlitePath, dataKeyPath string) (resultErr error) {
+	if handled, err := validateV9Secrets(ctx, sqlitePath, dataKeyPath); handled || err != nil {
+		return err
+	}
+	secrets, err := archivedSecretManager(dataKeyPath)
 	if err != nil {
-		if os.IsNotExist(err) {
-			// 旧格式归档不含根密钥；此时数据库不应含 OIDC 密文（由下面查询覆盖）。
-			return nil
+		return err
+	}
+	database, err := openArchivedSQLite(sqlitePath)
+	if err != nil {
+		return fmt.Errorf("open archived secrets database: %w", err)
+	}
+	defer func() { resultErr = errors.Join(resultErr, database.Close()) }()
+	validation := archivedSecretValidation{database: database, secrets: secrets}
+	for _, source := range archivedSecretSources() {
+		if err := validation.check(ctx, source); err != nil {
+			return err
 		}
-		return fmt.Errorf("read archived administrator data key: %w", err)
 	}
-	secrets, err := secretbox.NewFromKey(key, nil)
-	if err != nil {
-		return fmt.Errorf("construct archived secret manager: %w", err)
-	}
-	db, err := sql.Open("sqlite", "file:"+filepath.ToSlash(sqlitePath)+"?mode=ro&_query_only=1")
-	if err != nil {
-		return fmt.Errorf("open archived sqlite read-only: %w", err)
-	}
-	defer func() { _ = db.Close() }()
+	return nil
+}
 
-	providerRows, err := db.QueryContext(ctx,
-		"SELECT id, configuration_version, client_secret_encrypted FROM admin_oidc_providers")
+func archivedSecretManager(path string) (*secretbox.Manager, error) {
+	key, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
 	if err != nil {
-		if isNoSuchTable(err) {
-			return nil
-		}
-		return fmt.Errorf("query archived oidc providers: %w", err)
+		return nil, fmt.Errorf("read archived administrator data key: %w", err)
 	}
-	for providerRows.Next() {
-		var id string
-		var version int
-		var ciphertext []byte
-		if err := providerRows.Scan(&id, &version, &ciphertext); err != nil {
-			_ = providerRows.Close()
-			return fmt.Errorf("scan archived oidc provider: %w", err)
-		}
-		if len(ciphertext) == 0 {
-			continue
-		}
-		if _, err := secrets.DecryptEnvelope(ciphertext, oidc.ProviderSecretAAD(id, version)); err != nil {
-			_ = providerRows.Close()
-			return fmt.Errorf("archived oidc provider secret failed authentication: %w", err)
-		}
-	}
-	if err := providerRows.Close(); err != nil {
-		return fmt.Errorf("close archived oidc provider rows: %w", err)
-	}
+	return secretbox.NewFromKey(key, nil)
+}
 
-	transactionRows, err := db.QueryContext(ctx,
-		"SELECT id, provider_id, code_verifier_encrypted FROM admin_oidc_transactions")
+type archivedSecretValidation struct {
+	database *sql.DB
+	secrets  *secretbox.Manager
+}
+
+func (validation archivedSecretValidation) check(ctx context.Context, source archivedSecretSource) (resultErr error) {
+	rows, err := validation.database.QueryContext(ctx, source.query)
+	if isNoSuchTable(err) {
+		return nil
+	}
 	if err != nil {
-		if isNoSuchTable(err) {
-			return nil
-		}
-		return fmt.Errorf("query archived oidc transactions: %w", err)
+		return fmt.Errorf("query archived %s: %w", source.name, err)
 	}
-	for transactionRows.Next() {
-		var id, providerID string
-		var ciphertext []byte
-		if err := transactionRows.Scan(&id, &providerID, &ciphertext); err != nil {
-			_ = transactionRows.Close()
-			return fmt.Errorf("scan archived oidc transaction: %w", err)
+	defer func() { resultErr = errors.Join(resultErr, rows.Close()) }()
+	for rows.Next() {
+		secret, err := source.scan(rows)
+		if err != nil {
+			return fmt.Errorf("read archived %s: %w", source.name, err)
 		}
-		if len(ciphertext) == 0 {
-			continue
-		}
-		if _, err := secrets.DecryptEnvelope(ciphertext, oidc.TransactionVerifierAAD(id, providerID)); err != nil {
-			_ = transactionRows.Close()
-			return fmt.Errorf("archived oidc transaction verifier failed authentication: %w", err)
+		if err := validation.authenticate(secret); err != nil {
+			return fmt.Errorf("validate archived %s: %w", source.name, err)
 		}
 	}
-	if err := transactionRows.Close(); err != nil {
-		return fmt.Errorf("close archived oidc transaction rows: %w", err)
+	return rows.Err()
+}
+
+func (validation archivedSecretValidation) authenticate(secret archivedSecret) error {
+	if len(secret.ciphertext) == 0 {
+		if secret.required {
+			return errors.New("enabled secret is missing its ciphertext")
+		}
+		return nil
+	}
+	if validation.secrets == nil {
+		return errors.New("archived encrypted credentials require the matching administrator data key")
+	}
+	var err error
+	if secret.legacy {
+		_, err = validation.secrets.Decrypt(secret.ciphertext)
+	} else {
+		_, err = validation.secrets.DecryptEnvelope(secret.ciphertext, secret.aad)
+	}
+	if err != nil {
+		return errors.New("archived encrypted credential failed authentication")
 	}
 	return nil
 }

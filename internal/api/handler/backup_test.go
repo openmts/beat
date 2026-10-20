@@ -16,8 +16,8 @@ import (
 	"github.com/beat/backend/internal/api/middleware"
 	"github.com/beat/backend/internal/backup"
 	"github.com/beat/backend/internal/model"
-	"github.com/beat/backend/internal/secretbox"
 	"github.com/beat/backend/internal/store"
+	"github.com/beat/backend/internal/testutil"
 )
 
 type fakeBackupOperations struct {
@@ -31,15 +31,31 @@ type fakeBackupOperations struct {
 	closeOpen   bool
 	listed      bool
 	staged      bool
+	listQuery   store.BackupQuery
+	deleteActor backup.Actor
+	stageInput  backup.StageRequest
 }
 
 func (fake *fakeBackupOperations) Start(context.Context) (model.BackupRecord, error) {
 	return model.BackupRecord{ID: "backup", State: model.BackupStateRunning}, fake.startErr
 }
 
-func (fake *fakeBackupOperations) List(context.Context) ([]model.BackupRecord, error) {
+func (fake *fakeBackupOperations) List(
+	_ context.Context,
+	query store.BackupQuery,
+) (model.BackupPage, error) {
 	fake.listed = true
-	return []model.BackupRecord{{ID: "backup", State: model.BackupStateReady}}, fake.listErr
+	fake.listQuery = query
+	return model.BackupPage{Items: []model.BackupRecord{{ID: "backup", State: model.BackupStateReady}}},
+		fake.listErr
+}
+
+func (fake *fakeBackupOperations) ListQuarantine(context.Context) ([]model.BackupQuarantineRecord, error) {
+	return nil, fake.listErr
+}
+
+func (fake *fakeBackupOperations) ListQuarantinedUploads(context.Context) ([]model.BackupUploadSession, error) {
+	return nil, fake.listErr
 }
 
 func (fake *fakeBackupOperations) Open(
@@ -56,7 +72,10 @@ func (fake *fakeBackupOperations) Open(
 	return file, model.BackupRecord{ID: "backup", Filename: "backup.zip", State: model.BackupStateReady}, err
 }
 
-func (fake *fakeBackupOperations) Delete(context.Context, string) error { return fake.deleteErr }
+func (fake *fakeBackupOperations) Delete(_ context.Context, _ string, actor backup.Actor) error {
+	fake.deleteActor = actor
+	return fake.deleteErr
+}
 
 func (fake *fakeBackupOperations) ValidateUpload(
 	context.Context,
@@ -65,12 +84,60 @@ func (fake *fakeBackupOperations) ValidateUpload(
 	return model.BackupRecord{ID: "upload", State: model.BackupStateValidated}, fake.validateErr
 }
 
-func (fake *fakeBackupOperations) StageRestore(
+func (fake *fakeBackupOperations) StartUpload(
 	context.Context,
+	store.BackupUploadActor,
+	backup.UploadSessionRequest,
+) (backup.UploadSessionStatus, error) {
+	return backup.UploadSessionStatus{}, backup.ErrUploadUnavailable
+}
+
+func (fake *fakeBackupOperations) ListUploads(
+	context.Context,
+	store.BackupUploadActor,
+) ([]model.BackupUploadSession, error) {
+	return nil, backup.ErrUploadUnavailable
+}
+
+func (fake *fakeBackupOperations) UploadStatus(
+	context.Context,
+	store.BackupUploadActor,
 	string,
+) (backup.UploadSessionStatus, error) {
+	return backup.UploadSessionStatus{}, backup.ErrUploadUnavailable
+}
+
+func (fake *fakeBackupOperations) UploadChunk(
+	context.Context,
+	store.BackupUploadActor,
+	string,
+	backup.UploadChunkRequest,
+) (model.BackupUploadChunk, error) {
+	return model.BackupUploadChunk{}, backup.ErrUploadUnavailable
+}
+
+func (fake *fakeBackupOperations) FinalizeUpload(
+	context.Context,
+	store.BackupUploadActor,
 	string,
 ) (model.BackupRecord, error) {
+	return model.BackupRecord{}, backup.ErrUploadUnavailable
+}
+
+func (fake *fakeBackupOperations) CancelUpload(
+	context.Context,
+	store.BackupUploadActor,
+	string,
+) error {
+	return backup.ErrUploadUnavailable
+}
+
+func (fake *fakeBackupOperations) StageRestore(
+	_ context.Context,
+	request backup.StageRequest,
+) (model.BackupRecord, error) {
 	fake.staged = true
+	fake.stageInput = request
 	return model.BackupRecord{ID: "backup", State: model.BackupStateStaged}, fake.stageErr
 }
 
@@ -114,6 +181,7 @@ func TestBackupHandlerOwnerAuthorizationAndRecentAuthentication(t *testing.T) {
 
 	recent := httptest.NewRequest(http.MethodPost, "/api/v1/admin/backups/backup/stage-restore",
 		strings.NewReader(`{"confirmation":"RESTORE BEAT"}`))
+	recent.Header.Set("Content-Type", "application/json")
 	recent.SetPathValue("id", "backup")
 	recent = recent.WithContext(middleware.WithAdminPrincipal(recent.Context(), *backupPrincipal(model.AdminRoleOwner, true)))
 	response = httptest.NewRecorder()
@@ -167,6 +235,7 @@ func TestBackupHandlerOperationsAndErrors(t *testing.T) {
 			resetBackupOperationErrors(operations)
 			test.configure()
 			request := httptest.NewRequest(test.method, test.path, strings.NewReader(test.body))
+			request.Header.Set("Content-Type", "application/json")
 			request.SetPathValue("id", "backup")
 			request = request.WithContext(middleware.WithAdminPrincipal(request.Context(), *owner))
 			response := httptest.NewRecorder()
@@ -235,10 +304,7 @@ func newTestBackupHandler(t *testing.T) (*BackupHandler, *fakeBackupOperations) 
 		t.Fatalf("new SQLite store: %v", err)
 	}
 	t.Cleanup(func() { _ = sqliteStore.Close() })
-	secrets, err := secretbox.New(filepath.Join(root, "admin-data.key"), nil)
-	if err != nil {
-		t.Fatalf("new secret box: %v", err)
-	}
+	secrets := testutil.OpenSecrets(t, sqliteStore.DB, root)
 	security, err := adminauth.NewService(adminauth.ServiceConfig{
 		Store: store.NewAdminStore(sqliteStore.DB), Secrets: secrets, LegacyToken: "token",
 	})

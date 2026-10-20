@@ -90,36 +90,8 @@ func (s *MTSStore) counterDelta(
 	return current, nil
 }
 
-func (s *MTSStore) queryLatestMetric(
-	ctx context.Context,
-	nodeID string,
-	metric string,
-	end time.Time,
-) (float64, bool, error) {
-	query, err := mts.NewQuery().
-		From("beat", "", metric).
-		Select("value").
-		TimeRange(0, end.Unix()).
-		Where(mts.TagEq("node", nodeID)).
-		Precision(mts.PrecisionSecond).
-		OrderByTimeDesc().
-		Limit(1).
-		Build()
-	if err != nil {
-		return 0, false, fmt.Errorf("build latest metric query: %w", err)
-	}
-	rows, err := s.engine.QueryRows(ctx, query)
-	if err != nil {
-		return 0, false, fmt.Errorf("query latest metric: %w", err)
-	}
-	if len(rows) == 0 {
-		return 0, false, nil
-	}
-	value, ok := rows[0].Fields["value"]
-	if !ok {
-		return 0, false, nil
-	}
-	return value.Float64, true, nil
+func (s *MTSStore) queryLatestMetric(ctx context.Context, nodeID string, metric string, end time.Time) (float64, bool, error) {
+	return s.queryLatestScalar(ctx, latestScalarQuery{nodeID: nodeID, metric: metric, end: end.Add(-time.Nanosecond)})
 }
 
 func (s *MTSStore) queryTrafficMetric(

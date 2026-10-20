@@ -27,29 +27,41 @@ var (
 	ErrAlreadyRunning = errors.New("backup is already running")
 	ErrNotFound       = errors.New("backup not found")
 	ErrInvalidConfirm = errors.New("restore confirmation phrase is invalid")
+	ErrRestoreStaged  = errors.New("another restore is already staged")
 )
 
 type recordStore interface {
 	Create(context.Context, *model.BackupRecord) error
 	Update(context.Context, *model.BackupRecord) error
 	Get(context.Context, string) (*model.BackupRecord, error)
-	List(context.Context) ([]model.BackupRecord, error)
+	ListBackupsPage(context.Context, store.BackupQuery) (model.BackupPage, error)
 	Delete(context.Context, string) error
+	Transition(context.Context, store.BackupTransition) error
+	Audit(context.Context, *model.AdminAuditEvent) error
+	ExpireTerminal(context.Context, []string, time.Time) (int64, error)
+	RecordQuarantine(context.Context, *model.BackupQuarantineRecord) error
+	CountQuarantine(context.Context) (int, error)
+	ListQuarantine(context.Context, int) ([]model.BackupQuarantineRecord, error)
 }
 
 type Service struct {
-	ctx         context.Context
-	records     recordStore
-	sqlite      *store.SQLiteStore
-	mts         *store.MTSStore
-	root        string
-	dataKeyPath string
-	version     string
-	now         func() time.Time
-	mu          sync.Mutex
-	running     bool
-	wg          sync.WaitGroup
-	themesDir   string
+	ctx             context.Context
+	records         recordStore
+	sqlite          *store.SQLiteStore
+	mts             *store.MTSStore
+	root            string
+	dataKeyPath     string
+	version         string
+	now             func() time.Time
+	mu              sync.Mutex
+	running         bool
+	wg              sync.WaitGroup
+	themesDir       string
+	secretLifecycle SecretLifecycle
+	geoipAssets     GeoIPAssets
+	externalMMDB    string
+	uploads         UploadSessionStore
+	uploadMu        sync.Mutex
 }
 
 // SetThemesDir 配置主题包数据目录，用于备份格式 v2 的主题资产归档。
@@ -69,6 +81,9 @@ func NewService(
 	if records == nil || sqlite == nil || mts == nil {
 		return nil, errors.New("backup dependencies are required")
 	}
+	if err := mts.AttachMetricCatalog(ctx, store.NewMetricCatalogStore(sqlite.DB)); err != nil {
+		return nil, fmt.Errorf("initialize backup metric inventory: %w", err)
+	}
 	if err := secureDirectory(root); err != nil {
 		return nil, err
 	}
@@ -82,24 +97,31 @@ func (service *Service) Start(ctx context.Context) (model.BackupRecord, error) {
 	if service.running {
 		return model.BackupRecord{}, ErrAlreadyRunning
 	}
+	release, err := service.acquireSecretLifecycle(ctx)
+	if err != nil {
+		return model.BackupRecord{}, err
+	}
 	now := service.now()
 	id := uuid.New().String()
 	record := model.BackupRecord{ID: id, Filename: backupFilename(now, id), Source: "generated",
 		State: model.BackupStateRunning, CreatedAt: now}
 	if err := service.records.Create(ctx, &record); err != nil {
+		release()
 		return model.BackupRecord{}, err
 	}
 	service.running = true
 	service.wg.Add(1)
-	go service.execute(record)
+	go service.execute(record, release)
 	return record, nil
 }
 
-func (service *Service) execute(record model.BackupRecord) {
+func (service *Service) execute(record model.BackupRecord, release func()) {
 	defer service.wg.Done()
+	defer release()
 	result, err := service.createArchive(service.ctx, record)
 	completed := service.now()
 	result.CompletedAt = &completed
+	result.UpdatedAt = completed
 	if err != nil {
 		result.State = model.BackupStateFailed
 		result.ErrorMessage = err.Error()
@@ -114,8 +136,22 @@ func (service *Service) execute(record model.BackupRecord) {
 	service.mu.Unlock()
 }
 
-func (service *Service) List(ctx context.Context) ([]model.BackupRecord, error) {
-	return service.records.List(ctx)
+// ListQuarantine 只暴露隔离清单的只读视图，归档本身既不导入也不删除。
+func (service *Service) ListQuarantine(ctx context.Context) ([]model.BackupQuarantineRecord, error) {
+	return service.records.ListQuarantine(ctx, store.BackupMaximumPage)
+}
+
+// ListQuarantinedUploads 只暴露被拒上传会话的只读视图；没有分块上传实现时返回空清单。
+func (service *Service) ListQuarantinedUploads(ctx context.Context) ([]model.BackupUploadSession, error) {
+	if service.uploads == nil {
+		return []model.BackupUploadSession{}, nil
+	}
+	return service.uploads.ListQuarantined(ctx, store.BackupMaximumPage)
+}
+
+// List 只返回有界的一页备份历史，由服务层补齐新的游标语义。
+func (service *Service) List(ctx context.Context, query store.BackupQuery) (model.BackupPage, error) {
+	return service.records.ListBackupsPage(ctx, query)
 }
 
 func (service *Service) Open(ctx context.Context, id string) (*os.File, model.BackupRecord, error) {
@@ -131,29 +167,18 @@ func (service *Service) Open(ctx context.Context, id string) (*os.File, model.Ba
 	if err != nil {
 		return nil, model.BackupRecord{}, err
 	}
+	present, err := regularArchivePresent(path)
+	if err != nil {
+		return nil, model.BackupRecord{}, err
+	}
+	if !present {
+		return nil, model.BackupRecord{}, errors.New("backup archive is missing")
+	}
 	file, err := os.Open(path)
 	if err != nil {
 		return nil, model.BackupRecord{}, fmt.Errorf("open backup archive: %w", err)
 	}
 	return file, *record, nil
-}
-
-func (service *Service) Delete(ctx context.Context, id string) error {
-	record, err := service.record(ctx, id)
-	if err != nil {
-		return err
-	}
-	if record.State == model.BackupStateStaged {
-		return errors.New("staged backup cannot be deleted")
-	}
-	path, err := service.archivePath(record.Filename)
-	if err != nil {
-		return err
-	}
-	if err := removeRegularFile(path); err != nil {
-		return err
-	}
-	return service.records.Delete(ctx, id)
 }
 
 func (service *Service) Wait() {

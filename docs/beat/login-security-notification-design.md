@@ -2,7 +2,8 @@
 
 Updated: 2026-07-30
 
-Status: reviewed design; implementation requires explicit approval
+Status: implemented in source (schema 17, authentication producer, admin API with owner-only source reveal, `/admin/security` events console)
+Implementation note: consolidated tests and host evidence are still pending
 
 ## Goal and product boundary
 
@@ -198,9 +199,9 @@ SQLite work, never provider latency or DNS.
 
 ## Persistence and dependency order
 
-This producer uses canonical SQLite migration `v12`. It depends on commercial
-notification delivery `v6`, follows GeoIP/lifecycle `v7` for optional trusted
-location, and is ordered after automation access `v11` so the final security
+This producer uses canonical SQLite migration `v17`. It depends on commercial
+notification delivery `v10`, follows GeoIP/lifecycle `v13` for optional trusted
+location, and is ordered after automation access `v16` so the final security
 event vocabulary is stable. It retains backup archive format `v4`. The
 assignment is maintained in
 [`commercial-parity-implementation-sequence.md`](./commercial-parity-implementation-sequence.md).
@@ -239,6 +240,16 @@ Owners manage thresholds, privacy, retention, and routes. Admins may list,
 filter, inspect, and acknowledge events. Full-source display, when enabled,
 requires owner role and recent reauthentication. Public and Agent routes expose
 none of this data.
+
+History filters are validated against the fixed vocabularies (kind, severity, source
+class, reason, routing, delivery) before any SQL runs, so an out-of-vocabulary filter
+returns `400` instead of reaching the query builder.
+
+`GET /api/v1/admin/security/events/{id}/source` returns the canonical address from
+the linked protected audit record: owner role plus recent reauthentication, refused
+while privacy stays `coarse` (`403`), `404` for an unknown event, and `409` when the
+event exists without a protected source record. A successful reveal writes
+`security.event.source_reveal` in the same transaction as the read.
 
 All selectors return `{value, label}` options and render administrator names,
 event labels, reason labels, channel names, and severity labels. IDs remain
@@ -314,9 +325,10 @@ Backend tests cover:
   retention, backup/restore, and reconciliation idempotency.
 
 Frontend tests cover every selector rendering labels rather than IDs, owner and
-admin permissions, privacy preview, event filtering/detail, background updates,
-dead delivery, mobile layout, keyboard use, accessible names, and absence of
-raw user agents, tokens, or hidden full IP values from the DOM.
+admin permissions, privacy preview, event filtering/detail, owner-only source
+reveal behind confirmation, background updates, dead delivery, mobile layout,
+keyboard use, accessible names, and absence of raw user agents, tokens, or hidden
+full IP values from the DOM.
 
 Acceptance requires at least 90 percent Go statement and frontend line
 coverage, race tests, lint, `goimports-reviser`, production build, browser
@@ -327,7 +339,7 @@ and policy routes return `401` without an administrator session.
 ## Approval boundary
 
 This design authorizes no implementation. It is canonical SQLite migration
-`v12` and changes login transaction
+`v17` and changes login transaction
 semantics, rate-limit persistence, SQLite schema, notification production,
 security retention, administrator APIs, and UI. Implementation requires prior
 approval of notification v6 and explicit approval of this complete design.

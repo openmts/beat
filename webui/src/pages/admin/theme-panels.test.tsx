@@ -2,14 +2,16 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import { LocaleProvider } from "@/context/locale"
 import { ThemesPanel } from "@/pages/admin/theme-panels"
+import { THEME_PALETTE_TOKENS } from "@/types/theme-definition"
 
 const api = vi.hoisted(() => ({
   list: vi.fn(), upload: vi.fn(), activate: vi.fn(), rollback: vi.fn(), remove: vi.fn(),
   exportTheme: vi.fn(), markets: vi.fn(), createMarket: vi.fn(), deleteMarket: vi.fn(),
-  updateMarket: vi.fn(), refresh: vi.fn(), install: vi.fn(),
+  updateMarket: vi.fn(), refresh: vi.fn(), install: vi.fn(), preview: vi.fn(),
 }))
 vi.mock("@/lib/theme-api", () => ({
   listAdminThemes: () => api.list(),
+  previewTheme: (id: string) => api.preview(id),
   uploadTheme: () => api.upload(),
   activateTheme: (id: string) => api.activate(id),
   rollbackTheme: () => api.rollback(),
@@ -51,6 +53,8 @@ describe("themes panel installed view", () => {
     api.activate.mockResolvedValue({ id: "p1", is_active: true })
     render(<LocaleProvider><ThemesPanel /></LocaleProvider>)
     fireEvent.click(await screen.findByRole("button", { name: "Activate" }))
+    expect(api.activate).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole("button", { name: "Confirm" }))
     await waitFor(() => expect(api.activate).toHaveBeenCalledWith("p1"))
   })
 
@@ -58,7 +62,24 @@ describe("themes panel installed view", () => {
     api.rollback.mockResolvedValue({ rollback_target: "built-in" })
     render(<LocaleProvider><ThemesPanel /></LocaleProvider>)
     fireEvent.click(await screen.findByRole("button", { name: "Roll back" }))
+    fireEvent.click(screen.getByRole("button", { name: "Confirm" }))
     await waitFor(() => expect(api.rollback).toHaveBeenCalled())
+  })
+
+  it("shows the declared site-configurable fields in the package declaration", async () => {
+    const palette = Object.fromEntries(THEME_PALETTE_TOKENS.map((key) => [key, "#172033"]))
+    api.preview.mockResolvedValue({
+      package_id: "p1", theme_id: "t1", name: "Corporate", version: "1.0.0", runtime: "declarative", built_in: false, protocol: 2,
+      declarative: { schema_version: 1, overview: "cards", detail: "balanced", density: "comfortable", radius: 6, light: palette, dark: palette },
+      configuration_schema: { type: "managed", items: [
+        { key: "overview", type: "select", options: ["cards", "table"] },
+        { key: "show_tags", type: "switch" },
+      ] },
+    })
+    render(<LocaleProvider><ThemesPanel /></LocaleProvider>)
+    fireEvent.click(await screen.findByRole("button", { name: "Package declaration · Corporate" }))
+    expect(await screen.findByText(/Site-configurable/)).toBeInTheDocument()
+    expect(screen.getByText(/Overview layout: Grouped cards \/ Fleet table · Node tags: on \/ off/)).toBeInTheDocument()
   })
 
   it("shows an error on load failure", async () => {
@@ -105,7 +126,7 @@ describe("themes panel market view", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Refresh catalog" }))
     expect((await screen.findAllByText("Market Theme")).length).toBeGreaterThan(0)
     fireEvent.click(screen.getAllByRole("button", { name: "Install" })[0])
-    await waitFor(() => expect(api.install).toHaveBeenCalledWith("m1", "market-theme"))
+    await waitFor(() => expect(api.install).toHaveBeenCalledWith("m1", expect.objectContaining({ theme_id: "market-theme", version: "2.0.0", package_sha256: "a".repeat(64) })))
   })
 })
 describe("themes panel additional coverage", () => {
@@ -120,6 +141,8 @@ describe("themes panel additional coverage", () => {
     api.remove.mockResolvedValue(undefined)
     render(<LocaleProvider><ThemesPanel /></LocaleProvider>)
     fireEvent.click(await screen.findByRole("button", { name: "Delete" }))
+    expect(api.remove).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole("button", { name: "Confirm" }))
     await waitFor(() => expect(api.remove).toHaveBeenCalledWith("p1"))
   })
 
@@ -137,6 +160,7 @@ describe("themes panel additional coverage", () => {
     fireEvent.click(screen.getByRole("tab", { name: "Market" }))
     const toggle = (await screen.findAllByRole("switch"))[0]
     fireEvent.click(toggle)
+    fireEvent.click(screen.getByRole("button", { name: "Confirm" }))
     await waitFor(() => expect(api.updateMarket).toHaveBeenCalled())
   })
 
@@ -145,6 +169,7 @@ describe("themes panel additional coverage", () => {
     render(<LocaleProvider><ThemesPanel /></LocaleProvider>)
     fireEvent.click(screen.getByRole("tab", { name: "Market" }))
     fireEvent.click(await screen.findByRole("button", { name: "Delete" }))
+    fireEvent.click(screen.getByRole("button", { name: "Confirm" }))
     await waitFor(() => expect(api.deleteMarket).toHaveBeenCalledWith("m1"))
   })
 
@@ -190,6 +215,7 @@ describe("themes panel error branches", () => {
     api.rollback.mockRejectedValue(new Error("rollback failed"))
     render(<LocaleProvider><ThemesPanel /></LocaleProvider>)
     fireEvent.click(await screen.findByRole("button", { name: "Roll back" }))
+    fireEvent.click(screen.getByRole("button", { name: "Confirm" }))
     expect(await screen.findByText("rollback failed")).toBeInTheDocument()
   })
 
@@ -197,10 +223,12 @@ describe("themes panel error branches", () => {
     api.remove.mockRejectedValue(new Error("delete failed"))
     render(<LocaleProvider><ThemesPanel /></LocaleProvider>)
     fireEvent.click(await screen.findByRole("button", { name: "Delete" }))
+    fireEvent.click(screen.getByRole("button", { name: "Confirm" }))
     expect(await screen.findByText("delete failed")).toBeInTheDocument()
   })
 
   it("surfaces market install error", async () => {
+    api.list.mockResolvedValue([])
     api.markets.mockResolvedValue([{ id: "m1", name: "M", catalog_url: "https://m/c", enabled: true, sort_order: 0, key_fingerprint: "", last_status: "", created_at: "2026-01-01T00:00:00Z", updated_at: "2026-01-01T00:00:00Z" }])
     api.refresh.mockResolvedValue({ schema_version: 1, source_id: "m1", themes: [{ theme_id: "t1", name: "T", version: "1.0.0", author: "a", description: "d", runtime: "declarative", package_url: "https://m/t.zip", package_sha256: "a".repeat(64), manifest_sha256: "b".repeat(64), minimum_beat_version: "0.1.0" }] })
     api.install.mockRejectedValue(new Error("install failed"))

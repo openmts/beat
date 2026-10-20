@@ -2,7 +2,7 @@
 
 Updated: 2026-07-30
 
-Status: reviewed design; implementation requires explicit approval
+Status: reviewed design; owner approved implementation on 2026-10-15 (blanket approval of all pending items)
 
 ## Goal and competitor evidence
 
@@ -16,7 +16,7 @@ balance without changing metric history.
 Beat will provide the useful accounting outcome through immutable calibration
 events. This calibration feature never deletes, rewrites, or backfills raw MTS
 traffic history. Separately approved explicit history erasure may remove those
-rows under the fixed `v17` contract in
+rows under the fixed `v22` contract in
 [`metric-erasure-design.md`](./metric-erasure-design.md).
 
 Evidence fixed to the reviewed DStatus commit
@@ -103,7 +103,7 @@ successful reset while either store is uncertain.
 
 ## Persistence and migration
 
-Canonical SQLite migration `v16`, release batch `traffic-calibration`, as
+Canonical SQLite migration `v21`, release batch `traffic-calibration`, as
 assigned in
 [`commercial-parity-implementation-sequence.md`](./commercial-parity-implementation-sequence.md),
 adds an append-only `traffic_calibration_events` ledger. Each row contains:
@@ -130,13 +130,13 @@ active cycle start across nodes before deletion. Node deletion preserves the
 redacted node-name snapshot and event history but makes the event ineligible for
 future resolution. No background job copies resolved totals into SQLite.
 
-A successful `v17` erasure containing traffic measurements is a new accounting
+A successful `v22` erasure containing traffic measurements is a new accounting
 boundary. Calibration events at or before its cutoff remain immutable audit
 history but do not influence later current-cycle totals; an owner may append a
 new calibration after the cutoff. The erasure worker never edits this ledger.
 
-Migration `v16` depends on the deployed account-security audit and current MTS
-traffic aggregation. It is ordered after `v15` solely to keep one canonical
+Migration `v21` depends on the deployed account-security audit and current MTS
+traffic aggregation. It is ordered after `v20` solely to keep one canonical
 release train; it does not depend behaviorally on edge access policy.
 
 ## Authorization and API
@@ -214,7 +214,7 @@ ledger and MTS; no cached adjusted total is trusted. A restore lacking a valid
 referenced event fails closed. Earlier supported backup formats restore with an
 empty calibration ledger and preserve raw behavior.
 
-Rollback restores the pre-`v16` SQLite backup and matching binary. MTS needs no
+Rollback restores the pre-`v21` SQLite backup and matching binary. MTS needs no
 rollback because the batch never mutates its historical rows or adds a new
 measurement. There is no down migration and no destructive cleanup command.
 
@@ -243,8 +243,63 @@ backup/upgrade/rollback drills, and IPv4/IPv6 public/admin isolation.
 ## Approval boundary
 
 Implementation requires explicit approval because it adds SQLite migration
-`v16`, owner-only APIs, an append-only accounting ledger, recent-auth actions,
+`v21`, owner-only APIs, an append-only accounting ledger, recent-auth actions,
 new public response fields, shared ingestion/calibration locking, alert behavior,
 and administration UI. Approval must explicitly preserve immutable MTS history,
 SQLite-only application metadata, raw historical reports, and login-free public
 monitoring.
+
+## Implementation status, 2026-10-15
+
+The server control plane is implemented in the working tree:
+
+- `internal/model/traffic_calibration.go` owns the event contract (`set`/`revoke`
+  shapes, 8 PiB per-direction bound, 1-500 character reason, canonical base-10
+  byte strings, UUID request ids), `Anchor`/`Calibrated`, `SelectTrafficCalibration`
+  and the public `TrafficAccounting` projection.
+- `internal/store/sqlite_migrations_v21.go` adds the append-only
+  `traffic_calibration_events` ledger with kind-specific checks, the request-id
+  uniqueness index, and `node_id ... ON DELETE SET NULL`.
+- `internal/store/traffic_calibration*.go` owns append/replay/conflict handling,
+  revoke and atomic replace, cross-node-safe event lookup, cursor pagination and
+  the redacted audit evidence (field names only, never targets or reason text).
+- `internal/store/mts_traffic_boundary.go` exposes the durable traffic-write
+  boundary: it takes the same per-node lock as ingestion, flushes, and returns
+  the last committed sample second. `QueryTrafficUsageAfter` sums the half-open
+  `(effective, end)` interval.
+- `internal/store/traffic_resolver.go` composes raw MTS totals with the latest
+  in-cycle ledger state. `internal/api/handler/node_response.go` uses it for the
+  public and admin node summaries and adds only `accounting_mode` and
+  `calibrated_at`. `internal/alerter` uses the same resolver for
+  `traffic_usage_percent`.
+- `internal/api/routes_traffic_calibration.go` registers the four owner-only
+  endpoints with recent authentication and the metadata audit actor; a failed
+  audit aborts the append.
+
+Effective-second safety: the auto-selected second is
+`max(cycle_start, min(now_second, boundary))`, and explicit instants must be a
+whole second inside the cycle and not after the boundary. Because ingestion
+enforces strictly increasing sample instants and calibration holds the node
+lock, every later sample is strictly after the effective second, so
+`target + raw_after(effective)` neither double counts nor drops a delta.
+
+Verification in this sandbox: `go build ./...`, `go vet`, `goimports-reviser`,
+`golangci-lint` (0 issues) and the new model/store/handler/route tests pass,
+including an end-to-end route test that appends a calibration through the owner
+API and observes `accounting_mode: "calibrated"` on the public node summary.
+
+Administration surfaces are implemented as well: the node card menu opens
+`TrafficCalibrationDialog` (set/reset modes, human-readable units converted to
+exact decimal byte strings, mandatory reason, idempotent request id, `AlertDialog`
+confirmation) and `TrafficCalibrationHistory` (`Sheet` + `Table` + `Badge`,
+paginated, revoke only on the active set), and the public traffic component adds
+a quiet `Adjusted` badge with the effective time. Failures append a redacted
+`traffic_calibration.reject` audit row (`RecordRejection`, outcome `failure`,
+reason category only, never target values or reason text). Traffic-delta
+retention is clamped to the oldest active cycle start through
+`MTSStore.WithTrafficCycleSource`, and restore validation replays the archived
+ledger (`validateTrafficCalibrationLedger`: event shape, whole-second effective
+instants, node linkage, active-set reference chain, row limit).
+
+Remaining for this batch: the host-only race, coverage, browser and rollback
+drills, and the v22-side erasure-boundary assertion in restore validation.

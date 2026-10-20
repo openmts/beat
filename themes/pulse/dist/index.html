@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Pulse</title>
+    <link rel="stylesheet" href="theme.css" />
+    <script type="module" src="theme.js"></script>
+  </head>
+  <body>
+    <main id="app" class="pulse">
+      <header class="pulse-head">
+        <div class="pulse-brand">
+          <p id="site-description" class="pulse-eyebrow"></p>
+          <h1 id="site-title">Beat</h1>
+        </div>
+        <dl class="pulse-summary">
+          <div><dt id="online-label">Online</dt><dd id="online-count">0</dd></div>
+          <div><dt id="offline-label">Offline</dt><dd id="offline-count">0</dd></div>
+          <div><dt id="updated-label">Updated</dt><dd id="updated-at">&mdash;</dd></div>
+        </dl>
+      </header>
+      <p id="status" class="pulse-status" role="status"></p>
+      <section id="node-grid" class="pulse-grid"></section>
+      <footer class="pulse-foot"><span id="node-count"></span><span id="locale"></span></footer>
+    </main>
+  </body>
+</html>

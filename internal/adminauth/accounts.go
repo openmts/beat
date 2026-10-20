@@ -3,11 +3,11 @@ package adminauth
 import (
 	"context"
 	"errors"
-	"fmt"
 
 	"github.com/google/uuid"
 
 	"github.com/beat/backend/internal/model"
+	"github.com/beat/backend/internal/secretbox"
 	"github.com/beat/backend/internal/store"
 )
 
@@ -21,7 +21,7 @@ func (service *Service) ListUsers(ctx context.Context, principal *model.AdminPri
 func (service *Service) CreateUser(
 	ctx context.Context, principal *model.AdminPrincipal, request CreateUserRequest,
 ) (model.AdminUser, error) {
-	if err := service.RequireOwner(principal); err != nil {
+	if err := service.RequireOwnerRecent(principal); err != nil {
 		return model.AdminUser{}, err
 	}
 	if err := model.ValidateAdminPassword(request.Password); err != nil {
@@ -39,10 +39,11 @@ func (service *Service) CreateUser(
 	if err := user.Validate(); err != nil {
 		return model.AdminUser{}, err
 	}
-	if err := service.config.Store.CreateUser(ctx, &user); err != nil {
+	created, err := service.changeAdministrator(ctx, store.AdministratorChange{Principal: *principal, User: user, Audit: model.AdminAuditEvent{Action: store.AdministratorCreate}})
+	if err != nil {
 		return model.AdminUser{}, err
 	}
-	return user, nil
+	return *created, nil
 }
 
 func (service *Service) UpdateUser(
@@ -56,7 +57,12 @@ func (service *Service) UpdateUser(
 	if err := candidate.Validate(); err != nil {
 		return err
 	}
-	return service.config.Store.UpdateUser(ctx, id, candidate.DisplayName, candidate.Role, request.Enabled)
+	candidate.ID, candidate.Enabled = id, request.Enabled
+	if _, err := service.changeAdministrator(ctx, store.AdministratorChange{Principal: *principal, User: candidate, Audit: model.AdminAuditEvent{Action: store.AdministratorUpdate}}); err != nil {
+		return err
+	}
+	service.invalidateLiveRole(id, request)
+	return nil
 }
 
 func (service *Service) DeleteUser(ctx context.Context, principal *model.AdminPrincipal, id string) error {
@@ -66,7 +72,11 @@ func (service *Service) DeleteUser(ctx context.Context, principal *model.AdminPr
 	if principal.User.ID == id {
 		return errors.New("current administrator cannot delete their own account")
 	}
-	return service.config.Store.DeleteUser(ctx, id)
+	if _, err := service.changeAdministrator(ctx, store.AdministratorChange{Principal: *principal, User: model.AdminUser{ID: id}, Audit: model.AdminAuditEvent{Action: store.AdministratorDelete}}); err != nil {
+		return err
+	}
+	service.revokeLiveUser(id, "")
+	return nil
 }
 
 func (service *Service) ChangePassword(
@@ -82,27 +92,43 @@ func (service *Service) ChangePassword(
 	if err != nil {
 		return err
 	}
-	now := service.now()
-	if err := service.config.Store.UpdatePassword(ctx, principal.User.ID, hash, now); err != nil {
+	updated, err := service.changeAdministrator(ctx, store.AdministratorChange{Principal: *principal, User: model.AdminUser{ID: principal.User.ID, PasswordHash: hash}, ExpectedPasswordHash: principal.User.PasswordHash, Audit: model.AdminAuditEvent{Action: store.AdministratorPassword}})
+	if err != nil {
 		return err
 	}
-	if err := service.config.Store.RevokeUserSessions(ctx, principal.User.ID, principal.Session.ID, now); err != nil {
-		return fmt.Errorf("revoke sessions after password change: %w", err)
-	}
+	principal.User = *updated
+	service.revokeLiveUser(principal.User.ID, principal.Session.ID)
 	return nil
 }
 
 func (service *Service) DisableTOTP(ctx context.Context, principal *model.AdminPrincipal) error {
+	if principal == nil {
+		return ErrSessionInvalid
+	}
 	if !principal.Session.RecentlyAuthenticated(service.now()) {
 		return ErrRecentAuthRequired
 	}
-	return service.config.Store.UpdateTOTP(ctx, principal.User.ID, nil, nil)
+	service.pendingTOTP.mu.Lock()
+	defer service.pendingTOTP.mu.Unlock()
+	snapshot, err := service.selfTOTPSnapshot(ctx, principal)
+	if err != nil {
+		return err
+	}
+	err = service.config.Secrets.WithWrite(ctx, func(_ secretbox.ResourceAccess) error {
+		_, err := service.commitSelfSecurity(ctx, service.selfSecurityChange(snapshot, store.AdministratorTOTPDisable, snapshot.User.ID))
+		return err
+	})
+	if err != nil {
+		return err
+	}
+	service.pendingTOTP.clearUser(snapshot.User.ID)
+	return nil
 }
 
 func (service *Service) ListSessions(
-	ctx context.Context, principal *model.AdminPrincipal,
+	ctx context.Context, principal *model.AdminPrincipal, limit int,
 ) ([]model.AdminSession, error) {
-	sessions, err := service.config.Store.ListSessions(ctx, principal.User.ID)
+	sessions, err := service.config.Store.ListSessions(ctx, principal.User.ID, service.now(), limit)
 	if err != nil {
 		return nil, err
 	}
@@ -112,21 +138,34 @@ func (service *Service) ListSessions(
 	return sessions, nil
 }
 
-func (service *Service) RevokeSession(
-	ctx context.Context, principal *model.AdminPrincipal, id string,
-) error {
-	session, err := service.config.Store.GetSessionByID(ctx, id)
+func (service *Service) RevokeSession(ctx context.Context, principal *model.AdminPrincipal, id string) error {
+	if principal == nil {
+		return ErrSessionInvalid
+	}
+	service.pendingTOTP.mu.Lock()
+	defer service.pendingTOTP.mu.Unlock()
+	_, err := service.commitSelfSecurity(ctx, service.selfSecurityChange(*principal, store.AdministratorSessionRevoke, id))
 	if err != nil {
 		return err
 	}
-	if session == nil || session.UserID != principal.User.ID {
-		return store.ErrAdminSessionNotFound
-	}
-	return service.config.Store.RevokeSession(ctx, id, service.now())
+	service.pendingTOTP.clearSession(id)
+	service.revokeLiveSession(id)
+	return nil
 }
 
 func (service *Service) RevokeOtherSessions(ctx context.Context, principal *model.AdminPrincipal) (int64, error) {
-	return service.config.Store.RevokeOtherSessions(ctx, principal.User.ID, principal.Session.ID, service.now())
+	if principal == nil {
+		return 0, ErrSessionInvalid
+	}
+	service.pendingTOTP.mu.Lock()
+	defer service.pendingTOTP.mu.Unlock()
+	count, err := service.commitSelfSecurity(ctx, service.selfSecurityChange(*principal, store.AdministratorSessionsRevoke, principal.User.ID))
+	if err != nil {
+		return 0, err
+	}
+	service.pendingTOTP.clearOthers(principal.User.ID, principal.Session.ID)
+	service.revokeLiveUser(principal.User.ID, principal.Session.ID)
+	return count, nil
 }
 
 func (service *Service) RequireOwner(principal *model.AdminPrincipal) error {

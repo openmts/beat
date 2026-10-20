@@ -13,6 +13,7 @@ vi.mock("@/context/site-settings", () => ({
       logo_url: "",
       show_network_quality: true,
     },
+    reportInteraction: vi.fn(),
   }),
 }))
 

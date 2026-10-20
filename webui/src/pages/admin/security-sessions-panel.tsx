@@ -5,11 +5,12 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { useLocale } from "@/context/locale"
+import { formatDateTime } from "@/lib/intl-format"
 import { listAdminSessions, revokeAdminSession, revokeOtherAdminSessions } from "@/lib/security-api"
 import type { AdminSession } from "@/types/security"
 
 export function SecuritySessionsPanel() {
-  const { t } = useLocale()
+  const { locale, t } = useLocale()
   const [sessions, setSessions] = useState<AdminSession[]>([])
   const [error, setError] = useState("")
 
@@ -53,8 +54,8 @@ export function SecuritySessionsPanel() {
             </CardHeader>
             <CardContent className="flex items-end justify-between gap-3">
               <div className="text-xs text-muted-foreground">
-                <p>{t("security.last_activity")}: {new Date(session.last_activity_at).toLocaleString()}</p>
-                <p>{t("security.expires")}: {new Date(session.absolute_expires_at).toLocaleString()}</p>
+                <p>{t("security.last_activity")}: {formatDateTime(locale, session.last_activity_at)}</p>
+                <p>{t("security.expires")}: {formatDateTime(locale, session.absolute_expires_at)}</p>
               </div>
               <Button variant="ghost" size="icon-sm" aria-label={t("security.revoke")}
                 onClick={() => void runAction(() => revokeAdminSession(session.id))}>

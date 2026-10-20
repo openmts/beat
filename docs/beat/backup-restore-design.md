@@ -1,14 +1,20 @@
 # Backup and restore
 
-Updated: 2026-08-01
+Updated: 2026-10-15
 
 Status: deployed; create/download/validation/staging/startup-apply/rollback were
 verified in an isolated acceptance environment
 
-The deployed happy path is verified, but interrupted record/archive/journal
+Owner approval, 2026-10-15: the resumable-upload extension (`v18`) and its
+approval boundary below are approved for implementation, together with all other
+pending approval items.
+
+The deployed happy path is verified. Interrupted record/archive/journal
 reconciliation, retry-safe deletion, cursor listing, and proof that an
-uncommitted restore journal cannot apply are owned by reviewed migration `v19`
-in [`application-data-lifecycle-design.md`](./application-data-lifecycle-design.md).
+uncommitted restore journal cannot apply are specified by reviewed migration
+`v24` in [`application-data-lifecycle-design.md`](./application-data-lifecycle-design.md)
+and implemented in the worktree (`internal/backup`, `internal/store`,
+`cmd/server`); they are not yet deployed and the host CI gate has not run.
 
 ## Goal
 
@@ -38,7 +44,7 @@ only these allowlisted entries:
 
 The archive contains SSH private keys and authentication material from SQLite
 and is therefore explicitly treated as a recoverable credential bundle. After
-`v5`, those values are encrypted under SQLite-wrapped data keys, but the archive
+`v9`, those values are encrypted under SQLite-wrapped data keys, but the archive
 also contains the matching root key; this improves live database-only
 disclosure, not archive confidentiality. It is never exposed by a public URL or
 written outside the configured backup directory, and external copies require
@@ -47,9 +53,9 @@ encrypted storage or independent archive/KMS wrapping. See
 
 Future archive evolution is assigned centrally in
 [`commercial-parity-implementation-sequence.md`](./commercial-parity-implementation-sequence.md):
-theme assets introduce format `v2`, managed GeoIP files introduce `v3`, and the
-metric catalog introduces the catalog-governed logical MTS export in `v4`.
-Resumable upload migration `v13` changes transport only and continues uploading
+theme assets introduce format `v2`, the metric catalog introduces typed MTS export in `v3`, and managed GeoIP
+files extend that payload in `v4`.
+Resumable upload migration `v18` changes transport only and continues uploading
 the then-current archive format without creating `v5`.
 
 ## MTS logical snapshot
@@ -75,7 +81,7 @@ envelope; see
 The pinned MTS public `RowIterator` exposes measurement, tags, timestamp, and
 typed fields, so the logical format does not require internal APIs. `MTSStore`
 gains an operation read/write lock. Metric and network writes hold a read lock;
-maintenance, explicit metric erasure after migration `v17`, and backup export
+maintenance, explicit metric erasure after migration `v22`, and backup export
 hold the write lock. Backup flushes MTS, captures a UTC cutoff, streams all rows
 at or before that cutoff through the public row iterator, and releases the lock
 after the gzip stream is complete. Queries remain available. This trades a
@@ -106,6 +112,28 @@ Authenticated owner routes:
 The API accepts no filesystem path. IDs are server-generated and resolved
 against the fixed backup root. Listing ignores symlinks and non-regular files.
 
+`GET /api/v1/admin/backups` is cursor-paged: it accepts `state`, `cursor` and
+`limit` (default 50, maximum 200) and returns `{items, next_cursor}`. The cursor
+is an RFC3339Nano `(created_at, id)` pair bound to the requested state, so records
+created inside the same millisecond are never skipped and a cursor cannot be
+replayed under a different filter. An unparseable cursor, an out-of-range limit
+or an unknown state returns `400`.
+
+Records move through `running -> ready|failed`, upload validation
+`-> validated`, restore staging `staging -> staged|failed`, and deletion
+`any state except running|staging|staged -> deleting`. `interrupted` and
+`missing` are only reachable from reconciliation. `failed`, `interrupted` and
+`missing` are terminal for retention purposes and are deleted 90 days after
+their last update. Deleting a record
+first commits `deleting` together with `previous_state`, then removes the archive
+and the row, so the request is retry-safe after a crash: a missing archive is
+idempotent, and a symlink or directory in its place is never followed or removed
+and is reported as a deferred reconcile outcome instead.
+
+`GET /api/v1/admin/backups/quarantine` lists (owner or `backups:read-metadata`
+service token) the archive files that reconciliation moved aside, with the
+recorded reason and timestamp, plus a total count.
+
 ## Upload validation
 
 - Maximum compressed upload: 4 GiB.
@@ -128,7 +156,7 @@ live data untouched.
 
 The single-request upload is deployed, but current Komari supports chunked
 backup upload with client retry and server-side merge. Beat assigns the
-owner-only resumable protocol to canonical SQLite migration `v13`, after backup
+owner-only resumable protocol to canonical SQLite migration `v18`, after backup
 archive format `v4` is deployed. It changes upload transport and persistent
 session state but does not introduce a new archive format. The assignment is
 maintained in
@@ -160,7 +188,15 @@ staging state.
 
 Frontend upload uses bounded parallel workers, per-chunk progress, retry with
 jitter, cancel, and explicit resume. It never treats a network retry as a new
-restore, and it clears file and session handles when the dialog closes. Tests
+restore, and it clears file and session handles when the dialog closes.
+
+Implementation status, 2026-10-15: the extension is implemented in the worktree.
+Migration `v18` now creates `backup_upload_sessions` and `backup_upload_chunks`;
+`internal/backup/upload_session*.go` owns staging, chunk verification, idempotent
+retries, quarantine, resume, assembly and maintenance; the owner-only API lives
+under `/api/v1/admin/backups/uploads`; and `/admin/settings` uploads through the
+resumable dialog. This section describes the approved contract, so the paragraph
+above stays the acceptance reference. Tests
 cover restart, duplicate/conflicting chunks, digest mismatch, missing chunks,
 limits, expiry, cleanup, owner isolation, IPv4/IPv6 interruption, and proof that
 no incomplete upload reaches restore staging.
@@ -187,6 +223,40 @@ The application never overwrites current data in place. Arbitrary custom SQLite
 or MTS paths inside the archive are ignored; command-line target paths remain
 authoritative.
 
+Staging is three-phase and generation-bound. `stage-restore` writes a random
+`restore_generation` to the record (`staging`), writes the journal, then commits
+`staged`; a failure in either later phase aborts the staging directory and rolls
+the record back. At startup the pending journal is applied only when it is an
+offline journal or when the database has a `staged` record with the same
+generation; an unconfirmed journal never replaces live data. A conflicting
+pending journal for another backup returns `409 ErrRestoreStaged` instead of
+overwriting it.
+
+## Reconciliation and quarantine
+
+`cmd/server` runs `Service.Reconcile` after stores open and before the HTTP
+listener starts. It is idempotent and never fails startup: CAS conflicts are
+counted as deferred. In order it
+
+1. Loads and validates the pending journal.
+2. Walks every backup record through the bounded cursor page.
+3. Rolls back `staged` records whose generation or archive no longer matches,
+   marks `running` records `ready` when their archive fully validates and
+   `interrupted` otherwise, and turns `ready`/`validated` rows whose archive is
+   no longer a regular file into `missing`.
+4. Finishes `deleting` removals, retrying or deferring unsafe paths.
+5. Discards orphan online journals without a matching staged record; offline
+   journals are kept for the next supervised start.
+6. Sweeps the backup directory: `*.partial` files are removed, orphan
+   `beat-*.zip` archives are moved into `backups/quarantine/` with their reason
+   recorded, and stale `.restore-journal-*` files are removed. Known filenames,
+   the quarantine directory and non-regular files are left alone.
+7. Expires terminal records older than 90 days and audits each transition.
+
+Outcomes are exported as `beat_backup_reconcile_outcomes{outcome=...}` alongside
+`beat_backups_total{state=...}` (all nine states) and
+`beat_backups_quarantined`.
+
 ## Frontend
 
 Add a Backup and restore section to `/admin/settings` or `/admin/security`:
@@ -209,7 +279,7 @@ The interface never displays server filesystem paths or archive secrets.
   than running with a partial restore.
 - A canceled backup releases locks and removes only generated temporary files.
 - The deployed generic HTTP audit is not completion evidence for asynchronous
-  backup or startup restore work. Migration `v19` carries the originating actor,
+  backup or startup restore work. Migration `v24` carries the originating actor,
   HTTP request ID, audit linkage, backup ID, and restore generation through its
   durable state machine; accepted, completed, failed, reconciled, and unknown
   events reuse the envelope from

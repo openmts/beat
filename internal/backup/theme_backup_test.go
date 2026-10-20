@@ -96,7 +96,7 @@ func TestBackupFormat2ThemeRoundTrip(t *testing.T) {
 		t.Fatalf("start backup: %v", err)
 	}
 	fixture.service.Wait()
-	records, err := fixture.service.List(t.Context())
+	records, err := listBackups(t, fixture.service)
 	if err != nil || len(records) != 1 {
 		t.Fatalf("records = %v / %v", records, err)
 	}
@@ -151,7 +151,7 @@ func TestBackupFormat2RejectsTamperedTheme(t *testing.T) {
 		t.Fatalf("start backup: %v", err)
 	}
 	fixture.service.Wait()
-	records, err := fixture.service.List(t.Context())
+	records, err := listBackups(t, fixture.service)
 	if err != nil || len(records) != 1 || records[0].State != "ready" {
 		t.Fatalf("records = %v / %v", records, err)
 	}
@@ -259,7 +259,7 @@ func TestBackupCopyThemesInvalidDirectory(t *testing.T) {
 		t.Fatalf("start backup: %v", err)
 	}
 	fixture.service.Wait()
-	records, err := fixture.service.List(t.Context())
+	records, err := listBackups(t, fixture.service)
 	if err != nil || len(records) != 1 || records[0].State != "failed" {
 		t.Fatalf("records = %v / %v", records, err)
 	}

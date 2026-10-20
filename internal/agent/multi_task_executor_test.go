@@ -11,7 +11,7 @@ func TestMultiTaskExecutorCustomMetricRegister(t *testing.T) {
 	registry := NewCustomMetricRegistry()
 	executor := NewMultiTaskExecutor(nil, registry)
 	payload, err := model.EncodeCustomMetricRegisterPayload([]model.CustomMetric{
-		{Name: "latency", ShellCommand: "echo 5", IntervalSeconds: 15},
+		{Name: "latency", ShellCommand: "echo 5", IntervalSeconds: 15, Enabled: true},
 	})
 	if err != nil {
 		t.Fatalf("encode payload: %v", err)

@@ -1,10 +1,10 @@
 package handler
 
 import (
-	"context"
-	"fmt"
-	"log/slog"
+	"errors"
 	"net/http"
+	"strconv"
+	"time"
 
 	"github.com/beat/backend/internal/model"
 	"github.com/beat/backend/internal/notification"
@@ -17,6 +17,7 @@ type AlertHandler struct {
 	alertEventStore   *store.AlertEventStore
 	nodeStore         *store.NodeStore
 	delivery          *notification.Service
+	notifications     AlertNotifications
 }
 
 func NewAlertHandler(
@@ -61,8 +62,8 @@ func (h *AlertHandler) HandleCreateAlertRule(w http.ResponseWriter, r *http.Requ
 		Severity    string  `json:"severity"`
 		Enabled     bool    `json:"enabled"`
 	}
-	if err := ParseJSON(r, &body); err != nil {
-		JSONError(w, http.StatusBadRequest, "invalid request body")
+	if err := ParseJSONStrict(r, &body); err != nil {
+		WriteBodyError(w, err)
 
 		return
 	}
@@ -107,8 +108,8 @@ func (h *AlertHandler) HandleUpdateAlertRule(w http.ResponseWriter, r *http.Requ
 		Severity    string  `json:"severity"`
 		Enabled     bool    `json:"enabled"`
 	}
-	if err := ParseJSON(r, &body); err != nil {
-		JSONError(w, http.StatusBadRequest, "invalid request body")
+	if err := ParseJSONStrict(r, &body); err != nil {
+		WriteBodyError(w, err)
 
 		return
 	}
@@ -147,120 +148,65 @@ func (h *AlertHandler) HandleDeleteAlertRule(w http.ResponseWriter, r *http.Requ
 }
 
 func (h *AlertHandler) HandleListAlertEvents(w http.ResponseWriter, r *http.Request) {
-	events, err := h.alertEventStore.ListAlertEvents(r.Context())
+	query, err := alertEventQuery(r)
 	if err != nil {
+		JSONError(w, http.StatusBadRequest, "invalid alert event query")
+
+		return
+	}
+
+	page, err := h.alertEventStore.ListAlertEventsPage(r.Context(), query)
+	if err != nil {
+		if errors.Is(err, store.ErrInvalidAlertEventQuery) {
+			JSONError(w, http.StatusBadRequest, "invalid alert event query")
+
+			return
+		}
 		JSONError(w, http.StatusInternalServerError, "failed to list alert events")
 
 		return
 	}
 
-	JSONResponse(w, http.StatusOK, events)
+	JSONResponse(w, http.StatusOK, page)
 }
 
-// HandleAcknowledgeAlertEvent transitions a triggered event to acknowledged.
-func (h *AlertHandler) HandleAcknowledgeAlertEvent(w http.ResponseWriter, r *http.Request) {
-	event, err := h.alertEventStore.GetEventByID(r.Context(), r.PathValue("id"))
-	if err != nil {
-		JSONError(w, http.StatusInternalServerError, "failed to get alert event")
-		return
+// alertEventQuery 解析服务端筛选与游标；非法 limit、状态或时间一律拒绝，绝不在浏览器端兜底过滤。
+func alertEventQuery(request *http.Request) (store.AlertEventQuery, error) {
+	values := request.URL.Query()
+	query := store.AlertEventQuery{
+		RuleID: values.Get("rule_id"), NodeID: values.Get("node_id"),
+		Status: values.Get("status"), Cursor: values.Get("cursor"),
 	}
-	if event == nil {
-		JSONError(w, http.StatusNotFound, "alert event not found")
-		return
-	}
-	if event.Status != model.AlertStatusTriggered {
-		JSONError(w, http.StatusConflict, "only triggered events can be acknowledged")
-		return
-	}
-	now := model.NowUTC()
-	event.Status = model.AlertStatusAcknowledged
-	event.AcknowledgedAt = &now
-	if err := h.alertEventStore.UpdateEvent(r.Context(), event); err != nil {
-		JSONError(w, http.StatusInternalServerError, "failed to acknowledge alert event")
-		return
-	}
-	h.notifyAcknowledgment(r, event, "acknowledged")
-	JSONResponse(w, http.StatusOK, event)
-}
-
-// HandleResolveAlertEvent transitions an acknowledged event to resolved.
-func (h *AlertHandler) HandleResolveAlertEvent(w http.ResponseWriter, r *http.Request) {
-	event, err := h.alertEventStore.GetEventByID(r.Context(), r.PathValue("id"))
-	if err != nil {
-		JSONError(w, http.StatusInternalServerError, "failed to get alert event")
-		return
-	}
-	if event == nil {
-		JSONError(w, http.StatusNotFound, "alert event not found")
-		return
-	}
-	if event.Status != model.AlertStatusAcknowledged {
-		JSONError(w, http.StatusConflict, "only acknowledged events can be resolved")
-		return
-	}
-	now := model.NowUTC()
-	event.Status = model.AlertStatusResolved
-	event.ResolvedAt = &now
-	if err := h.alertEventStore.UpdateEvent(r.Context(), event); err != nil {
-		JSONError(w, http.StatusInternalServerError, "failed to resolve alert event")
-		return
-	}
-	h.notifyAcknowledgment(r, event, "resolved")
-	JSONResponse(w, http.StatusOK, event)
-}
-
-// notifyAcknowledgment pushes an acknowledgement or resolution notification to
-// all enabled channels. It enriches the event with rule and node context so
-// notification templates render the same fields as trigger deliveries. Delivery
-// failures are logged but do not fail the state change.
-func (h *AlertHandler) notifyAcknowledgment(r *http.Request, event *model.AlertEvent, kind string) {
-	h.enrichEvent(r.Context(), event)
-	channels, err := h.alertChannelStore.ListEnabledChannels(r.Context())
-	if err != nil {
-		slog.WarnContext(r.Context(), "list enabled channels for alert ack", "error", err)
-		return
-	}
-	nodeName := event.NodeName
-	if nodeName == "" {
-		nodeName = event.NodeID
-	}
-	ruleName := event.RuleName
-	if ruleName == "" {
-		ruleName = event.RuleID
-	}
-	action := "acknowledged"
-	if kind == "resolved" {
-		action = "resolved"
-	}
-	event.Message = fmt.Sprintf("alert %s: %s on node %s, value=%.2f", action, ruleName, nodeName, event.Value)
-	if kind == "resolved" {
-		now := model.NowUTC()
-		event.ResolvedAt = &now
-	}
-	for _, channel := range channels {
-		if _, err := h.delivery.Send(r.Context(), &channel, event); err != nil {
-			slog.WarnContext(r.Context(), "alert ack notification failed",
-				"channel_id", channel.ID, "channel_type", channel.ChannelType, "error", err)
+	if raw := values.Get("limit"); raw != "" {
+		limit, err := strconv.Atoi(raw)
+		if err != nil || limit < 1 {
+			return query, store.ErrInvalidAlertEventQuery
 		}
+		query.Limit = limit
 	}
+	from, err := alertEventTime(values.Get("from"))
+	if err != nil {
+		return query, err
+	}
+	to, err := alertEventTime(values.Get("to"))
+	if err != nil {
+		return query, err
+	}
+	if from != nil && to != nil && to.Before(*from) {
+		return query, store.ErrInvalidAlertEventQuery
+	}
+	query.From, query.To = from, to
+	return query, nil
 }
 
-// enrichEvent populates the non-persisted context fields (RuleName, NodeName,
-// Metric, Severity) on an event loaded from storage so notification templates
-// render complete information. Missing rules or nodes are skipped silently.
-func (h *AlertHandler) enrichEvent(ctx context.Context, event *model.AlertEvent) {
-	if rule, err := h.alertRuleStore.GetRuleByID(ctx, event.RuleID); err != nil {
-		slog.WarnContext(ctx, "enrich event: load rule", "rule_id", event.RuleID, "error", err)
-	} else if rule != nil {
-		event.RuleName = rule.Name
-		event.Metric = rule.Metric
-		event.Severity = rule.Severity
+func alertEventTime(raw string) (*time.Time, error) {
+	if raw == "" {
+		return nil, nil
 	}
-	if h.nodeStore != nil {
-		if node, err := h.nodeStore.GetNode(ctx, event.NodeID); err != nil {
-			slog.WarnContext(ctx, "enrich event: load node", "node_id", event.NodeID, "error", err)
-		} else if node != nil {
-			event.NodeName = node.Name
-		}
+	parsed, err := time.Parse(time.RFC3339, raw)
+	if err != nil {
+		return nil, store.ErrInvalidAlertEventQuery
 	}
+	utc := parsed.UTC()
+	return &utc, nil
 }

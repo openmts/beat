@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "id": "beat-terminal",
+  "name": "Terminal",
+  "description": "Compact monospace operations table with teal accents.",
+  "version": "1.0.1",
+  "author": "Beat contributors",
+  "license": "MIT",
+  "runtime": "declarative",
+  "minimum_beat_version": "0.1.0",
+  "preview": "preview.png",
+  "configuration": {
+    "type": "managed",
+    "items": [
+      {
+        "key": "font",
+        "options": [
+          "mono",
+          "system"
+        ]
+      },
+      {
+        "key": "density"
+      }
+    ]
+  },
+  "supported_locales": [
+    "en",
+    "zh-CN"
+  ]
+}

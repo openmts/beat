@@ -1,6 +1,7 @@
 import { useEffect, useState, type FormEvent, type ReactNode } from "react"
 import { SaveIcon } from "lucide-react"
 import { Alert, AlertDescription } from "@/components/ui/alert"
+import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
   Field,
@@ -20,13 +21,15 @@ import {
   type SelectOption,
 } from "@/components/ui/select"
 import { Switch } from "@/components/ui/switch"
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { Textarea } from "@/components/ui/textarea"
 import { useLocale } from "@/context/locale"
 import { useSiteSettings } from "@/context/site-settings"
-import { updateSiteSettings } from "@/lib/api"
-import type { SiteSettings } from "@/types"
+import { getDeploymentAccess, updateSiteSettings } from "@/lib/api"
+import type { DeploymentAccessStatus, PublicAddressMode, SiteSettings } from "@/types"
 import { PageHeader } from "@/components/page-header"
-import MaintenancePanel from "@/pages/admin/maintenance-panel"
+import DataStorageSection from "@/pages/admin/data-storage-section"
+import { PublicTelemetryPanel } from "@/pages/admin/public-telemetry-panel"
 import { ThemesPanel } from "@/pages/admin/theme-panels"
 
 function Settings() {
@@ -36,6 +39,23 @@ function Settings() {
   const [saving, setSaving] = useState(false)
   const [message, setMessage] = useState<string | null>(null)
   const [saveError, setSaveError] = useState<string | null>(null)
+  const [deployment, setDeployment] = useState<DeploymentAccessStatus | null>(null)
+  const [deploymentError, setDeploymentError] = useState(false)
+
+  useEffect(() => {
+    let active = true
+    void (async () => {
+      try {
+        const status = await getDeploymentAccess()
+        if (active) setDeployment(status)
+      } catch {
+        if (active) setDeploymentError(true)
+      }
+    })()
+    return () => {
+      active = false
+    }
+  }, [])
 
   useEffect(() => setForm(settings), [settings])
 
@@ -97,7 +117,7 @@ function Settings() {
         </SettingsSection>
 
         <SettingsSection title={t("settings.branding")}>
-          <div className="grid gap-6 md:grid-cols-[1fr_12rem]">
+          <div className="grid gap-6 md:grid-cols-[minmax(0,1fr)_12rem]">
             <FieldGroup>
               <URLField
                 id="site-logo"
@@ -146,14 +166,23 @@ function Settings() {
 
         <SettingsSection title={t("settings.public_display")}>
           <FieldGroup>
-            <SwitchField
-              id="show-ip"
-              label={t("settings.show_ip")}
-              hint={t("settings.show_ip_hint")}
-              checked={form.show_ip_addresses}
-              disabled={loading}
-              onChange={(show_ip_addresses) => patch({ show_ip_addresses })}
-            />
+            <Field>
+              <FieldLabel>{t("settings.address_mode")}</FieldLabel>
+              <ToggleGroup
+                variant="outline"
+                spacing={0}
+                value={[form.public_address_mode]}
+                disabled={loading}
+                onValueChange={(value) => value[0] && patch({ public_address_mode: value[0] as PublicAddressMode })}
+              >
+                {addressModes.map((mode) => (
+                  <ToggleGroupItem key={mode} value={mode} aria-label={t(`settings.address_${mode}`)}>
+                    {t(`settings.address_${mode}`)}
+                  </ToggleGroupItem>
+                ))}
+              </ToggleGroup>
+              <FieldDescription>{t("settings.address_hint")}</FieldDescription>
+            </Field>
             <SwitchField
               id="show-network"
               label={t("settings.show_network")}
@@ -162,6 +191,26 @@ function Settings() {
               disabled={loading}
               onChange={(show_network_quality) => patch({ show_network_quality })}
             />
+            <SwitchField
+              id="show-accelerators"
+              label={t("settings.show_accelerators")}
+              hint={t("settings.show_accelerators_hint")}
+              checked={form.show_accelerators}
+              disabled={loading}
+              onChange={(show_accelerators) => patch({ show_accelerators })}
+            />
+            <Alert>
+              <AlertDescription>{t("settings.address_privacy_note")}</AlertDescription>
+            </Alert>
+          </FieldGroup>
+        </SettingsSection>
+
+        <SettingsSection title={t("settings.deployment")}>
+          <FieldGroup>
+            <FieldDescription>{t("settings.deployment_hint")}</FieldDescription>
+            <DeploymentRow label={t("settings.external_url")} value={deployment?.public_base_url || t("settings.external_url_unset")} />
+            <DeploymentRow label={t("settings.api_origins")} value={deploymentError ? t("settings.deployment_unavailable") : originSummary(t, deployment, "api")} />
+            <DeploymentRow label={t("settings.ws_origins")} value={deploymentError ? t("settings.deployment_unavailable") : originSummary(t, deployment, "ws")} />
           </FieldGroup>
         </SettingsSection>
 
@@ -169,15 +218,39 @@ function Settings() {
           <Button type="submit" disabled={loading || saving}><SaveIcon />{t("app.save")}</Button>
         </div>
       </form>
-      <MaintenancePanel />
+      <PublicTelemetryPanel />
+      <DataStorageSection />
       <ThemesPanel />
     </div>
   )
 }
 
+const addressModes: PublicAddressMode[] = ["hidden", "masked", "full"]
+
+type Translate = (key: string) => string
+
+function DeploymentRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-2 border-t pt-2">
+      <span className="text-sm text-muted-foreground">{label}</span>
+      <Badge variant="outline">{value}</Badge>
+    </div>
+  )
+}
+
+// originSummary 只汇总模式与数量；来源列表永远不进入浏览器。
+function originSummary(t: Translate, status: DeploymentAccessStatus | null, scope: "api" | "ws"): string {
+  if (!status) return t("settings.deployment_unavailable")
+  const mode = scope === "api" ? status.api_origin_mode : status.ws_origin_mode
+  const count = scope === "api" ? status.api_origin_count : status.ws_origin_count
+  if (mode === "all") return t("settings.origins_all")
+  if (mode === "configured") return t("settings.origins_configured").replace("{count}", String(count))
+  return t("settings.origins_same")
+}
+
 function SettingsSection({ title, children }: { title: string; children: ReactNode }) {
   return (
-    <section className="grid gap-5 border-t pt-5 md:grid-cols-[12rem_1fr]">
+    <section className="grid gap-5 border-t pt-5 lg:grid-cols-[12rem_minmax(0,1fr)]">
       <h2 className="text-sm font-semibold">{title}</h2>
       <div>{children}</div>
     </section>

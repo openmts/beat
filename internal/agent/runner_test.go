@@ -27,7 +27,7 @@ type fakeReporter struct {
 	key   string
 }
 
-func (f *fakeReporter) Report(context.Context, model.NodeMetrics, map[string]float64) (string, error) {
+func (f *fakeReporter) Report(context.Context, ReportSample) (string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.calls++

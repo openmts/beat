@@ -46,7 +46,8 @@ var adminSchemaStatements = []string{
 		ip_address TEXT NOT NULL,
 		user_agent TEXT NOT NULL,
 		session_prefix TEXT NOT NULL,
-		created_at DATETIME NOT NULL
+		created_at DATETIME NOT NULL,
+		actor_type TEXT NOT NULL DEFAULT 'admin'
 	)`,
 	`CREATE INDEX IF NOT EXISTS idx_admin_audit_created ON admin_audit_events(created_at DESC)`,
 	`CREATE INDEX IF NOT EXISTS idx_admin_audit_action ON admin_audit_events(action, created_at DESC)`,
@@ -55,7 +56,8 @@ var adminSchemaStatements = []string{
 		id TEXT PRIMARY KEY,
 		filename TEXT NOT NULL UNIQUE,
 		source TEXT NOT NULL CHECK(source IN ('generated', 'uploaded')),
-		state TEXT NOT NULL CHECK(state IN ('running', 'ready', 'failed', 'validated', 'staged')),
+		state TEXT NOT NULL CHECK(state IN ('running', 'ready', 'failed', 'validated',
+			'staging', 'staged', 'interrupted', 'missing', 'deleting')),
 		created_at DATETIME NOT NULL,
 		completed_at DATETIME,
 		snapshot_cutoff DATETIME,
@@ -63,7 +65,18 @@ var adminSchemaStatements = []string{
 		sqlite_bytes INTEGER NOT NULL DEFAULT 0,
 		metrics_bytes INTEGER NOT NULL DEFAULT 0,
 		metric_rows INTEGER NOT NULL DEFAULT 0,
-		error_message TEXT NOT NULL DEFAULT ''
+		error_message TEXT NOT NULL DEFAULT '',
+		restore_generation TEXT NOT NULL DEFAULT '',
+		previous_state TEXT NOT NULL DEFAULT '',
+		updated_at DATETIME NOT NULL,
+		reconciled_at DATETIME
 	)`,
-	`CREATE INDEX IF NOT EXISTS idx_admin_backups_created ON admin_backups(created_at DESC)`,
+	`CREATE INDEX IF NOT EXISTS idx_admin_backups_created ON admin_backups(created_at DESC, id DESC)`,
+	`CREATE TABLE IF NOT EXISTS admin_backup_quarantine (
+		id TEXT PRIMARY KEY,
+		filename TEXT NOT NULL UNIQUE,
+		size_bytes INTEGER NOT NULL DEFAULT 0,
+		reason TEXT NOT NULL CHECK(length(reason) BETWEEN 1 AND 32),
+		quarantined_at DATETIME NOT NULL
+	)`,
 }

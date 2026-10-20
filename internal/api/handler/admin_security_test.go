@@ -208,16 +208,16 @@ func TestAdminAuthHandlerStorageFailures(t *testing.T) {
 			call: handler.HandleLogin, status: http.StatusBadRequest},
 		{name: "reauthenticate", method: http.MethodPost,
 			body: `{"password":"correct horse battery staple","totp_code":""}`,
-			call: handler.HandleReauthenticate, status: http.StatusUnauthorized},
+			call: handler.HandleReauthenticate, status: http.StatusForbidden},
 		{name: "logout", method: http.MethodPost, call: handler.HandleLogout, status: http.StatusInternalServerError},
 		{name: "list users", method: http.MethodGet, call: handler.HandleListUsers, status: http.StatusBadRequest},
 		{name: "create user", method: http.MethodPost,
 			body: `{"username":"operator","display_name":"Operator","role":"admin",` +
 				`"password":"operator password long"}`,
-			call: handler.HandleCreateUser, status: http.StatusBadRequest},
+			call: handler.HandleCreateUser, status: http.StatusInternalServerError},
 		{name: "update user", method: http.MethodPut, body: `{"display_name":"Operator","role":"admin","enabled":true}`,
-			call: handler.HandleUpdateUser, status: http.StatusBadRequest},
-		{name: "delete user", method: http.MethodDelete, call: handler.HandleDeleteUser, status: http.StatusBadRequest},
+			call: handler.HandleUpdateUser, status: http.StatusInternalServerError},
+		{name: "delete user", method: http.MethodDelete, call: handler.HandleDeleteUser, status: http.StatusInternalServerError},
 		{name: "change password", method: http.MethodPut,
 			body: `{"current_password":"current password long","new_password":"replacement password long"}`,
 			call: handler.HandleChangePassword, status: http.StatusUnauthorized},
@@ -227,9 +227,9 @@ func TestAdminAuthHandlerStorageFailures(t *testing.T) {
 			call: handler.HandleTOTP, status: http.StatusBadRequest},
 		{name: "disable TOTP", method: http.MethodDelete, call: handler.HandleDisableTOTP, status: http.StatusBadRequest},
 		{name: "list sessions", method: http.MethodGet, call: handler.HandleListSessions, status: http.StatusBadRequest},
-		{name: "revoke session", method: http.MethodDelete, call: handler.HandleRevokeSession, status: http.StatusBadRequest},
+		{name: "revoke session", method: http.MethodDelete, call: handler.HandleRevokeSession, status: http.StatusInternalServerError},
 		{name: "revoke others", method: http.MethodDelete, call: handler.HandleRevokeOtherSessions,
-			status: http.StatusBadRequest},
+			status: http.StatusInternalServerError},
 		{name: "audit events", method: http.MethodGet, path: "/?limit=invalid&offset=invalid",
 			call: handler.HandleAuditEvents, status: http.StatusBadRequest},
 	}
@@ -288,7 +288,7 @@ func TestAdministratorErrorMappingsAndHelpers(t *testing.T) {
 	}
 	request := httptest.NewRequest(http.MethodGet, "/?empty=", nil)
 	request.RemoteAddr = "local-address"
-	if remoteIP(request) != "local-address" || boundedQueryInt(request, "empty", 7) != 7 {
+	if remoteIP(request) != "local-address" {
 		t.Fatal("request helper fallback values are incorrect")
 	}
 }

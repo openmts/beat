@@ -7,18 +7,6 @@ import (
 	"github.com/beat/backend/internal/model"
 )
 
-func setupTestDB(t *testing.T) *SQLiteStore {
-	t.Helper()
-	store, err := NewSQLiteStore("file::memory:?cache=shared")
-	if err != nil {
-		t.Fatalf("failed to create test database: %v", err)
-	}
-	t.Cleanup(func() {
-		_ = store.Close()
-	})
-	return store
-}
-
 func TestCreateGroup(t *testing.T) {
 	store := setupTestDB(t)
 	ctx := context.Background()

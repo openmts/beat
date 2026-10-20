@@ -6,13 +6,8 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
-	"os"
-	"path"
-	"path/filepath"
-	"strings"
 
-	"github.com/beat/backend/internal/api/middleware"
-	"github.com/beat/backend/internal/model"
+	"github.com/beat/backend/internal/store"
 	"github.com/beat/backend/internal/theme"
 )
 
@@ -38,95 +33,6 @@ func (handler *ThemeHandler) HandleActive(w http.ResponseWriter, request *http.R
 	JSONResponse(w, http.StatusOK, descriptor)
 }
 
-// HandleAsset 从内容寻址目录安全地提供主题资产。
-func (handler *ThemeHandler) HandleAsset(w http.ResponseWriter, request *http.Request) {
-	digest := request.PathValue("digest")
-	assetPath := request.PathValue("asset")
-	if !isHexDigest(digest) || assetPath == "" || strings.ContainsRune(assetPath, '\\') {
-		http.NotFound(w, request)
-		return
-	}
-	clean := path.Clean("/" + assetPath)
-	if strings.HasPrefix(clean, "/..") || strings.HasPrefix(assetPath, "/") {
-		http.NotFound(w, request)
-		return
-	}
-	contentRoot := filepath.Join(handler.service.PackageDir(digest), "content")
-	full := filepath.Join(contentRoot, filepath.FromSlash(assetPath))
-	if filepath.Dir(full) != contentRoot && !strings.HasPrefix(filepath.Dir(full), contentRoot+string(os.PathSeparator)) {
-		http.NotFound(w, request)
-		return
-	}
-	info, err := os.Stat(full)
-	if err != nil || !info.Mode().IsRegular() {
-		http.NotFound(w, request)
-		return
-	}
-	content, err := os.ReadFile(full)
-	if err != nil {
-		http.NotFound(w, request)
-		return
-	}
-	mimeType := mimeForPath(assetPath)
-	if mimeType == "" {
-		http.NotFound(w, request)
-		return
-	}
-	if mimeType == "text/html" {
-		w.Header().Set("Content-Security-Policy", sandboxCSP)
-		w.Header().Set("Cache-Control", "no-cache")
-	} else {
-		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
-	}
-	w.Header().Set("Content-Type", mimeType)
-	w.Header().Set("X-Content-Type-Options", "nosniff")
-	w.Header().Set("ETag", `"`+digest+`"`)
-	_, _ = w.Write(content)
-}
-
-const sandboxCSP = "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; " +
-	"img-src 'self' data:; font-src 'self'; connect-src 'none'; frame-src 'none'; " +
-	"worker-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'"
-
-func isHexDigest(value string) bool {
-	if len(value) != 64 {
-		return false
-	}
-	for _, character := range value {
-		if !isHexCharacter(byte(character)) {
-			return false
-		}
-	}
-	return true
-}
-
-func isHexCharacter(character byte) bool {
-	return character >= '0' && character <= '9' || character >= 'a' && character <= 'f'
-}
-
-func mimeForPath(assetPath string) string {
-	switch strings.ToLower(filepath.Ext(assetPath)) {
-	case ".json":
-		return "application/json"
-	case ".png":
-		return "image/png"
-	case ".jpg", ".jpeg":
-		return "image/jpeg"
-	case ".webp":
-		return "image/webp"
-	case ".woff2":
-		return "font/woff2"
-	case ".css":
-		return "text/css"
-	case ".js":
-		return "application/javascript"
-	case ".html":
-		return "text/html"
-	default:
-		return ""
-	}
-}
-
 // --- 管理路由（owner + 最近重认证由路由层保障） ---
 
 func (handler *ThemeHandler) HandleList(w http.ResponseWriter, request *http.Request) {
@@ -149,12 +55,11 @@ func (handler *ThemeHandler) HandleUpload(w http.ResponseWriter, request *http.R
 		JSONError(w, http.StatusRequestEntityTooLarge, "theme archive is too large")
 		return
 	}
-	principal, ok := middleware.AdminPrincipal(request.Context())
+	ctx, actorID, ok := themeMutationContext(w, request)
 	if !ok {
-		JSONError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
-	pkg, err := handler.service.Install(request.Context(), raw, "upload", "", principal.User.ID)
+	pkg, err := handler.service.Install(ctx, raw, "upload", "", actorID)
 	if err != nil {
 		writeThemeError(w, err)
 		return
@@ -177,12 +82,11 @@ func (handler *ThemeHandler) HandleExport(w http.ResponseWriter, request *http.R
 
 func (handler *ThemeHandler) HandleActivate(w http.ResponseWriter, request *http.Request) {
 	packageID := request.PathValue("id")
-	principal, ok := middleware.AdminPrincipal(request.Context())
+	ctx, actorID, ok := themeMutationContext(w, request)
 	if !ok {
-		JSONError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
-	pkg, err := handler.service.Activate(request.Context(), packageID, principal.User.ID)
+	pkg, err := handler.service.Activate(ctx, packageID, actorID)
 	if err != nil {
 		writeThemeError(w, err)
 		return
@@ -191,12 +95,11 @@ func (handler *ThemeHandler) HandleActivate(w http.ResponseWriter, request *http
 }
 
 func (handler *ThemeHandler) HandleRollback(w http.ResponseWriter, request *http.Request) {
-	principal, ok := middleware.AdminPrincipal(request.Context())
+	ctx, actorID, ok := themeMutationContext(w, request)
 	if !ok {
-		JSONError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
-	target, err := handler.service.Rollback(request.Context(), principal.User.ID)
+	target, err := handler.service.Rollback(ctx, actorID)
 	if err != nil {
 		writeThemeError(w, err)
 		return
@@ -206,13 +109,17 @@ func (handler *ThemeHandler) HandleRollback(w http.ResponseWriter, request *http
 
 func (handler *ThemeHandler) HandleDelete(w http.ResponseWriter, request *http.Request) {
 	packageID := request.PathValue("id")
-	principal, ok := middleware.AdminPrincipal(request.Context())
+	ctx, actorID, ok := themeMutationContext(w, request)
 	if !ok {
-		JSONError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
-	if err := handler.service.Delete(request.Context(), packageID, principal.User.ID); err != nil {
+	result, err := handler.service.DeletePackage(ctx, packageID, actorID)
+	if err != nil {
 		writeThemeError(w, err)
+		return
+	}
+	if result.CleanupPending {
+		JSONResponse(w, http.StatusAccepted, result)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -220,6 +127,18 @@ func (handler *ThemeHandler) HandleDelete(w http.ResponseWriter, request *http.R
 
 func writeThemeError(w http.ResponseWriter, err error) {
 	switch {
+	case errors.Is(err, store.ErrThemeForbidden):
+		JSONError(w, http.StatusForbidden, "theme owner session is required")
+	case errors.Is(err, store.ErrThemeRecentAuth):
+		JSONError(w, http.StatusPreconditionRequired, "recent identity confirmation is required")
+	case errors.Is(err, store.ErrThemeMarketNotFound):
+		JSONError(w, http.StatusNotFound, "theme market source is unavailable")
+	case errors.Is(err, store.ErrThemeMarketSourceID):
+		JSONError(w, http.StatusConflict, "theme market source changed; refresh the catalog and retry")
+	case errors.Is(err, store.ErrThemePackageConflict):
+		JSONError(w, http.StatusConflict, "theme package changed; reload and retry")
+	case errors.Is(err, theme.ErrMarketChanged):
+		JSONError(w, http.StatusConflict, "the catalog entry changed; refresh the catalog and select the package again")
 	case errors.Is(err, theme.ErrArchiveInvalid), errors.Is(err, theme.ErrManifestInvalid):
 		JSONError(w, http.StatusBadRequest, "theme archive is invalid")
 	case errors.Is(err, theme.ErrPackageConflict):
@@ -240,127 +159,4 @@ func writeThemeError(w http.ResponseWriter, err error) {
 		slog.Error("theme operation failed", "error", err)
 		JSONError(w, http.StatusBadRequest, "theme request failed")
 	}
-}
-
-// --- 市场源管理（owner + 最近重认证） ---
-
-func (handler *ThemeHandler) HandleListMarkets(w http.ResponseWriter, request *http.Request) {
-	if handler.markets == nil {
-		JSONError(w, http.StatusNotFound, "theme market is unavailable")
-		return
-	}
-	sources, err := handler.markets.ListSources(request.Context())
-	if err != nil {
-		JSONError(w, http.StatusInternalServerError, "theme markets are unavailable")
-		return
-	}
-	JSONResponse(w, http.StatusOK, sources)
-}
-
-func (handler *ThemeHandler) HandleCreateMarket(w http.ResponseWriter, request *http.Request) {
-	if handler.markets == nil {
-		JSONError(w, http.StatusNotFound, "theme market is unavailable")
-		return
-	}
-	var body struct {
-		Name           string `json:"name"`
-		CatalogURL     string `json:"catalog_url"`
-		PublicKey      string `json:"public_key"`
-		KeyFingerprint string `json:"key_fingerprint"`
-		Enabled        bool   `json:"enabled"`
-		SortOrder      int    `json:"sort_order"`
-	}
-	if err := decodeAuthBody(w, request, &body); err != nil {
-		JSONError(w, http.StatusBadRequest, "invalid theme market source")
-		return
-	}
-	source, err := handler.markets.CreateSource(request.Context(), &model.ThemeMarketSource{
-		Name: body.Name, CatalogURL: body.CatalogURL, PublicKey: body.PublicKey,
-		KeyFingerprint: body.KeyFingerprint, Enabled: body.Enabled, SortOrder: body.SortOrder,
-	})
-	if err != nil {
-		writeThemeError(w, err)
-		return
-	}
-	JSONResponse(w, http.StatusCreated, source)
-}
-
-func (handler *ThemeHandler) HandleUpdateMarket(w http.ResponseWriter, request *http.Request) {
-	if handler.markets == nil {
-		JSONError(w, http.StatusNotFound, "theme market is unavailable")
-		return
-	}
-	id := request.PathValue("id")
-	var body struct {
-		Name           string `json:"name"`
-		CatalogURL     string `json:"catalog_url"`
-		PublicKey      string `json:"public_key"`
-		KeyFingerprint string `json:"key_fingerprint"`
-		Enabled        bool   `json:"enabled"`
-		SortOrder      int    `json:"sort_order"`
-	}
-	if err := decodeAuthBody(w, request, &body); err != nil {
-		JSONError(w, http.StatusBadRequest, "invalid theme market source")
-		return
-	}
-	source, err := handler.markets.UpdateSource(request.Context(), id, model.ThemeMarketSource{
-		Name: body.Name, CatalogURL: body.CatalogURL, PublicKey: body.PublicKey,
-		KeyFingerprint: body.KeyFingerprint, Enabled: body.Enabled, SortOrder: body.SortOrder,
-	})
-	if err != nil {
-		writeThemeError(w, err)
-		return
-	}
-	JSONResponse(w, http.StatusOK, source)
-}
-
-func (handler *ThemeHandler) HandleDeleteMarket(w http.ResponseWriter, request *http.Request) {
-	if handler.markets == nil {
-		JSONError(w, http.StatusNotFound, "theme market is unavailable")
-		return
-	}
-	id := request.PathValue("id")
-	if err := handler.markets.DeleteSource(request.Context(), id); err != nil {
-		writeThemeError(w, err)
-		return
-	}
-	w.WriteHeader(http.StatusNoContent)
-}
-
-func (handler *ThemeHandler) HandleRefreshCatalog(w http.ResponseWriter, request *http.Request) {
-	if handler.markets == nil {
-		JSONError(w, http.StatusNotFound, "theme market is unavailable")
-		return
-	}
-	sourceID := request.PathValue("id")
-	catalog, err := handler.markets.RefreshCatalog(request.Context(), sourceID)
-	if err != nil {
-		writeThemeError(w, err)
-		return
-	}
-	if catalog == nil {
-		JSONResponse(w, http.StatusOK, map[string]any{"cached": true})
-		return
-	}
-	JSONResponse(w, http.StatusOK, catalog)
-}
-
-func (handler *ThemeHandler) HandleInstallFromMarket(w http.ResponseWriter, request *http.Request) {
-	if handler.markets == nil {
-		JSONError(w, http.StatusNotFound, "theme market is unavailable")
-		return
-	}
-	sourceID := request.PathValue("id")
-	themeID := request.PathValue("theme_id")
-	principal, ok := middleware.AdminPrincipal(request.Context())
-	if !ok {
-		JSONError(w, http.StatusUnauthorized, "unauthorized")
-		return
-	}
-	pkg, err := handler.markets.InstallFromMarket(request.Context(), sourceID, themeID, principal.User.ID)
-	if err != nil {
-		writeThemeError(w, err)
-		return
-	}
-	JSONResponse(w, http.StatusCreated, pkg)
 }

@@ -1,30 +1,33 @@
 # Application secret lifecycle
 
-Updated: 2026-07-30
+Updated: 2026-09-13
 
-Status: reviewed shared contract; compatibility envelope begins in SQLite
-migration `v2`, full lifecycle is owned by `v5`, and `v6+` reuse it
+Status: C03 implemented and locally verified; the root integration owns the
+repository-wide release gates.
+SQLite `v5` owns the compatibility envelope, `v9` owns this lifecycle, and `v10+`
+reuse it. Deployment and real key rotation are separate operator actions.
 
 ## Decision
 
 Beat will have one application-secret system rather than separate encryption
 code for TOTP, OIDC, SSH, notifications, commands, and future credentials.
-Migration `v2` introduces the minimum versioned root-key envelope needed by its
-OIDC client secret and PKCE verifier. Migration `v5` evolves that same decoder
+Migration `v5` introduced the versioned root-key envelope used by OIDC client
+secrets and PKCE verifiers. Migration `v9` evolves that same decoder
 and AAD registry into the wrapped data-key registry, rotation, readiness, and
-complete backup/restore validation. Migration `v6` and later migrations consume
+complete backup/restore validation. Migration `v10` and later migrations consume
 that primitive and may not create a parallel key file, cipher format, or
 rotation path.
 
 This contract does not consume another migration number or backup-format
-version. The next unassigned SQLite migration remains `v20`, and the planned
-backup sequence remains `v1-v4`. From `v5`, the SQLite snapshot contains wrapped
+version. The next unassigned SQLite migration remains `v25`, and the planned
+backup sequence remains `v1-v4`. Migration `v9` retains the `v3` payload introduced
+by the metric catalog. From `v9`, the SQLite snapshot contains wrapped
 data keys, while the existing `secrets/admin-data.key` archive entry continues
 to contain the matching 32-byte root key.
 
 ## Current evidence
 
-The deployed baseline has three different storage properties:
+The pre-v9 baseline has three different storage properties:
 
 - administrator passwords, administrator session tokens, and per-node Agent
   tokens are one-way hashes and have no plaintext recovery path;
@@ -33,21 +36,20 @@ The deployed baseline has three different storage properties:
 - SSH private keys and Telegram, SMTP, Webhook, and other channel credentials
   remain plaintext inside SQLite.
 
-Reviewed but unimplemented migration `v2` also needs recoverable OIDC provider
-client secrets and short-lived PKCE verifiers. Because it precedes `v5`, it must
-use the compatibility envelope defined below rather than today's nil-AAD format
-or an OIDC-specific cipher.
+Deployed migration `v5` stores recoverable OIDC provider client secrets and
+short-lived PKCE verifiers in the resource-bound compatibility envelope. `v9`
+converts these existing values without introducing an OIDC-specific cipher.
 
-`ssh_keys.private_key` is selected by ordinary SSH-key list queries even though
+Before v9, `ssh_keys.private_key` is selected by ordinary SSH-key list queries even though
 the JSON model excludes it. `alert_channels.config` is sanitized only when an
 API response is built; the database and delivery service still hold the full
 credential-bearing value. API redaction therefore does not provide encryption
 at rest.
 
-The deployed backup includes SQLite and, when present, the 32-byte root key.
-Validation checks the key's size and checksum but does not prove that it can
-decrypt TOTP or future SSH/notification ciphertext. A missing or unrelated
-32-byte key can therefore pass archive validation and fail only after restore.
+The current backup validator authenticates retained TOTP and OIDC ciphertext
+against the archived root key and rejects a missing or unrelated key. `v9`
+extends this check to the complete wrapped registry, SSH ciphertext, key
+references, and backfill/rotation state.
 
 ## Security properties
 
@@ -80,17 +82,24 @@ generates a replacement when encrypted references or a restore/rotation marker
 exist. Key bytes are never exposed through HTTP, logs, audit, metrics, process
 arguments, or environment templates.
 
-Before `v8`, envelope format 1 introduced by migration `v5` encrypts directly
+Before `v9`, envelope format 1 introduced by migration `v5` encrypts directly
 with this root key and names the root-key fingerprint as its key ID. It is
 accepted only for the registered OIDC resource profiles and is explicitly
-migrated by `v5`.
+migrated by `v9`.
 
-Migration `v5` adds `application_data_keys` with random key ID, wrapped 32-byte
+Migration `v9` adds `application_data_keys` with random key ID, wrapped 32-byte
 data key, state (`active` or `decrypt_only`), creation/activation timestamps,
 and retirement metadata. The root key wraps each data key using AES-GCM and AAD
-binding the key ID, wrapping format, and schema generation. Constraints permit
-exactly one active key. A separate bounded backfill/rotation state records the
+binding the key ID, wrapping format, and data-key generation. The unique index
+and registry validation require exactly one active key. A separate bounded backfill/rotation state records the
 registered resource cursor and phase without secret material.
+
+The implementation permits one active key and at most four decrypt-only keys.
+Successful rotation retains predecessors for at least seven days; a subsequent
+rotation removes expired unreferenced keys before enforcing the five-key limit.
+Encryption and its database commit share a serialized `WithWrite` window.
+Each migration/rotation batch scans at most 64 rows, rejects oversized fields in
+SQL before loading them, and commits rewritten ciphertext with its cursor.
 
 New writes resolve the active data key inside the same request lifetime. Reads
 resolve only the envelope's referenced key. Unknown or retired-without-material
@@ -99,7 +108,7 @@ plaintext.
 
 ## Ciphertext and AAD contract
 
-Envelope format 2, introduced by migration `v5`, is a canonical binary
+Envelope format 2, introduced by migration `v9`, is a canonical binary
 structure, not ad hoc string parsing. It contains magic, envelope version,
 algorithm ID, data-key ID, nonce, and sealed ciphertext. Decoders reject unknown
 fields, non-canonical lengths, trailing bytes, oversized values, and unsupported
@@ -111,10 +120,10 @@ schema version. Registered profiles include:
 
 | Resource | Canonical binding |
 | --- | --- |
-| TOTP | `admin_users`, user ID, `totp_secret`, payload `v1` |
+| TOTP | namespace `admin_user`, user ID, `totp_secret`, payload `v1` |
 | OIDC provider | provider ID, `client_secret`, configuration version, payload `v1` |
 | OIDC transaction | transaction ID, provider ID, `pkce_verifier`, payload `v1` |
-| SSH | `ssh_keys`, key ID, `private_key`, payload `v1` |
+| SSH | namespace `ssh_key`, key ID, `private_key`, payload `v1` |
 | Snippet/task/output/path | owning operation ID, field, immutable version or attempt, payload version |
 | Notification channel | channel ID, revision, channel type, secret document, schema version |
 | Notification message | message ID, encrypted field, payload schema version |
@@ -125,8 +134,8 @@ redaction tests, and deletion/retention rule before schema approval.
 
 Legacy nil-AAD TOTP is accepted only by an explicitly typed legacy decoder. It
 is never accepted by the generic decrypt path. Format 1 root-key envelopes from
-migration `v2` and format 2 wrapped-data-key envelopes from `v5` have strict
-registered decoders. A successful `v5` backfill or bounded read-repair rewrites
+migration `v5` and format 2 wrapped-data-key envelopes from `v9` have strict
+registered decoders. The startup `v9` backfill rewrites
 legacy TOTP using user-bound AAD; ciphertext copied between administrators then
 fails authentication.
 
@@ -138,32 +147,34 @@ pending marker. After root-key initialization and before the HTTP listener or
 workers start, a dedicated coordinator performs secret backfill in immediate
 transactions.
 
-Migration `v5` must extend `secretbox` with the strict compatibility envelope
-and resource-bound AAD, encrypt OIDC provider secrets and PKCE verifiers through
-that API, and extend backup validation to authenticate every archived OIDC
-ciphertext with the archived root key. It must never persist those fields in the
-legacy nil-AAD form. Temporary transaction cleanup remains bounded and expired
+Deployed migration `v5` extended `secretbox` with the compatibility envelope
+and resource-bound AAD, and encrypts OIDC provider secrets and PKCE verifiers
+through that API. Backup validation authenticates retained OIDC ciphertext with
+the archived root key. These fields never use the legacy nil-AAD form.
+Temporary transaction cleanup remains bounded and expired
 transactions may be removed rather than migrated later.
 
-Migration `v8` must:
+Migration `v9` must:
 
 1. create the wrapped data-key registry and one active data key;
-2. convert every durable TOTP ciphertext and every retained `v2` OIDC envelope
+2. convert every durable TOTP ciphertext and every retained `v5` OIDC envelope
    to the wrapped-data-key envelope with unchanged resource-bound AAD;
 3. rebuild SSH storage so private keys are ciphertext, migrate every legacy
    private key, and prove no plaintext value remains;
 4. make SSH list operations metadata-only and decrypt one selected private key
    just in time for an authorized terminal connection;
-5. use the same primitive for operation snippets, task payloads, output, paths,
-   fingerprints, and spool key derivation;
+5. provide the primitive for future operation snippets, task payloads, output,
+   paths, fingerprints, and spool key derivation when those consumers are added;
 6. mark backfill complete only in the transaction that proves all registered
    rows are converted.
 
 Any parse, encryption, affected-row, commit, or verification error leaves the
 marker incomplete and prevents readiness and serving. Restart resumes from
 durable state without treating a format 2 envelope as legacy plaintext.
+SSH conversion clears each legacy value, drops its plaintext column, then
+completes `VACUUM` and a truncated WAL checkpoint before publishing readiness.
 
-Migration `v9` parses each legacy notification configuration, splits canonical
+Migration `v10` parses each legacy notification configuration, splits canonical
 public configuration from the complete secret document, creates immutable
 revision 1, encrypts it with the active data key and channel/revision AAD, clears
 the old plaintext, and marks its own backfill complete in one immediate
@@ -197,6 +208,37 @@ both sides, atomically publishes the new root key, verifies all registered
 ciphertexts, and removes the journal. Startup uses the journal to finish or
 restore the old pairing after any injected crash. It never serves while the
 pairing is ambiguous.
+
+The server acquires an exclusive lifetime lease before root-journal recovery,
+backup activation, SQLite open or migrations. The lease lives at
+`<canonical-data-dir-parent>/.beat-lifecycle-<SHA256(canonical-data-dir)>.lock`,
+using the full lowercase hex digest. It is a regular, single-link `0600` file
+opened with `O_NOFOLLOW`, owned by the data-directory owner, and never unlinked.
+The installer precreates/chowns it for `beat` and grants that exact file through
+systemd `ReadWritePaths`; replacing the data subtree preserves the lease.
+
+Root rotation publishes `.root-key-rotation.prepare` as `.root-key-rotation`
+only after synchronizing `old.key`, `next.key` and its versioned journal. SQLite
+records the root fingerprint/generation atomically with rewrapped data keys.
+Recovery verifies the matching candidate against every resource before replacing
+the current key. Cleanup first renames the journal directory to
+`.root-key-rotation.complete`, so interruption during cleanup is also recoverable.
+
+Owners use `/admin/security` → Application keys for status and online rotation.
+Its API is `GET /api/v1/admin/application-secrets` and
+`POST /api/v1/admin/application-secrets/rotate`; the latter requires recent
+authentication and returns acceptance while the worker runs. `beat-server
+secrets rotate-root --data-dir DIR [--db-path FILE]` is the root-only offline
+operation. `beat-server secrets lock-path --data-dir DIR` prints only the lease
+path. HTTP and readiness expose bounded states and counts without key material.
+
+The HTTP rotation transaction rechecks the current owner role, enabled account,
+active session and recent proof before work and again before commit. Key
+activation, a durable rotation UUID, and the attributed
+`application_secret.rotation.start` audit event commit together. Audit failure,
+revocation, demotion or proof expiry rolls back activation. Audit detail records
+only generation and acceptance; the trusted internal rotation entry is never
+exposed through HTTP.
 
 ## Backup and restore
 
@@ -248,10 +290,10 @@ Acceptance requires tests for:
 ## Approval boundary
 
 This is not an independent implementation batch. Explicit approval of migration
-`v2 identity-oidc` includes only the compatibility envelope, OIDC AAD profiles,
-and matching backup validation. Explicit approval of `v5 remote-operations`
+`v5 identity-oidc` included only the compatibility envelope, OIDC AAD profiles,
+and matching backup validation. The authorized `v9 remote-operations` foundation
 must also approve the shared key registry, TOTP/SSH/OIDC conversion,
 data/root-key rotation, readiness, and complete backup/restore validation.
-Approval of `v6` authorizes only the notification consumer and its schema after
-the `v5` primitive is deployed. Earlier generic approvals do not authorize any
-of these persistence changes.
+Migration `v10` owns the notification consumer and its schema after the `v9`
+primitive is deployed. The current C03 implementation covers the shared secret
+foundation; remote queues, files and clipboard remain separate follow-up work.

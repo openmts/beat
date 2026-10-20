@@ -5,16 +5,16 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
-	"github.com/go-jose/go-jose/v4"
+	jose "github.com/go-jose/go-jose/v4"
 	"github.com/go-jose/go-jose/v4/jwt"
 
 	"github.com/beat/backend/internal/adminauth"
@@ -22,6 +22,7 @@ import (
 	"github.com/beat/backend/internal/oidc"
 	"github.com/beat/backend/internal/secretbox"
 	"github.com/beat/backend/internal/store"
+	"github.com/beat/backend/internal/testutil"
 )
 
 // routerTestIdP 提供发现、JWKS 与令牌端点，供路由层 OIDC 测试使用。
@@ -100,20 +101,12 @@ func (p *routerTestIdP) setAuthCode(code string) {
 	p.authCode = code
 }
 
-func newTestSecrets(t *testing.T) *secretbox.Manager {
+func newTestSecrets(t *testing.T, database *sql.DB) secretbox.ResourceService {
 	t.Helper()
-	randomData := make([]byte, 8192)
-	for index := range randomData {
-		randomData[index] = byte(index)
-	}
-	secrets, err := secretbox.New(filepath.Join(t.TempDir(), "admin-data.key"), bytes.NewReader(randomData))
-	if err != nil {
-		t.Fatalf("new secret box: %v", err)
-	}
-	return secrets
+	return testutil.NewSecrets(t, database)
 }
 
-func newTestSecurity(t *testing.T, adminStore *store.AdminStore, secrets *secretbox.Manager) *adminauth.Service {
+func newTestSecurity(t *testing.T, adminStore *store.AdminStore, secrets secretbox.ResourceService) *adminauth.Service {
 	t.Helper()
 	randomData := make([]byte, 8192)
 	for index := range randomData {
@@ -132,7 +125,7 @@ func newTestSecurity(t *testing.T, adminStore *store.AdminStore, secrets *secret
 	return security
 }
 
-func setupOIDCRouter(t *testing.T) (*Router, *routerTestIdP, *http.Cookie, *store.SQLiteStore, *store.AdminStore, *secretbox.Manager) {
+func setupOIDCRouter(t *testing.T) (*Router, *routerTestIdP, *http.Cookie, *store.SQLiteStore, *store.AdminStore, secretbox.ResourceService) {
 	t.Helper()
 	sqlite, err := store.NewSQLiteStore("file:" + t.Name() + "?mode=memory&cache=shared")
 	if err != nil {
@@ -140,7 +133,7 @@ func setupOIDCRouter(t *testing.T) (*Router, *routerTestIdP, *http.Cookie, *stor
 	}
 	t.Cleanup(func() { _ = sqlite.Close() })
 	adminStore := store.NewAdminStore(sqlite.DB)
-	secrets := newTestSecrets(t)
+	secrets := newTestSecrets(t, sqlite.DB)
 	security := newTestSecurity(t, adminStore, secrets)
 
 	idp := newRouterTestIdP(t)
@@ -229,6 +222,12 @@ func TestRouterOIDCPublicAndBegin(t *testing.T) {
 func TestRouterOIDCOwnerOnlyProviderManagement(t *testing.T) {
 	router, _, cookie, _, _, _ := setupOIDCRouter(t)
 
+	reauthenticated := requestRouterWithCookie(router, http.MethodPost, "/api/v1/auth/reauthenticate",
+		`{"password":"correct horse battery staple"}`, cookie, "http://example.com")
+	if reauthenticated.Code != http.StatusOK {
+		t.Fatalf("owner reauthentication status = %d", reauthenticated.Code)
+	}
+
 	// 创建普通 admin 并登录
 	created := requestRouterWithCookie(router, http.MethodPost, "/api/v1/admin/users",
 		`{"username":"operator","display_name":"Operator","role":"admin",`+
@@ -275,18 +274,16 @@ func TestRouterOIDCCallbackLoginSuccess(t *testing.T) {
 	ctx := t.Context()
 	oidcStore := store.NewOIDCStore(sqlite.DB)
 
-	secretEncrypted, err := secrets.EncryptEnvelope([]byte("client-secret"), oidc.ProviderSecretAAD("p1", 1))
-	if err != nil {
-		t.Fatalf("encrypt provider secret: %v", err)
-	}
 	provider := &model.OIDCProvider{
 		ID: "p1", Slug: "issuer", DisplayName: "IdP", IssuerURL: idp.server.URL,
-		ClientID: "client-1", ClientSecretEncrypted: secretEncrypted, Scopes: []string{"openid"},
+		ClientID: "client-1", Scopes: []string{"openid"},
 		Enabled: true, ConfigurationVersion: 1, CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC(),
 	}
-	if err := oidcStore.CreateProvider(ctx, provider); err != nil {
-		t.Fatalf("create provider: %v", err)
-	}
+	testutil.WriteSecret(t, secrets, testutil.SecretWrite{Plaintext: []byte("client-secret"), AAD: oidc.ProviderSecretAAD("p1", 1),
+		Persist: func(ciphertext []byte) error {
+			provider.ClientSecretEncrypted = ciphertext
+			return oidcStore.CreateProvider(ctx, provider)
+		}})
 	owner, err := adminStore.GetUserByUsername(ctx, "owner")
 	if err != nil || owner == nil {
 		t.Fatalf("get owner: %v / %v", owner, err)
@@ -301,23 +298,18 @@ func TestRouterOIDCCallbackLoginSuccess(t *testing.T) {
 
 	state := "state-router"
 	binding := "binding-router"
-	verifierEncrypted, err := secrets.EncryptEnvelope([]byte("verifier"),
-		oidc.TransactionVerifierAAD("txn-router", provider.ID))
-	if err != nil {
-		t.Fatalf("encrypt verifier: %v", err)
-	}
 	stateHash := sha256.Sum256([]byte(state))
 	bindingHash := sha256.Sum256([]byte(binding))
 	nonceHash := sha256.Sum256([]byte("nonce-test"))
-	if err := oidcStore.CreateTransaction(ctx, &model.OIDCTransaction{
-		ID: "txn-router", StateHash: stateHash[:], BrowserBindingHash: bindingHash[:],
-		NonceHash: nonceHash[:], CodeVerifierEncrypted: verifierEncrypted, ProviderID: provider.ID,
-		ProviderConfigurationVersion: 1, Purpose: model.OIDCPurposeLogin,
-		RedirectURI: "http://example.com/api/v1/auth/oidc/callback", ReturnPath: "/admin",
-		CreatedAt: now, ExpiresAt: now.Add(time.Minute),
-	}); err != nil {
-		t.Fatalf("create transaction: %v", err)
-	}
+	testutil.WriteSecret(t, secrets, testutil.SecretWrite{Plaintext: []byte("verifier"), AAD: oidc.TransactionVerifierAAD("txn-router", provider.ID), Persist: func(ciphertext []byte) error {
+		return oidcStore.CreateTransaction(ctx, &model.OIDCTransaction{
+			ID: "txn-router", StateHash: stateHash[:], BrowserBindingHash: bindingHash[:],
+			NonceHash: nonceHash[:], CodeVerifierEncrypted: ciphertext, ProviderID: provider.ID,
+			ProviderConfigurationVersion: 1, Purpose: model.OIDCPurposeLogin,
+			RedirectURI: "http://example.com/api/v1/auth/oidc/callback", ReturnPath: "/admin",
+			CreatedAt: now, ExpiresAt: now.Add(time.Minute),
+		})
+	}})
 	idp.setAuthCode("code-router")
 
 	request := httptest.NewRequest(http.MethodGet,

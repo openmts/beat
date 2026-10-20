@@ -41,10 +41,10 @@ describe("security panels", () => {
     vi.mocked(security.revokeAdminSession).mockResolvedValue()
     vi.mocked(security.revokeOtherAdminSessions).mockResolvedValue(1)
     vi.mocked(security.listAuditEvents).mockResolvedValue({ events: [{ id: "event", request_id: "request",
-      actor_id: "owner", actor_username: "owner", action: "backup.create", resource_type: "backup",
+      actor_type: "admin", actor_id: "owner", actor_username: "owner", action: "backup.create", resource_type: "backup",
       resource_id: "backup", outcome: "success", detail_json: "{}", ip_address: "::1",
       user_agent: "Browser", session_prefix: "prefix", created_at: "2026-07-30T00:00:00Z" }],
-      total: 1, limit: 50, offset: 0 })
+      next_cursor: "page-2" })
     vi.mocked(security.beginTOTP).mockResolvedValue({ secret: "SECRET", uri: "otpauth://test" })
     vi.mocked(security.enableTOTP).mockResolvedValue()
     vi.mocked(security.disableTOTP).mockResolvedValue()
@@ -66,15 +66,23 @@ describe("security panels", () => {
   })
 
   it("creates and removes administrators", async () => {
+    vi.mocked(security.listAdminUsers).mockResolvedValue([auth.principal.user, { ...auth.principal.user, id: "other", username: "other", display_name: "Other" }])
     renderPanel(<SecurityAdminsPanel />)
     await screen.findByText("@owner · Owner")
     fireEvent.change(screen.getByLabelText("Username"), { target: { value: "new-admin" } })
     fireEvent.change(screen.getByLabelText("Display name"), { target: { value: "New Admin" } })
     fireEvent.change(screen.getByLabelText("Password"), { target: { value: "new-admin-password" } })
     fireEvent.click(screen.getByRole("button", { name: "Create administrator" }))
+    fireEvent.change(screen.getByLabelText("Current password"), { target: { value: "owner-current-password" } })
+    fireEvent.click(screen.getByRole("button", { name: "Confirm" }))
     await waitFor(() => expect(security.createAdminUser).toHaveBeenCalled())
-    fireEvent.click(screen.getByRole("button", { name: "Delete" }))
-    await waitFor(() => expect(security.deleteAdminUser).toHaveBeenCalledWith("owner"))
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument())
+    const deletes = screen.getAllByRole("button", { name: "Delete" })
+    expect(deletes[0]).toBeDisabled()
+    fireEvent.click(deletes[1])
+    fireEvent.change(screen.getByLabelText("Current password"), { target: { value: "owner-current-password" } })
+    fireEvent.click(screen.getByRole("button", { name: "Confirm" }))
+    await waitFor(() => expect(security.deleteAdminUser).toHaveBeenCalledWith("other"))
   })
 
   it("lists and revokes sessions", async () => {
@@ -92,9 +100,27 @@ describe("security panels", () => {
     expect(screen.getByText("success")).toBeInTheDocument()
   })
 
+  it("walks the audit cursor without client-side paging", async () => {
+    vi.mocked(security.listAuditEvents)
+      .mockResolvedValueOnce({ events: [{ id: "event-1", action: "backup.create" } as never], next_cursor: "page-2" })
+      .mockResolvedValueOnce({ events: [{ id: "event-2", action: "backup.restore" } as never] })
+    renderPanel(<SecurityAuditPanel />)
+    expect(await screen.findByText("backup.create")).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole("button", { name: "Load more" }))
+    await waitFor(() => expect(security.listAuditEvents).toHaveBeenLastCalledWith(
+      { limit: 50, cursor: "page-2" },
+    ))
+    expect(await screen.findByText("backup.restore")).toBeInTheDocument()
+    expect(screen.getByText("backup.create")).toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: "Load more" })).not.toBeInTheDocument()
+  })
+
   it("sets up, enables, and disables TOTP", async () => {
     const rendered = renderPanel(<SecurityTOTPPanel />)
     fireEvent.click(screen.getByRole("button", { name: "Set up authenticator" }))
+    fireEvent.change(screen.getByLabelText("Current password"), { target: { value: "current-password" } })
+    fireEvent.click(screen.getByRole("button", { name: "Confirm identity" }))
     await screen.findByText(/SECRET/)
     fireEvent.change(screen.getByLabelText("Authenticator code"), { target: { value: "123456" } })
     fireEvent.click(screen.getByRole("button", { name: "Enable authenticator" }))
@@ -102,6 +128,9 @@ describe("security panels", () => {
     auth.principal.user.totp_enabled_at = "2026-07-30T00:00:00Z"
     rendered.rerender(<LocaleProvider><SecurityTOTPPanel /></LocaleProvider>)
     fireEvent.click(screen.getByRole("button", { name: "Disable authenticator" }))
+    fireEvent.change(screen.getByLabelText("Current password"), { target: { value: "current-password" } })
+    fireEvent.change(screen.getByLabelText("Current authenticator code"), { target: { value: "123456" } })
+    fireEvent.click(screen.getByRole("button", { name: "Confirm identity" }))
     await waitFor(() => expect(security.disableTOTP).toHaveBeenCalled())
   })
 })

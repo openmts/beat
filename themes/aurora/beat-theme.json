@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "id": "beat-aurora",
+  "name": "Aurora",
+  "description": "Vivid violet and teal cards with spotlight node details and roomy surfaces.",
+  "version": "1.0.0",
+  "author": "Beat contributors",
+  "license": "MIT",
+  "runtime": "declarative",
+  "minimum_beat_version": "0.1.0",
+  "preview": "preview.png",
+  "supported_locales": [
+    "en",
+    "zh-CN"
+  ]
+}

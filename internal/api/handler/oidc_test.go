@@ -15,7 +15,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/go-jose/go-jose/v4"
+	jose "github.com/go-jose/go-jose/v4"
 	"github.com/go-jose/go-jose/v4/jwt"
 
 	"github.com/beat/backend/internal/adminauth"
@@ -24,6 +24,7 @@ import (
 	"github.com/beat/backend/internal/oidc"
 	"github.com/beat/backend/internal/secretbox"
 	"github.com/beat/backend/internal/store"
+	"github.com/beat/backend/internal/testutil"
 )
 
 // handlerTestIdP 提供发现、JWKS 与令牌端点，供 handler 层 OIDC 测试使用。
@@ -102,18 +103,15 @@ func (p *handlerTestIdP) setAuthCode(code string) {
 	p.authCode = code
 }
 
-func setupOIDCHandler(t *testing.T) (*OIDCHandler, *handlerTestIdP, *model.AdminUser, *store.OIDCStore, *secretbox.Manager) {
+func setupOIDCHandler(t *testing.T) (*OIDCHandler, *handlerTestIdP, *model.AdminUser, *store.OIDCStore, secretbox.ResourceService) {
 	t.Helper()
-	sqlite, err := store.NewSQLiteStore(filepath.Join(t.TempDir(), "beat.db"))
+	sqlite, err := store.NewSQLiteStore(handlerFixturePath(t))
 	if err != nil {
 		t.Fatalf("create database: %v", err)
 	}
 	t.Cleanup(func() { _ = sqlite.Close() })
 
-	secrets, err := secretbox.New(filepath.Join(t.TempDir(), "key.bin"), nil)
-	if err != nil {
-		t.Fatalf("create secretbox: %v", err)
-	}
+	secrets := testutil.NewSecrets(t, sqlite.DB)
 	oidcStore := store.NewOIDCStore(sqlite.DB)
 	adminStore := store.NewAdminStore(sqlite.DB)
 
@@ -418,23 +416,18 @@ func TestOIDCHandlerCallbackLoginSuccessAtHandlerLevel(t *testing.T) {
 
 	state := "state-handler"
 	binding := "binding-handler"
-	verifierEncrypted, err := secrets.EncryptEnvelope([]byte("verifier"),
-		oidc.TransactionVerifierAAD("txn-handler", provider.ID))
-	if err != nil {
-		t.Fatalf("encrypt verifier: %v", err)
-	}
 	stateHash := sha256.Sum256([]byte(state))
 	bindingHash := sha256.Sum256([]byte(binding))
 	nonceHash := sha256.Sum256([]byte("nonce-test"))
-	if err := oidcStore.CreateTransaction(ctx, &model.OIDCTransaction{
-		ID: "txn-handler", StateHash: stateHash[:], BrowserBindingHash: bindingHash[:],
-		NonceHash: nonceHash[:], CodeVerifierEncrypted: verifierEncrypted,
-		ProviderID: provider.ID, ProviderConfigurationVersion: 1, Purpose: model.OIDCPurposeLogin,
-		RedirectURI: "http://example.com/api/v1/auth/oidc/callback", ReturnPath: "/admin",
-		CreatedAt: now, ExpiresAt: now.Add(time.Minute),
-	}); err != nil {
-		t.Fatalf("create transaction: %v", err)
-	}
+	testutil.WriteSecret(t, secrets, testutil.SecretWrite{Plaintext: []byte("verifier"), AAD: oidc.TransactionVerifierAAD("txn-handler", provider.ID), Persist: func(ciphertext []byte) error {
+		return oidcStore.CreateTransaction(ctx, &model.OIDCTransaction{
+			ID: "txn-handler", StateHash: stateHash[:], BrowserBindingHash: bindingHash[:],
+			NonceHash: nonceHash[:], CodeVerifierEncrypted: ciphertext,
+			ProviderID: provider.ID, ProviderConfigurationVersion: 1, Purpose: model.OIDCPurposeLogin,
+			RedirectURI: "http://example.com/api/v1/auth/oidc/callback", ReturnPath: "/admin",
+			CreatedAt: now, ExpiresAt: now.Add(time.Minute),
+		})
+	}})
 	idp.setAuthCode("code-handler")
 
 	request := httptest.NewRequest(http.MethodGet,
@@ -634,10 +627,7 @@ func TestOIDCHandlerStoreFailurePaths(t *testing.T) {
 	}
 	oidcStore := store.NewOIDCStore(sqlite.DB)
 	adminStore := store.NewAdminStore(sqlite.DB)
-	secrets, err := secretbox.New(filepath.Join(t.TempDir(), "key.bin"), nil)
-	if err != nil {
-		t.Fatalf("new secretbox: %v", err)
-	}
+	secrets := testutil.NewSecrets(t, sqlite.DB)
 	auth, err := adminauth.NewService(adminauth.ServiceConfig{Store: adminStore, Secrets: secrets})
 	if err != nil {
 		t.Fatalf("new adminauth: %v", err)

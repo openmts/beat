@@ -62,6 +62,7 @@ func TestMaintenanceHandler(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			request := httptest.NewRequest(test.method, "/", strings.NewReader(test.body))
+			request.Header.Set("Content-Type", "application/json")
 			response := httptest.NewRecorder()
 			test.handle(response, request)
 			if response.Code != test.want {
@@ -109,6 +110,7 @@ func TestMaintenanceHandlerErrors(t *testing.T) {
 			handler := NewMaintenanceHandler(test.service)
 			response := httptest.NewRecorder()
 			request := httptest.NewRequest(test.method, "/", strings.NewReader(test.body))
+			request.Header.Set("Content-Type", "application/json")
 			test.handle(handler)(response, request)
 			if response.Code == http.StatusOK {
 				t.Fatalf("status = %d, want error", response.Code)

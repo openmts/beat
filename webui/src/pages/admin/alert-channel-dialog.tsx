@@ -1,46 +1,22 @@
+import { NotificationTemplateFields } from "@/pages/admin/notification-template-fields"
 import type { Dispatch, SetStateAction } from "react"
-import { LoaderCircleIcon, WandSparklesIcon } from "lucide-react"
 import { useLocale } from "@/context/locale"
+import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
-import { Field, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui/field"
+import { Checkbox } from "@/components/ui/checkbox"
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import { Field, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
-import { Separator } from "@/components/ui/separator"
-import { Textarea } from "@/components/ui/textarea"
-import {
-  Select,
-  SelectContent,
-  SelectGroup,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select"
+import { Switch } from "@/components/ui/switch"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { notificationChannelTypes, notificationEventKinds } from "@/lib/notification-fields"
+import { emptyAlertChannelForm, type AlertChannelFormState } from "@/pages/admin/alert-channel-config"
+import { NotificationProviderFields } from "@/pages/admin/notification-provider-fields"
 import type { AlertChannelType } from "@/types"
-import type { AlertChannelFormState, EmailSecurity } from "@/pages/admin/alert-channel-config"
+import type { NotificationPreview } from "@/types/notification"
 
-// Supported template placeholders shown to the user when editing a template.
-const templateVariables: Array<{ token: string; labelKey: string }> = [
-  { token: "{{rule}}", labelKey: "alert.template_var_rule" },
-  { token: "{{node}}", labelKey: "alert.template_var_node" },
-  { token: "{{metric}}", labelKey: "alert.template_var_metric" },
-  { token: "{{severity}}", labelKey: "alert.template_var_severity" },
-  { token: "{{value}}", labelKey: "alert.template_var_value" },
-  { token: "{{status}}", labelKey: "alert.template_var_status" },
-  { token: "{{time}}", labelKey: "alert.template_var_time" },
-  { token: "{{message}}", labelKey: "alert.template_var_message" },
-]
 
-// A common, production-style alert template users can insert as a starting point.
-const commonAlertTemplate = [
-  "🔴 [{{severity}}] {{rule}}",
-  "Metric: {{metric}}",
-  "Node: {{node}}",
-  "Value: {{value}}",
-  "Status: {{status}}",
-  "Time: {{time}}",
-].join("\n")
-
-interface AlertChannelDialogProps {
+interface Props {
   open: boolean
   editing: boolean
   loading: boolean
@@ -48,260 +24,52 @@ interface AlertChannelDialogProps {
   setForm: Dispatch<SetStateAction<AlertChannelFormState>>
   onOpenChange: (open: boolean) => void
   onSave: () => void
+  onPreview?: () => void
+  error?: string | null
+  preview?: NotificationPreview | null
 }
 
-export default function AlertChannelDialog({
-  open,
-  editing,
-  loading,
-  form,
-  setForm,
-  onOpenChange,
-  onSave,
-}: AlertChannelDialogProps) {
+export default function AlertChannelDialog(props: Props) {
   const { t } = useLocale()
-  const typeItems = [
-    { value: "webhook", label: t("alert.channel.webhook") },
-    { value: "telegram", label: t("alert.channel.telegram") },
-    { value: "email", label: t("alert.channel.email") },
-  ]
-  const securityItems = [
-    { value: "starttls", label: "STARTTLS" },
-    { value: "tls", label: "TLS" },
-    { value: "none", label: t("alert.smtp_none") },
-  ]
-  const parseModeItems = [
-    { value: "", label: "Plain text" },
-    { value: "HTML", label: "HTML" },
-    { value: "Markdown", label: "Markdown" },
-    { value: "MarkdownV2", label: "MarkdownV2" },
-  ]
-  const update = <K extends keyof AlertChannelFormState>(key: K, value: AlertChannelFormState[K]) => {
-    setForm((current) => ({ ...current, [key]: value }))
-  }
-  const updateSecurity = (value: EmailSecurity) => {
-    setForm((current) => ({
-      ...current,
-      smtpSecurity: value,
-      smtpPort: defaultPort(value, current.smtpPort),
-    }))
-  }
-
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[min(90vh,48rem)] overflow-y-auto">
-        <DialogHeader>
-          <DialogTitle>
-            {editing ? t("app.edit") : t("app.create")} {t("alert.channels")}
-          </DialogTitle>
-        </DialogHeader>
-        <FieldGroup>
-          <Field>
-            <FieldLabel htmlFor="channel-name">{t("node.name")}</FieldLabel>
-            <Input
-              id="channel-name"
-              value={form.name}
-              onChange={(event) => update("name", event.target.value)}
-            />
-          </Field>
-          <Field>
-            <FieldLabel htmlFor="channel-type">{t("app.type")}</FieldLabel>
-            <Select
-              items={typeItems}
-              value={form.channelType}
-              onValueChange={(value) => update("channelType", value as AlertChannelType)}
-            >
-              <SelectTrigger id="channel-type" className="w-full">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectGroup>
-                  {typeItems.map((item) => (
-                    <SelectItem key={item.value} value={item.value}>{item.label}</SelectItem>
-                  ))}
-                </SelectGroup>
-              </SelectContent>
-            </Select>
-          </Field>
-          {form.channelType === "webhook" && (
-            <>
-              <Field>
-                <FieldLabel htmlFor="webhook-url">{t("alert.webhook_url")}</FieldLabel>
-                <Input
-                  id="webhook-url"
-                  type="url"
-                  value={form.webhookURL}
-                  placeholder="https://example.com/alerts"
-                  onChange={(event) => update("webhookURL", event.target.value)}
-                />
-              </Field>
-              <Field>
-                <FieldLabel htmlFor="webhook-headers">{t("alert.webhook_headers")}</FieldLabel>
-                <Textarea
-                  id="webhook-headers"
-                  value={form.webhookHeaders}
-                  rows={3}
-                  placeholder={"Authorization: Bearer token\nX-Custom: value"}
-                  onChange={(event) => update("webhookHeaders", event.target.value)}
-                />
-                <FieldDescription>{t("alert.webhook_headers_hint")}</FieldDescription>
-              </Field>
-            </>
-          )}
-          {form.channelType === "telegram" && (
-            <>
-              <Field>
-                <FieldLabel htmlFor="telegram-token">{t("alert.telegram_token")}</FieldLabel>
-                <Input
-                  id="telegram-token"
-                  type="password"
-                  value={form.botToken}
-                  autoComplete="new-password"
-                  onChange={(event) => update("botToken", event.target.value)}
-                />
-                {editing && <FieldDescription>{t("alert.secret_unchanged")}</FieldDescription>}
-              </Field>
-              <Field>
-                <FieldLabel htmlFor="telegram-chat">{t("alert.telegram_chat_id")}</FieldLabel>
-                <Input
-                  id="telegram-chat"
-                  value={form.chatID}
-                  onChange={(event) => update("chatID", event.target.value)}
-                />
-              </Field>
-              <Field>
-                <FieldLabel htmlFor="telegram-parse-mode">{t("alert.parse_mode")}</FieldLabel>
-                <Select
-                  items={parseModeItems}
-                  value={form.telegramParseMode}
-                  onValueChange={(value) => update("telegramParseMode", value ?? "")}
-                >
-                  <SelectTrigger id="telegram-parse-mode" className="w-full"><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectGroup>
-                      {parseModeItems.map((item) => (
-                        <SelectItem key={item.value} value={item.value}>{item.label}</SelectItem>
-                      ))}
-                    </SelectGroup>
-                  </SelectContent>
-                </Select>
-                <FieldDescription>{t("alert.parse_mode_hint")}</FieldDescription>
-              </Field>
-            </>
-          )}
-          {form.channelType === "email" && (
-            <EmailFields
-              editing={editing}
-              form={form}
-              securityItems={securityItems}
-              update={update}
-              updateSecurity={updateSecurity}
-            />
-          )}
-          <Field>
-            <FieldLabel htmlFor="channel-template">{t("alert.template")}</FieldLabel>
-            <Textarea
-              id="channel-template"
-              value={form.template}
-              rows={3}
-              placeholder="[{{severity}}] {{rule}} on {{node}}: {{metric}}={{value}}"
-              onChange={(event) => update("template", event.target.value)}
-            />
-            <FieldDescription>{t("alert.template_hint")}</FieldDescription>
-          </Field>
-          <div className="flex flex-col gap-2 rounded-lg border p-3">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <span className="text-sm font-medium">{t("alert.template_placeholders")}</span>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => update("template", commonAlertTemplate)}
-              >
-                <WandSparklesIcon data-icon="inline-start" />
-                {t("alert.template_use_common")}
-              </Button>
-            </div>
-            <Separator />
-            <ul className="grid grid-cols-1 gap-x-6 gap-y-1 sm:grid-cols-2">
-              {templateVariables.map((variable) => (
-                <li key={variable.token} className="flex items-baseline gap-2 text-xs">
-                  <code className="shrink-0 rounded bg-muted px-1 py-0.5 font-mono">{variable.token}</code>
-                  <span className="text-muted-foreground">{t(variable.labelKey)}</span>
-                </li>
-              ))}
-            </ul>
-            <pre className="mt-1 overflow-x-auto rounded bg-muted p-2 text-xs text-muted-foreground">
-              {t("alert.template_common_example")}
-            </pre>
-          </div>
-        </FieldGroup>
-        <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)}>{t("app.cancel")}</Button>
-          <Button onClick={onSave} disabled={loading || !form.name.trim()}>
-            {loading && <LoaderCircleIcon data-icon="inline-start" className="animate-spin" />}
-            {t("app.save")}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  )
-}
-
-interface EmailFieldsProps {
-  editing: boolean
-  form: AlertChannelFormState
-  securityItems: Array<{ value: string; label: string }>
-  update: <K extends keyof AlertChannelFormState>(key: K, value: AlertChannelFormState[K]) => void
-  updateSecurity: (value: EmailSecurity) => void
-}
-
-function EmailFields({ editing, form, securityItems, update, updateSecurity }: EmailFieldsProps) {
-  const { t } = useLocale()
-  return (
-    <>
-      <div className="grid grid-cols-[minmax(0,1fr)_7rem] gap-3">
-        <Field>
-          <FieldLabel htmlFor="smtp-host">{t("alert.smtp_host")}</FieldLabel>
-          <Input id="smtp-host" value={form.smtpHost} onChange={(event) => update("smtpHost", event.target.value)} />
-        </Field>
-        <Field>
-          <FieldLabel htmlFor="smtp-port">{t("node.port")}</FieldLabel>
-          <Input id="smtp-port" type="number" value={form.smtpPort} onChange={(event) => update("smtpPort", event.target.value)} />
-        </Field>
-      </div>
-      <Field>
-        <FieldLabel htmlFor="smtp-security">{t("alert.smtp_security")}</FieldLabel>
-        <Select items={securityItems} value={form.smtpSecurity} onValueChange={(value) => updateSecurity(value as EmailSecurity)}>
-          <SelectTrigger id="smtp-security" className="w-full"><SelectValue /></SelectTrigger>
-          <SelectContent><SelectGroup>
-            {securityItems.map((item) => <SelectItem key={item.value} value={item.value}>{item.label}</SelectItem>)}
-          </SelectGroup></SelectContent>
-        </Select>
-      </Field>
-      <Field>
-        <FieldLabel htmlFor="smtp-username">{t("alert.smtp_username")}</FieldLabel>
-        <Input id="smtp-username" value={form.smtpUsername} onChange={(event) => update("smtpUsername", event.target.value)} />
-      </Field>
-      <Field>
-        <FieldLabel htmlFor="smtp-password">{t("alert.smtp_password")}</FieldLabel>
-        <Input id="smtp-password" type="password" value={form.smtpPassword} autoComplete="new-password" onChange={(event) => update("smtpPassword", event.target.value)} />
-        {editing && <FieldDescription>{t("alert.secret_unchanged")}</FieldDescription>}
-      </Field>
-      <Field>
-        <FieldLabel htmlFor="smtp-from">{t("alert.smtp_from")}</FieldLabel>
-        <Input id="smtp-from" type="email" value={form.smtpFrom} onChange={(event) => update("smtpFrom", event.target.value)} />
-      </Field>
-      <Field>
-        <FieldLabel htmlFor="smtp-to">{t("alert.smtp_to")}</FieldLabel>
-        <Input id="smtp-to" value={form.smtpTo} placeholder="ops@example.com, owner@example.com" onChange={(event) => update("smtpTo", event.target.value)} />
-      </Field>
-    </>
-  )
-}
-
-function defaultPort(security: EmailSecurity, current: string) {
-  if (security === "tls" && (current === "587" || current === "25")) return "465"
-  if (security === "starttls" && (current === "465" || current === "25")) return "587"
-  if (security === "none" && (current === "465" || current === "587")) return "25"
-  return current
+  const { form, setForm } = props
+  const types = notificationChannelTypes.map(value => ({ value, label: t(`notification.provider.${value}`) }))
+  const update = (key: string, value: string) => setForm(current => ({ ...current, values: { ...current.values, [key]: value } }))
+  const clear = (path: string, selected: boolean) => setForm(current => ({ ...current,
+    clearSecrets: selected ? [...new Set([...current.clearSecrets, path])] : current.clearSecrets.filter(key => key !== path) }))
+  const chooseType = (value: AlertChannelType) => setForm(current => ({ ...emptyAlertChannelForm(value), name: current.name, enabled: current.enabled }))
+  const subscription = (kind: string, selected: boolean) => setForm(current => ({ ...current,
+    eventKinds: selected ? [...new Set([...current.eventKinds, kind])] : current.eventKinds.filter(value => value !== kind) }))
+  return <Dialog open={props.open} onOpenChange={open => { if (!props.loading) props.onOpenChange(open) }}>
+    <DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-2xl">
+      <DialogHeader><DialogTitle>{t(props.editing ? "notification.edit_channel" : "notification.create_channel")}</DialogTitle>
+        <DialogDescription>{t("notification.channel_help")}</DialogDescription></DialogHeader>
+      <fieldset disabled={props.loading} className="grid min-w-0 gap-5">
+        {props.error && <Alert variant="destructive" role="alert"><AlertDescription>{t(props.error)}</AlertDescription></Alert>}
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Field><FieldLabel htmlFor="channel-name">{t("node.name")}</FieldLabel><Input id="channel-name" maxLength={80} value={form.name} onChange={event => setForm(current => ({ ...current, name: event.target.value }))} /></Field>
+          <Field><FieldLabel htmlFor="channel-type">{t("notification.provider")}</FieldLabel><Select items={types} value={form.channelType} disabled={props.editing} onValueChange={value => chooseType(value as AlertChannelType)}>
+            <SelectTrigger id="channel-type" className="w-full"><SelectValue /></SelectTrigger><SelectContent>{types.map(item => <SelectItem key={item.value} value={item.value}>{item.label}</SelectItem>)}</SelectContent>
+          </Select></Field>
+        </div>
+        <label className="flex items-center justify-between gap-3 rounded-md border p-3 text-sm"><span>{t("notification.enabled_help")}</span>
+          <Switch aria-label={t("alert.enabled")} checked={form.enabled} onCheckedChange={enabled => setForm(current => ({ ...current, enabled }))} /></label>
+        <NotificationProviderFields form={form} update={update} clear={clear} />
+        <fieldset className="rounded-md border p-4"><legend className="px-1 text-sm font-medium">{t("notification.subscriptions")}</legend>
+          <p className="mb-3 text-xs text-muted-foreground">{t("notification.subscription_help")}</p>
+          <div className="grid gap-3 sm:grid-cols-2">{notificationEventKinds.map(kind => <label key={kind} className="flex items-center gap-2 text-sm">
+            <Checkbox checked={form.eventKinds.includes(kind)} onCheckedChange={checked => subscription(kind, Boolean(checked))} />{t(`notification.event.${kind}`)}
+          </label>)}</div>
+        </fieldset>
+        <NotificationTemplateFields form={form} setForm={setForm} />
+        {props.preview && <div className="grid gap-2 rounded-md border p-4"><p className="text-sm font-medium">{t("notification.preview_result")}</p>
+          <p className="text-xs text-muted-foreground">{t("notification.preview_help")}</p>
+          <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-all rounded bg-muted p-3 text-xs">{JSON.stringify(props.preview, null, 2)}</pre>
+        </div>}
+      </fieldset>
+      <DialogFooter><Button variant="outline" disabled={props.loading} onClick={() => props.onOpenChange(false)}>{t("app.cancel")}</Button>
+        {props.onPreview && <Button variant="outline" disabled={props.loading} onClick={props.onPreview}>{t("notification.preview")}</Button>}
+        <Button disabled={props.loading || !form.name.trim()} onClick={props.onSave}>{t("app.save")}</Button>
+      </DialogFooter>
+    </DialogContent>
+  </Dialog>
 }

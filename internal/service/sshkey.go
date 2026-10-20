@@ -93,7 +93,7 @@ func (s *SSHKeyService) CreateKey(ctx context.Context, name, keyType string) (*m
 		return nil, fmt.Errorf("generate key pair: %w", err)
 	}
 
-	key, err := s.sshKeyStore.CreateSSHKey(ctx, name, keyType, pubKey, privKey, fingerprint)
+	key, err := s.sshKeyStore.CreateSSHKey(ctx, store.SSHKeyInput{Name: name, KeyType: keyType, PublicKey: pubKey, PrivateKey: privKey, Fingerprint: fingerprint, Generated: true})
 	if err != nil {
 		return nil, fmt.Errorf("create ssh key: %w", err)
 	}

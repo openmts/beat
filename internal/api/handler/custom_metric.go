@@ -2,7 +2,7 @@ package handler
 
 import (
 	"context"
-	"log/slog"
+	"errors"
 	"net/http"
 
 	"github.com/beat/backend/internal/model"
@@ -12,12 +12,13 @@ import (
 // CustomMetricDispatcher dispatches registration tasks to agents when custom
 // metric bindings change.
 type CustomMetricDispatcher interface {
-	RegisterNodeCustomMetrics(context.Context, string) error
+	DispatchCustomMetricTasks(context.Context, []model.AgentTask) error
 }
 
 type CustomMetricHandler struct {
 	store      *store.CustomMetricStore
 	dispatcher CustomMetricDispatcher
+	samples    customSampleSource
 }
 
 func NewCustomMetricHandler(store *store.CustomMetricStore, dispatcher CustomMetricDispatcher) *CustomMetricHandler {
@@ -43,8 +44,7 @@ func (h *CustomMetricHandler) HandleList(w http.ResponseWriter, r *http.Request)
 
 func (h *CustomMetricHandler) HandleCreate(w http.ResponseWriter, r *http.Request) {
 	var payload customMetricPayload
-	if err := ParseJSON(r, &payload); err != nil {
-		JSONError(w, http.StatusBadRequest, "invalid request body")
+	if !parseCustomMetricRequest(w, r, &payload) {
 		return
 	}
 	enabled := true
@@ -77,8 +77,7 @@ func (h *CustomMetricHandler) HandleUpdate(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	var payload customMetricPayload
-	if err := ParseJSON(r, &payload); err != nil {
-		JSONError(w, http.StatusBadRequest, "invalid request body")
+	if !parseCustomMetricRequest(w, r, &payload) {
 		return
 	}
 	updated := *existing
@@ -89,22 +88,27 @@ func (h *CustomMetricHandler) HandleUpdate(w http.ResponseWriter, r *http.Reques
 	if payload.Enabled != nil {
 		updated.Enabled = *payload.Enabled
 	}
-	result, err := h.store.Update(r.Context(), id, updated)
+	change, err := h.store.UpdateWithRegistration(r.Context(), id, updated)
 	if err != nil {
 		writeCustomMetricError(w, err)
 		return
 	}
-	h.dispatchForMetric(r, id)
-	JSONResponse(w, http.StatusOK, result)
+	if change.Metric == nil {
+		JSONError(w, http.StatusNotFound, "custom metric not found")
+		return
+	}
+	h.dispatchChange(r, change)
+	JSONResponse(w, http.StatusOK, change.Metric)
 }
 
 func (h *CustomMetricHandler) HandleDelete(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	if err := h.store.Delete(r.Context(), id); err != nil {
-		JSONError(w, http.StatusInternalServerError, "failed to delete custom metric")
+	change, err := h.store.DeleteWithRegistration(r.Context(), id)
+	if err != nil {
+		writeCustomMetricError(w, err)
 		return
 	}
-	h.dispatchForMetric(r, id)
+	h.dispatchChange(r, change)
 	JSONResponse(w, http.StatusOK, struct{}{})
 }
 
@@ -126,39 +130,30 @@ func (h *CustomMetricHandler) HandleSetMetricNodes(w http.ResponseWriter, r *htt
 	var payload struct {
 		NodeIDs []string `json:"node_ids"`
 	}
-	if err := ParseJSON(r, &payload); err != nil {
-		JSONError(w, http.StatusBadRequest, "invalid request body")
+	if !parseCustomMetricRequest(w, r, &payload) {
 		return
 	}
-	if err := h.store.SetMetricNodes(r.Context(), metricID, payload.NodeIDs); err != nil {
-		JSONError(w, http.StatusInternalServerError, "failed to update custom metric nodes")
+	change, err := h.store.SetMetricNodesWithRegistration(r.Context(), metricID, payload.NodeIDs)
+	if err != nil {
+		writeCustomMetricError(w, err)
 		return
 	}
-	for _, nodeID := range payload.NodeIDs {
-		if err := h.dispatcher.RegisterNodeCustomMetrics(r.Context(), nodeID); err != nil {
-			slog.WarnContext(r.Context(), "dispatch custom metric register failed", "node_id", nodeID, "error", err)
-		}
-	}
+	h.dispatchChange(r, change)
 	JSONResponse(w, http.StatusOK, payload.NodeIDs)
 }
 
-func (h *CustomMetricHandler) dispatchForMetric(r *http.Request, metricID string) {
-	nodeIDs, err := h.store.NodeIDsForMetric(r.Context(), metricID)
-	if err != nil {
-		slog.WarnContext(r.Context(), "list nodes for custom metric failed", "metric_id", metricID, "error", err)
-		return
-	}
-	for _, nodeID := range nodeIDs {
-		if err := h.dispatcher.RegisterNodeCustomMetrics(r.Context(), nodeID); err != nil {
-			slog.WarnContext(r.Context(), "dispatch custom metric register failed", "node_id", nodeID, "error", err)
-		}
-	}
+func (h *CustomMetricHandler) dispatchChange(r *http.Request, change store.CustomMetricChange) {
+	h.dispatchTasks(r, change.Tasks)
 }
 
 func writeCustomMetricError(w http.ResponseWriter, err error) {
-	if err == store.ErrCustomMetricNameTaken {
+	if errors.Is(err, store.ErrCustomMetricNameTaken) {
 		JSONError(w, http.StatusConflict, "custom metric name already exists")
 		return
 	}
-	JSONError(w, http.StatusBadRequest, err.Error())
+	if errors.Is(err, store.ErrCustomMetricInvalid) || errors.Is(err, store.ErrCustomMetricLimit) {
+		JSONError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	JSONError(w, http.StatusInternalServerError, "custom metric change failed")
 }

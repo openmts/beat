@@ -27,6 +27,10 @@ func (s *GroupStore) CreateGroup(ctx context.Context, name string) (*model.Group
 		return nil, fmt.Errorf("begin create group: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
+	mutation, err := beginMetadataMutation(ctx, tx, false)
+	if err != nil {
+		return nil, err
+	}
 	var maxOrder sql.NullInt64
 	err = tx.QueryRowContext(ctx, "SELECT MAX(sort_order) FROM groups").Scan(&maxOrder)
 	if err != nil {
@@ -55,56 +59,30 @@ func (s *GroupStore) CreateGroup(ctx context.Context, name string) (*model.Group
 	if err != nil {
 		return nil, fmt.Errorf("inserting group: %w", err)
 	}
+	if err := mutation.finish(metadataEvidence{Action: "group.create", Type: "group", ID: g.ID, Name: g.Name, Fields: []string{"name"}}); err != nil {
+		return nil, err
+	}
+	if err := verifyGroupSnapshot(ctx, tx, *g); err != nil {
+		return nil, err
+	}
 	if err := tx.Commit(); err != nil {
 		return nil, fmt.Errorf("commit create group: %w", err)
 	}
 	return g, nil
 }
 
-func (s *GroupStore) ListGroups(ctx context.Context) ([]model.Group, error) {
-	rows, err := s.db.QueryContext(ctx,
-		"SELECT id, name, sort_order, is_default, created_at, updated_at FROM groups ORDER BY sort_order ASC")
-	if err != nil {
-		return nil, fmt.Errorf("querying groups: %w", err)
-	}
-	defer func() { _ = rows.Close() }()
-
-	groups := []model.Group{}
-	for rows.Next() {
-		var g model.Group
-		var isDefault int
-		if err := rows.Scan(&g.ID, &g.Name, &g.SortOrder, &isDefault, &g.CreatedAt, &g.UpdatedAt); err != nil {
-			return nil, fmt.Errorf("scanning group: %w", err)
-		}
-		g.IsDefault = isDefault != 0
-		groups = append(groups, g)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterating groups: %w", err)
-	}
-
-	return groups, nil
-}
-
-func (s *GroupStore) GetGroup(ctx context.Context, id string) (*model.Group, error) {
-	var g model.Group
-	var isDefault int
-	err := s.db.QueryRowContext(ctx,
-		"SELECT id, name, sort_order, is_default, created_at, updated_at FROM groups WHERE id = ?", id,
-	).Scan(&g.ID, &g.Name, &g.SortOrder, &isDefault, &g.CreatedAt, &g.UpdatedAt)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("querying group %s: %w", id, err)
-	}
-	g.IsDefault = isDefault != 0
-	return &g, nil
-}
-
 func (s *GroupStore) UpdateGroup(ctx context.Context, id string, name string) error {
+	tx, err := beginWriteTx(ctx, s.db)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	mutation, err := beginMetadataMutation(ctx, tx, false)
+	if err != nil {
+		return err
+	}
 	now := model.NowUTC()
-	result, err := s.db.ExecContext(ctx,
+	result, err := tx.ExecContext(ctx,
 		"UPDATE groups SET name = ?, updated_at = ? WHERE id = ?",
 		name, now, id,
 	)
@@ -118,7 +96,13 @@ func (s *GroupStore) UpdateGroup(ctx context.Context, id string, name string) er
 	if affected == 0 {
 		return fmt.Errorf("store: group %s not found", id)
 	}
-	return nil
+	if err := mutation.finish(metadataEvidence{Action: "group.update", Type: "group", ID: id, Name: name, Fields: []string{"name"}}); err != nil {
+		return err
+	}
+	if err := verifyGroupChange(ctx, tx, metadataEvidence{ID: id, Name: name, Action: "group.update"}); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (s *GroupStore) DeleteGroup(ctx context.Context, id string) error {
@@ -127,37 +111,24 @@ func (s *GroupStore) DeleteGroup(ctx context.Context, id string) error {
 		return fmt.Errorf("beginning transaction: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
-	var defaultID string
-	if err := tx.QueryRowContext(ctx, "SELECT id FROM groups WHERE is_default = 1 LIMIT 1").Scan(&defaultID); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return fmt.Errorf("store: no default group found")
-		}
-		return fmt.Errorf("getting default group: %w", err)
+	mutation, err := beginMetadataMutation(ctx, tx, false)
+	if err != nil {
+		return err
 	}
-	if id == defaultID {
-		return ErrDefaultGroupDelete
+	var deletedName string
+	if err := tx.QueryRowContext(ctx, "SELECT name FROM groups WHERE id=?", id).Scan(&deletedName); err != nil {
+		return err
+	}
+	if err := deleteGroupData(ctx, tx, id); err != nil {
+		return err
 	}
 
-	_, err = tx.ExecContext(ctx,
-		"UPDATE nodes SET group_id = ? WHERE group_id = ?",
-		defaultID, id,
-	)
-	if err != nil {
-		return fmt.Errorf("moving nodes to default group: %w", err)
+	if err := mutation.finish(metadataEvidence{Action: "group.delete", Type: "group", ID: id, Name: deletedName}); err != nil {
+		return err
 	}
-
-	result, err := tx.ExecContext(ctx, "DELETE FROM groups WHERE id = ?", id)
-	if err != nil {
-		return fmt.Errorf("deleting group %s: %w", id, err)
+	if err := verifyGroupChange(ctx, tx, metadataEvidence{ID: id, Action: "group.delete"}); err != nil {
+		return err
 	}
-	affected, err := result.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("deleting group %s rows affected: %w", id, err)
-	}
-	if affected == 0 {
-		return fmt.Errorf("store: group %s not found", id)
-	}
-
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("committing transaction: %w", err)
 	}
@@ -165,60 +136,30 @@ func (s *GroupStore) DeleteGroup(ctx context.Context, id string) error {
 	return nil
 }
 
-func (s *GroupStore) GetDefaultGroup(ctx context.Context) (*model.Group, error) {
-	var g model.Group
-	var isDefault int
-	err := s.db.QueryRowContext(ctx,
-		"SELECT id, name, sort_order, is_default, created_at, updated_at FROM groups WHERE is_default = 1 LIMIT 1",
-	).Scan(&g.ID, &g.Name, &g.SortOrder, &isDefault, &g.CreatedAt, &g.UpdatedAt)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("querying default group: %w", err)
-	}
-	g.IsDefault = isDefault != 0
-	return &g, nil
-}
-
 func (s *GroupStore) SetDefaultGroup(ctx context.Context, id string) error {
-	now := model.NowUTC()
 	tx, err := beginWriteTx(ctx, s.db)
 	if err != nil {
 		return fmt.Errorf("beginning transaction: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
-	var exists int
-	if err := tx.QueryRowContext(ctx, "SELECT COUNT(*) FROM groups WHERE id = ?", id).Scan(&exists); err != nil {
-		return fmt.Errorf("checking new default group: %w", err)
+	mutation, err := beginMetadataMutation(ctx, tx, false)
+	if err != nil {
+		return err
 	}
-	if exists == 0 {
-		return fmt.Errorf("store: group %s not found", id)
+	var groupName string
+	if err := tx.QueryRowContext(ctx, "SELECT name FROM groups WHERE id=?", id).Scan(&groupName); err != nil {
+		return err
+	}
+	if err := setDefaultGroupData(ctx, tx, id); err != nil {
+		return err
 	}
 
-	result, err := tx.ExecContext(ctx, "UPDATE groups SET is_default = 0, updated_at = ? WHERE is_default = 1", now)
-	if err != nil {
-		return fmt.Errorf("unsetting old default: %w", err)
+	if err := mutation.finish(metadataEvidence{Action: "group.default", Type: "group", ID: id, Name: groupName, Fields: []string{"is_default"}}); err != nil {
+		return err
 	}
-	if _, err := result.RowsAffected(); err != nil {
-		return fmt.Errorf("unsetting old default rows affected: %w", err)
+	if err := verifyGroupChange(ctx, tx, metadataEvidence{ID: id, Action: "group.default"}); err != nil {
+		return err
 	}
-
-	result, err = tx.ExecContext(ctx,
-		"UPDATE groups SET is_default = 1, updated_at = ? WHERE id = ?",
-		now, id,
-	)
-	if err != nil {
-		return fmt.Errorf("setting new default: %w", err)
-	}
-	affected, err := result.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("setting new default rows affected: %w", err)
-	}
-	if affected == 0 {
-		return fmt.Errorf("store: group %s not found", id)
-	}
-
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("committing transaction: %w", err)
 	}
@@ -239,24 +180,21 @@ func (s *GroupStore) UpdateSortOrder(ctx context.Context, ids []string) error {
 		return fmt.Errorf("beginning transaction: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
-
-	for i, id := range ids {
-		result, err := tx.ExecContext(ctx,
-			"UPDATE groups SET sort_order = ?, updated_at = ? WHERE id = ?",
-			i, model.NowUTC(), id,
-		)
-		if err != nil {
-			return fmt.Errorf("updating sort order for group %s: %w", id, err)
-		}
-		affected, err := result.RowsAffected()
-		if err != nil {
-			return fmt.Errorf("updating sort order for group %s rows affected: %w", id, err)
-		}
-		if affected == 0 {
-			return fmt.Errorf("store: group %s not found", id)
-		}
+	mutation, err := beginMetadataMutation(ctx, tx, false)
+	if err != nil {
+		return err
 	}
 
+	if err := sortGroupData(ctx, tx, ids); err != nil {
+		return err
+	}
+
+	if err := mutation.finish(metadataEvidence{Action: "group.sort", Type: "group_order", ID: "all", Fields: []string{"sort_order"}, Count: len(ids)}); err != nil {
+		return err
+	}
+	if err := verifyMetadataOrder(ctx, tx, metadataOrder{table: "groups", ids: ids}); err != nil {
+		return err
+	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("committing transaction: %w", err)
 	}

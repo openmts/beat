@@ -2,169 +2,193 @@ package main
 
 import (
 	"context"
+	"errors"
 	"log/slog"
-	"runtime/debug"
 	"sync"
 	"sync/atomic"
 	"time"
 )
 
-// 监督器重启策略：意外退出后按退避重启，超过次数后放弃并保持就绪失败。
-const (
-	defaultBackoffBase = time.Second
-	defaultBackoffMax  = 30 * time.Second
-	defaultMaxRestarts = 3
-	staleMultiplier    = 4
-)
+const staleMultiplier = 4
 
-// supervisedWorker 跟踪一个后台 worker 的真实运行状态与执行结果，使就绪检查
-// 能反映 worker 意外退出、panic、连续失败与滞后，而不仅仅是“启动成功”。
+const startupGrace = 30 * time.Second
+
 type supervisedWorker struct {
 	name             string
 	expectedInterval time.Duration
 	running          atomic.Bool
-	lastSuccess      atomic.Int64 // Unix 纳秒；0 表示从未成功
+	started          atomic.Bool
+	failed           atomic.Bool
+	panicked         atomic.Bool
+	lastSuccess      atomic.Int64
+	lastAttempt      atomic.Int64
+	lastFailure      atomic.Int64
+	startedAt        atomic.Int64
+	stoppedAt        atomic.Int64
 	consecutiveFails atomic.Int64
+	failures         atomic.Int64
 	restarts         atomic.Int64
+	ctx              context.Context
 }
 
 func newSupervisedWorker(name string, interval time.Duration) *supervisedWorker {
 	return &supervisedWorker{name: name, expectedInterval: interval}
 }
 
-func (w *supervisedWorker) snapshot() workerSnapshot {
-	nanos := w.lastSuccess.Load()
-	var lastSuccess time.Time
-	if nanos != 0 {
-		lastSuccess = time.Unix(0, nanos)
+func atomicTime(value *atomic.Int64) time.Time {
+	if n := value.Load(); n != 0 {
+		return time.Unix(0, n).UTC()
 	}
-	return workerSnapshot{
-		Name:             w.name,
-		Running:          w.running.Load(),
-		LastSuccess:      lastSuccess,
-		ConsecutiveFails: w.consecutiveFails.Load(),
-		Restarts:         w.restarts.Load(),
-	}
+	return time.Time{}
 }
 
-// observe 返回供 worker 每次迭代结束后调用的结果钩子。
+func (w *supervisedWorker) snapshot() workerSnapshot {
+	value := workerSnapshot{Name: w.name, Configured: true, Started: w.started.Load(), Running: w.running.Load(), LastSuccess: atomicTime(&w.lastSuccess), LastAttempt: atomicTime(&w.lastAttempt), LastFailure: atomicTime(&w.lastFailure), StartedAt: atomicTime(&w.startedAt), StoppedAt: atomicTime(&w.stoppedAt), ConsecutiveFails: w.consecutiveFails.Load(), Restarts: w.restarts.Load(), Failures: w.failures.Load(), IntervalSeconds: w.expectedInterval.Seconds(), State: "starting"}
+	if w.failed.Load() {
+		value.State = "failed"
+		value.Failure = "unexpected_exit"
+		if w.panicked.Load() {
+			value.Failure = "panic"
+		}
+		return value
+	}
+	if !value.Running && value.Started {
+		value.State = "stopped"
+		return value
+	}
+	if value.ConsecutiveFails > 0 {
+		value.Failure = "iteration_failed"
+	}
+	if ok, _ := w.healthy(time.Now()); !ok && value.Running {
+		value.State = "degraded"
+	} else if !value.LastSuccess.IsZero() {
+		value.State = "healthy"
+	}
+	value.SchedulerLagSeconds = workerSchedulerLag(value)
+	return value
+}
+
 func (w *supervisedWorker) observe() func(error) {
 	return func(err error) {
-		if err != nil {
-			w.consecutiveFails.Add(1)
+		if errors.Is(err, context.Canceled) || w.ctx != nil && w.ctx.Err() != nil {
 			return
 		}
-		w.lastSuccess.Store(time.Now().UnixNano())
+		now := time.Now().UnixNano()
+		w.lastAttempt.Store(now)
+		if err != nil {
+			w.consecutiveFails.Add(1)
+			w.failures.Add(1)
+			w.lastFailure.Store(now)
+			return
+		}
+		w.lastSuccess.Store(now)
 		w.consecutiveFails.Store(0)
 	}
 }
 
 func (w *supervisedWorker) healthy(now time.Time) (bool, string) {
+	if w.failed.Load() {
+		return false, "failed"
+	}
 	if !w.running.Load() {
 		return false, "stopped"
 	}
-	snapshot := w.snapshot()
-	if snapshot.ConsecutiveFails >= staleMultiplier {
+	if w.consecutiveFails.Load() >= staleMultiplier {
 		return false, "failing"
 	}
-	if !snapshot.LastSuccess.IsZero() &&
-		now.Sub(snapshot.LastSuccess) > staleMultiplier*w.expectedInterval {
+	success := atomicTime(&w.lastSuccess)
+	if !success.IsZero() && now.Sub(success) > staleMultiplier*w.expectedInterval {
 		return false, "stale"
+	}
+	if success.IsZero() && now.Sub(atomicTime(&w.startedAt)) > max(startupGrace, 2*w.expectedInterval) {
+		return false, "starting"
 	}
 	return true, ""
 }
 
 type workerSnapshot struct {
-	Name             string
-	Running          bool
-	LastSuccess      time.Time
-	ConsecutiveFails int64
-	Restarts         int64
+	Failures            int64     `json:"failures"`
+	Name                string    `json:"name"`
+	Configured          bool      `json:"configured"`
+	Started             bool      `json:"started"`
+	Running             bool      `json:"running"`
+	StartedAt           time.Time `json:"started_at"`
+	StoppedAt           time.Time `json:"stopped_at"`
+	LastAttempt         time.Time `json:"last_attempt"`
+	LastSuccess         time.Time `json:"last_success"`
+	LastFailure         time.Time `json:"last_failure"`
+	ConsecutiveFails    int64     `json:"consecutive_failures"`
+	Restarts            int64     `json:"restarts"`
+	IntervalSeconds     float64   `json:"interval_seconds"`
+	SchedulerLagSeconds float64   `json:"scheduler_lag_seconds"`
+	State               string    `json:"state"`
+	Failure             string    `json:"failure"`
 }
 
 type workerSupervisor struct {
-	mu          sync.Mutex
-	workers     []*supervisedWorker
-	backoffBase time.Duration
-	backoffMax  time.Duration
-	maxRestarts int
+	mu       sync.Mutex
+	workers  []*supervisedWorker
+	ctx      context.Context
+	cancel   context.CancelFunc
+	terminal atomic.Bool
+	stopping atomic.Bool
 }
 
 func newWorkerSupervisor() *workerSupervisor {
-	return &workerSupervisor{
-		backoffBase: defaultBackoffBase, backoffMax: defaultBackoffMax,
-		maxRestarts: defaultMaxRestarts,
-	}
+	ctx, cancel := context.WithCancel(context.Background())
+	return &workerSupervisor{ctx: ctx, cancel: cancel}
 }
 
-// register 登记一个受监督 worker 并返回其句柄；调用方应在 start 之前把
-// handle.observe() 挂到 worker 的结果回调上，避免启动后的数据竞争。
-func (s *workerSupervisor) register(name string, expectedInterval time.Duration) *supervisedWorker {
-	w := newSupervisedWorker(name, expectedInterval)
+func (s *workerSupervisor) bind(ctx context.Context, cancel context.CancelFunc) {
+	s.ctx = ctx
+	s.cancel = cancel
+}
+
+func (s *workerSupervisor) register(name string, interval time.Duration) *supervisedWorker {
+	w := newSupervisedWorker(name, interval)
 	s.mu.Lock()
 	s.workers = append(s.workers, w)
 	s.mu.Unlock()
 	return w
 }
 
-// start 启动已注册的后台任务：panic 被捕获并记录；意外退出后按指数退避
-// 有限次重启，耗尽后保持停止状态由就绪检查如实上报。
-func (s *workerSupervisor) start(
-	wg *sync.WaitGroup,
-	ctx context.Context,
-	w *supervisedWorker,
-	fn func(context.Context),
-) {
-	backoffBase, backoffMax, maxRestarts := s.backoffBase, s.backoffMax, s.maxRestarts
+func (s *workerSupervisor) start(wg *sync.WaitGroup, w *supervisedWorker, fn func(context.Context)) {
+	if w.ctx == nil {
+		w.ctx = s.ctx
+	}
+	ctx := w.ctx
+	w.started.Store(true)
+	w.startedAt.Store(time.Now().UnixNano())
 	w.running.Store(true)
 	wg.Go(func() {
-		defer func() {
-			w.running.Store(false)
-			if ctx.Err() == nil {
-				slog.ErrorContext(ctx, "background worker gave up after restarts",
-					"worker", w.name, "restarts", w.restarts.Load())
-			}
-		}()
-		backoff := backoffBase
-		for attempt := 0; ; attempt++ {
-			panicValue := runWorker(ctx, fn)
-			if ctx.Err() != nil {
-				return // 受控停机，不重启
-			}
-			if panicValue != nil {
-				slog.ErrorContext(ctx, "background worker panicked",
-					"worker", w.name, "panic", panicValue, "stack", string(debug.Stack()))
-			} else {
-				slog.ErrorContext(ctx, "background worker exited unexpectedly", "worker", w.name)
-			}
-			if attempt >= maxRestarts {
-				return
-			}
-			slog.WarnContext(ctx, "restarting background worker",
-				"worker", w.name, "attempt", attempt+1, "backoff", backoff)
-			select {
-			case <-ctx.Done():
-				w.running.Store(false)
-				return
-			case <-time.After(backoff):
-			}
-			if backoff *= 2; backoff > backoffMax {
-				backoff = backoffMax
-			}
-			w.restarts.Add(1)
-			w.running.Store(true)
+		panicValue := runWorker(ctx, fn)
+		w.stoppedAt.Store(time.Now().UnixNano())
+		w.running.Store(false)
+		if ctx.Err() != nil || s.stopping.Load() {
+			return
 		}
+		w.failed.Store(true)
+		if panicValue != nil {
+			w.panicked.Store(true)
+		}
+		w.lastFailure.Store(time.Now().UnixNano())
+		reason := "unexpected_exit"
+		if w.panicked.Load() {
+			reason = "panic"
+		}
+		// panic载荷可能包含secret；只输出固定故障枚举，不输出载荷或堆栈。
+		slog.ErrorContext(ctx, "background worker terminated", "worker", w.name, "reason", reason)
+		s.terminal.Store(true)
+		s.cancel()
 	})
 }
 
-// runWorker 运行单轮 worker 并捕获 panic，供重启决策使用。
 func runWorker(ctx context.Context, fn func(context.Context)) (panicValue any) {
 	defer func() { panicValue = recover() }()
 	fn(ctx)
 	return nil
 }
 
-// observer 返回指定名称 worker 的结果钩子；未注册的名称返回空钩子。
 func (s *workerSupervisor) observer(name string) func(error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -186,22 +210,28 @@ func (s *workerSupervisor) snapshot() []workerSnapshot {
 	return out
 }
 
-type workerHealth struct {
-	Name   string
-	Reason string
-}
+type workerHealth struct{ Name, Reason string }
 
-// health 汇总每个 worker 的健康原因；空 Reason 表示健康。
 func (s *workerSupervisor) health(now time.Time) []workerHealth {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	out := make([]workerHealth, 0, len(s.workers))
 	for _, w := range s.workers {
-		reason := ""
-		if ok, why := w.healthy(now); !ok {
-			reason = why
-		}
+		_, reason := w.healthy(now)
 		out = append(out, workerHealth{Name: w.name, Reason: reason})
 	}
 	return out
+}
+
+func (w *supervisedWorker) in(ctx context.Context) *supervisedWorker { w.ctx = ctx; return w }
+
+func workerSchedulerLag(value workerSnapshot) float64 {
+	attempt := value.LastAttempt
+	if attempt.IsZero() {
+		attempt = value.StartedAt
+	}
+	if !value.Running || attempt.IsZero() {
+		return 0
+	}
+	return max(0, time.Since(attempt).Seconds()-value.IntervalSeconds)
 }

@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "id": "beat-pulse",
+  "name": "Pulse",
+  "description": "Script theme example: a fully custom offline-friendly status board rendered inside the isolated iframe.",
+  "version": "1.0.0",
+  "author": "Beat contributors",
+  "license": "MIT",
+  "runtime": "sandboxed",
+  "minimum_beat_version": "0.1.0",
+  "preview": "preview.png",
+  "supported_locales": [
+    "en",
+    "zh-CN"
+  ]
+}

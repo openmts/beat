@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -26,6 +27,12 @@ func NewSQLiteStore(dbPath string) (*SQLiteStore, error) {
 }
 
 func NewSQLiteStoreContext(ctx context.Context, dbPath string) (*SQLiteStore, error) {
+	return NewSQLiteStoreObserved(ctx, dbPath, nil)
+}
+
+// NewSQLiteStoreObserved 与 NewSQLiteStoreContext 行为一致，只是把启动期迁移阶段
+// 报告给可选观察者，供无浏览器可用的本地迁移状态标记使用。
+func NewSQLiteStoreObserved(ctx context.Context, dbPath string, observer MigrationObserver) (*SQLiteStore, error) {
 	if err := secureSQLiteFile(dbPath); err != nil {
 		return nil, err
 	}
@@ -47,7 +54,7 @@ func NewSQLiteStoreContext(ctx context.Context, dbPath string) (*SQLiteStore, er
 		_ = db.Close()
 		return nil, err
 	}
-	if err := applyMigrations(ctx, db); err != nil {
+	if err := applyMigrationsObserved(ctx, db, observer); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("migrating sqlite database: %w", err)
 	}
@@ -55,7 +62,12 @@ func NewSQLiteStoreContext(ctx context.Context, dbPath string) (*SQLiteStore, er
 		_ = db.Close()
 		return nil, err
 	}
-	return &SQLiteStore{DB: db, path: dbPath}, nil
+	store := &SQLiteStore{DB: db, path: dbPath}
+	if err := CleanupEnrollmentStateAtStartup(ctx, store); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("cleaning enrollment state: %w", err)
+	}
+	return store, nil
 }
 
 func secureSQLiteFile(path string) error {
@@ -126,6 +138,33 @@ func (s *SQLiteStore) Ready(ctx context.Context) error {
 	}
 	if !version.Valid || version.Int64 != currentSchemaVersion {
 		return fmt.Errorf("sqlite schema version is %d, want %d", version.Int64, currentSchemaVersion)
+	}
+	return s.probeDataDirectory()
+}
+
+// probeDataDirectory 用一次真实的临时文件写入确认数据目录可写。
+// 只读挂载或磁盘写满时读取仍然成功，但服务已经无法提交任何变更，
+// 因此就绪检查必须包含写探针，否则 /readyz 会在无法写入时继续报 ready。
+func (s *SQLiteStore) probeDataDirectory() error {
+	if s.path == "" || s.path == ":memory:" {
+		return nil
+	}
+	probe, err := os.CreateTemp(filepath.Dir(s.path), ".ready-probe-*")
+	if err != nil {
+		return fmt.Errorf("data directory is not writable: %w", err)
+	}
+	name := probe.Name()
+	if _, err := probe.Write([]byte("ok")); err != nil {
+		_ = probe.Close()
+		_ = os.Remove(name)
+		return fmt.Errorf("data directory is not writable: %w", err)
+	}
+	if err := probe.Close(); err != nil {
+		_ = os.Remove(name)
+		return fmt.Errorf("data directory is not writable: %w", err)
+	}
+	if err := os.Remove(name); err != nil {
+		return fmt.Errorf("data directory probe cleanup failed: %w", err)
 	}
 	return nil
 }

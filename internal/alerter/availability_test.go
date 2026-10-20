@@ -2,10 +2,7 @@ package alerter
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
-	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -16,7 +13,7 @@ import (
 func TestEvaluateRulesMarksStaleNodesOffline(t *testing.T) {
 	now := time.Date(2026, 7, 30, 2, 0, 0, 0, time.UTC)
 	nodes := &mockNodeStore{}
-	a := New(
+	a := newTestAlerter(
 		&mockAlertRuleStore{}, &mockAlertEventStore{}, &mockAlertChannelStore{},
 		&mockMTSStore{}, nodes,
 	)
@@ -33,7 +30,7 @@ func TestEvaluateRulesMarksStaleNodesOffline(t *testing.T) {
 
 func TestEvaluateRulesReturnsStaleNodeUpdateError(t *testing.T) {
 	want := errors.New("database unavailable")
-	a := New(
+	a := newTestAlerter(
 		&mockAlertRuleStore{}, &mockAlertEventStore{}, &mockAlertChannelStore{},
 		&mockMTSStore{}, &mockNodeStore{markErr: want},
 	)
@@ -44,7 +41,7 @@ func TestEvaluateRulesReturnsStaleNodeUpdateError(t *testing.T) {
 
 func TestHeartbeatAgeClampsFutureTimestamp(t *testing.T) {
 	now := time.Date(2026, 7, 30, 2, 0, 0, 0, time.UTC)
-	a := New(
+	a := newTestAlerter(
 		&mockAlertRuleStore{}, &mockAlertEventStore{}, &mockAlertChannelStore{},
 		&mockMTSStore{}, &mockNodeStore{},
 	)
@@ -66,7 +63,7 @@ func TestEvaluateAvailabilityTriggersAfterDebounce(t *testing.T) {
 		Operator: "gt", Threshold: 90, Duration: 30, Severity: model.AlertSeverityCritical,
 	}
 	events := &mockAlertEventStore{}
-	a := New(
+	a := newTestAlerter(
 		&mockAlertRuleStore{rules: []model.AlertRule{rule}}, events,
 		&mockAlertChannelStore{}, &mockMTSStore{}, &mockNodeStore{nodes: []model.Node{node}},
 	)
@@ -97,7 +94,7 @@ func TestEvaluateAvailabilitySkipsNeverSeenNodes(t *testing.T) {
 		Operator: "gt", Threshold: 90, Duration: 0,
 	}
 	events := &mockAlertEventStore{}
-	a := New(
+	a := newTestAlerter(
 		&mockAlertRuleStore{rules: []model.AlertRule{rule}}, events,
 		&mockAlertChannelStore{}, &mockMTSStore{},
 		&mockNodeStore{nodes: []model.Node{{ID: "node-1", Status: model.NodeStatusOffline}}},
@@ -112,15 +109,6 @@ func TestEvaluateAvailabilitySkipsNeverSeenNodes(t *testing.T) {
 }
 
 func TestEvaluateAvailabilityResolvesPersistedEventAndNotifies(t *testing.T) {
-	var delivered model.AlertEvent
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if err := json.NewDecoder(r.Body).Decode(&delivered); err != nil {
-			t.Errorf("decode recovery payload: %v", err)
-		}
-		w.WriteHeader(http.StatusNoContent)
-	}))
-	t.Cleanup(server.Close)
-
 	now := time.Date(2026, 7, 30, 2, 0, 0, 0, time.UTC)
 	node := model.Node{
 		ID: "node-1", Name: "edge", Status: model.NodeStatusOnline,
@@ -137,10 +125,10 @@ func TestEvaluateAvailabilityResolvesPersistedEventAndNotifies(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("seed active event: %v", err)
 	}
-	a := New(
+	a := newTestAlerter(
 		&mockAlertRuleStore{rules: []model.AlertRule{rule}}, events,
 		&mockAlertChannelStore{channels: []model.AlertChannel{{
-			ID: "channel-1", ChannelType: "webhook", Config: server.URL, Enabled: true,
+			ID: "channel-1", ChannelType: "webhook", Config: "https://notify.example.invalid", Enabled: true,
 		}}}, &mockMTSStore{}, &mockNodeStore{nodes: []model.Node{node}},
 	)
 	a.now = func() time.Time { return now }
@@ -151,6 +139,7 @@ func TestEvaluateAvailabilityResolvesPersistedEventAndNotifies(t *testing.T) {
 	if event, _ := events.GetActiveEvent(t.Context(), rule.ID, node.ID); event != nil {
 		t.Fatalf("active event after recovery = %#v", event)
 	}
+	delivered := a.notifications.(*testAlertNotifications).events[0]
 	if delivered.Status != model.AlertStatusResolved || delivered.ResolvedAt == nil {
 		t.Fatalf("recovery payload = %#v", delivered)
 	}
@@ -171,11 +160,11 @@ func TestResolveAvailabilityReturnsChannelError(t *testing.T) {
 		t.Fatalf("seed active event: %v", err)
 	}
 	want := errors.New("channel database unavailable")
-	a := New(
+	a := newTestAlerter(
 		&mockAlertRuleStore{}, events, &mockAlertChannelStore{err: want},
 		&mockMTSStore{}, &mockNodeStore{},
 	)
-	if err := a.resolveAlert(t.Context(), rule, node, 5); !errors.Is(err, want) {
+	if err := a.resolveAlert(t.Context(), alertEvaluation{rule: rule, node: node, value: 5}); !errors.Is(err, want) {
 		t.Fatalf("resolve error = %v, want %v", err, want)
 	}
 }
@@ -185,7 +174,7 @@ func TestEvaluateResourceRuleSkipsOfflineNode(t *testing.T) {
 		ID: "rule-1", Metric: "cpu", Operator: "gt", Threshold: 80,
 	}
 	mts := &mockMTSStore{metrics: map[string]map[string]float64{"node-1": {"cpu": 95}}}
-	a := New(
+	a := newTestAlerter(
 		&mockAlertRuleStore{rules: []model.AlertRule{rule}}, &mockAlertEventStore{},
 		&mockAlertChannelStore{}, mts,
 		&mockNodeStore{nodes: []model.Node{{ID: "node-1", Status: model.NodeStatusOffline}}},
@@ -204,17 +193,6 @@ func TestEvaluateResourceRuleSkipsOfflineNode(t *testing.T) {
 // next evaluation creates a fresh triggered event and pushes it to every
 // enabled channel. This is the core re-trigger contract after human dismissal.
 func TestEvaluateRulesRetriggersAfterManualResolve(t *testing.T) {
-	var deliveries []model.AlertEvent
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var delivered model.AlertEvent
-		if err := json.NewDecoder(r.Body).Decode(&delivered); err != nil {
-			t.Errorf("decode payload: %v", err)
-		}
-		deliveries = append(deliveries, delivered)
-		w.WriteHeader(http.StatusNoContent)
-	}))
-	t.Cleanup(server.Close)
-
 	now := time.Date(2026, 8, 19, 15, 0, 0, 0, time.UTC)
 	node := model.Node{
 		ID: "node-1", Name: "edge", Status: model.NodeStatusOnline,
@@ -239,12 +217,12 @@ func TestEvaluateRulesRetriggersAfterManualResolve(t *testing.T) {
 		t.Fatalf("seed resolved event: %v", err)
 	}
 
-	a := New(
+	a := newTestAlerter(
 		&mockAlertRuleStore{rules: []model.AlertRule{rule}},
 		events,
 		&mockAlertChannelStore{channels: []model.AlertChannel{{
 			ID: "channel-1", Name: "webhook", ChannelType: "webhook",
-			Config: server.URL, Enabled: true,
+			Config: "https://notify.example.invalid", Enabled: true,
 		}}},
 		&mockMTSStore{metrics: map[string]map[string]float64{"node-1": {"memory": 53}}},
 		&mockNodeStore{nodes: []model.Node{node}},
@@ -271,6 +249,7 @@ func TestEvaluateRulesRetriggersAfterManualResolve(t *testing.T) {
 		t.Fatal("expected a new event, not the resolved original")
 	}
 
+	deliveries := a.notifications.(*testAlertNotifications).events
 	if len(deliveries) != 1 {
 		t.Fatalf("delivery count = %d, want 1", len(deliveries))
 	}

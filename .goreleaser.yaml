@@ -22,10 +22,26 @@ builds:
     goarch: [amd64, arm64]
     ldflags:
       - -s -w -X github.com/beat/backend/internal/buildinfo.Version={{.Version}} -X github.com/beat/backend/internal/buildinfo.Commit={{.Commit}} -X github.com/beat/backend/internal/buildinfo.Date={{.Date}}
+  - id: beat-cli
+    main: ./cmd/beat-cli
+    binary: beat-cli
+    env: [CGO_ENABLED=0]
+    goos: [linux]
+    goarch: [amd64, arm64]
+    ldflags:
+      - -s -w -X github.com/beat/backend/internal/buildinfo.Version={{.Version}} -X github.com/beat/backend/internal/buildinfo.Commit={{.Commit}} -X github.com/beat/backend/internal/buildinfo.Date={{.Date}}
+  - id: beat-theme
+    main: ./cmd/theme
+    binary: beat-theme
+    env: [CGO_ENABLED=0]
+    goos: [linux]
+    goarch: [amd64, arm64]
+    ldflags:
+      - -s -w -X github.com/beat/backend/internal/buildinfo.Version={{.Version}} -X github.com/beat/backend/internal/buildinfo.Commit={{.Commit}} -X github.com/beat/backend/internal/buildinfo.Date={{.Date}}
 
 archives:
   - id: beat
-    ids: [beat-server, beat-agent]
+    ids: [beat-server, beat-agent, beat-cli, beat-theme]
     formats: [tar.gz]
     name_template: "beat_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
     files:
@@ -34,6 +50,7 @@ archives:
       - README.md
       - deploy/**/*
       - scripts/beatctl.sh
+      - scripts/state_archive.py
 
 checksum:
   name_template: checksums.txt

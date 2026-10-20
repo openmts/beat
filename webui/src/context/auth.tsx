@@ -7,7 +7,7 @@ import {
   useState,
   type ReactNode,
 } from "react"
-import { subscribeAuthInvalidated } from "@/lib/auth"
+import { subscribeAdminSessionRefreshed, subscribeAuthInvalidated } from "@/lib/auth"
 import {
   bootstrapAdmin,
   getAdminSession,
@@ -69,6 +69,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     void refresh()
     return subscribeAuthInvalidated(() => setPrincipal(null))
   }, [refresh])
+
+  useEffect(() => subscribeAdminSessionRefreshed(session => {
+    setPrincipal(current => current && current.session.id === session.id && current.user.id === session.user_id
+      ? { ...current, session } : current)
+  }), [])
 
   const login = useCallback(async (input: LoginInput) => {
     const next = await loginAdmin({

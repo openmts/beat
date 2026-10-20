@@ -20,8 +20,9 @@ type SiteSettings struct {
 	LogoURL            string    `json:"logo_url"`
 	FaviconURL         string    `json:"favicon_url"`
 	DefaultTheme       string    `json:"default_theme"`
-	ShowIPAddresses    bool      `json:"show_ip_addresses"`
+	PublicAddressMode  string    `json:"public_address_mode"`
 	ShowNetworkQuality bool      `json:"show_network_quality"`
+	ShowAccelerators   bool      `json:"show_accelerators"`
 	UpdatedAt          time.Time `json:"updated_at"`
 }
 
@@ -31,8 +32,9 @@ func DefaultSiteSettings() SiteSettings {
 		SiteDescription:    "Server monitoring and operations dashboard.",
 		FaviconURL:         "/favicon.svg",
 		DefaultTheme:       ThemeSystem,
-		ShowIPAddresses:    true,
+		PublicAddressMode:  PublicAddressHidden,
 		ShowNetworkQuality: true,
+		ShowAccelerators:   true,
 	}
 }
 
@@ -42,6 +44,10 @@ func (settings *SiteSettings) Normalize() {
 	settings.LogoURL = strings.TrimSpace(settings.LogoURL)
 	settings.FaviconURL = strings.TrimSpace(settings.FaviconURL)
 	settings.DefaultTheme = strings.TrimSpace(settings.DefaultTheme)
+	settings.PublicAddressMode = strings.TrimSpace(settings.PublicAddressMode)
+	if settings.PublicAddressMode == "" {
+		settings.PublicAddressMode = PublicAddressHidden
+	}
 }
 
 func (settings SiteSettings) Validate() error {
@@ -53,6 +59,9 @@ func (settings SiteSettings) Validate() error {
 	}
 	if !validTheme(settings.DefaultTheme) {
 		return errors.New("default theme is invalid")
+	}
+	if !ValidPublicAddressMode(settings.PublicAddressMode) {
+		return errors.New("public address mode is invalid")
 	}
 	if !validAssetURL(settings.LogoURL) || !validAssetURL(settings.FaviconURL) {
 		return errors.New("branding URL is invalid")

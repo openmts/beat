@@ -1,7 +1,8 @@
 import { useState } from "react"
-import { useAlertEvents, useManagedNodes } from "@/hooks/use-api"
+import { useAlertEvents } from "@/hooks/use-api"
 import * as api from "@/lib/api"
 import { useLocale } from "@/context/locale"
+import { formatDateTime } from "@/lib/intl-format"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -20,10 +21,9 @@ import { CheckIcon, ShieldCheckIcon } from "lucide-react"
 import { messageFromError } from "@/pages/admin/alert-utils"
 
 function AlertEventsPanel() {
-  const { data: events, loading, error, refresh } = useAlertEvents()
-  const { data: nodes } = useManagedNodes()
-  const { t } = useLocale()
   const [statusFilter, setStatusFilter] = useState("all")
+  const { data: events, loading, loadingMore, error, refresh, nextCursor, loadMore } = useAlertEvents(statusFilter)
+  const { locale, t } = useLocale()
   const [actionError, setActionError] = useState<string | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
   const statusOptions = [
@@ -33,12 +33,9 @@ function AlertEventsPanel() {
     { label: t("alert.resolved"), value: "resolved" },
   ]
 
-  const getNodeName = (nodeId: string) => nodes?.find((n) => n.id === nodeId)?.name ?? nodeId
-
-  const filtered = events?.filter((e) => {
-    if (statusFilter === "all") return true
-    return e.status === statusFilter
-  })
+  // 显示名一律取事件快照；实体已删除时只渲染“已删除”，绝不回退成节点或规则 ID。
+  const displayName = (snapshot: string | undefined, fallback: string) =>
+    snapshot && snapshot.length > 0 ? snapshot : fallback
 
   const handleAcknowledge = async (eventId: string) => {
     setActionError(null)
@@ -74,7 +71,7 @@ function AlertEventsPanel() {
     <div className="flex flex-col gap-4">
       <div className="flex items-center justify-between">
         <div className="text-sm text-muted-foreground">
-          {events ? filtered?.length ?? 0 : 0} / {events?.length ?? 0}
+          {events?.length ?? 0}
         </div>
         <Button variant="ghost" size="sm" onClick={() => void refresh()}>{t("app.refresh")}</Button>
       </div>
@@ -126,11 +123,18 @@ function AlertEventsPanel() {
                     <TableCell><Skeleton className="h-8 w-20" /></TableCell>
                   </TableRow>
                 ))
-              ) : filtered && filtered.length > 0 ? (
-                filtered.map((event) => (
+              ) : events && events.length > 0 ? (
+                events.map((event) => (
                   <TableRow key={event.id}>
-                    <TableCell className="font-medium">{getNodeName(event.node_id)}</TableCell>
-                    <TableCell>{event.message}</TableCell>
+                    <TableCell className="font-medium">
+                      {displayName(event.node_name_snapshot, t("alert.node_deleted"))}
+                    </TableCell>
+                    <TableCell>
+                      <p>{event.message}</p>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        {displayName(event.rule_name_snapshot, t("alert.rule_deleted"))}
+                      </p>
+                    </TableCell>
                     <TableCell className="font-mono text-xs">{event.value}</TableCell>
                     <TableCell>
                       <Badge variant={
@@ -144,7 +148,7 @@ function AlertEventsPanel() {
                       </Badge>
                     </TableCell>
                     <TableCell className="text-xs text-muted-foreground">
-                      {new Date(event.triggered_at).toLocaleString()}
+                      {formatDateTime(locale, event.triggered_at)}
                     </TableCell>
                     <TableCell>
                       {event.status === "triggered" && (
@@ -175,6 +179,14 @@ function AlertEventsPanel() {
           </Table>
         </CardContent>
       </Card>
+
+      {nextCursor && (
+        <div className="flex justify-center">
+          <Button variant="outline" size="sm" disabled={loadingMore} onClick={() => void loadMore()}>
+            {t("alert.load_more")}
+          </Button>
+        </div>
+      )}
     </div>
   )
 }

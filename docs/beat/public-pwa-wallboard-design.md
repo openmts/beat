@@ -2,7 +2,7 @@
 
 Updated: 2026-07-30
 
-Status: reviewed design; implementation requires explicit approval
+Status: the `/wallboard` route was removed on 2026-10-20 because its presentation and interaction model did not meet the product standard. The PWA material remains in force; wallboard-specific sections below are retained as historical design evidence.
 
 ## Goal and product boundary
 

@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-const currentSchemaVersion = 6
+const currentSchemaVersion = 30
 
 type sqliteMigration struct {
 	version int
@@ -22,6 +22,30 @@ var sqliteMigrations = []sqliteMigration{
 	{version: 4, name: "alert_event_acknowledgement", apply: applyAlertEventAcknowledgement},
 	{version: 5, name: "oidc_identity", apply: applyOIDCIdentity},
 	{version: 6, name: "theme_packages", apply: applyThemePackages},
+	{version: 7, name: "agent_enrollment", apply: applyAgentEnrollment},
+	{version: 8, name: "metric_catalog_dashboards", apply: applyMetricCatalog},
+	{version: 9, name: "application_secrets", apply: MigrateApplicationSecrets},
+	{version: 10, name: "notification_delivery", apply: MigrateNotifications},
+	{version: 11, name: "remote_operations", apply: MigrateOperations},
+	{version: 12, name: "alert_evaluation", apply: MigrateAlertEvaluation},
+	{version: 13, name: "geoip_node_lifecycle", apply: MigrateGeoIP},
+	{version: 14, name: "accelerator_telemetry", apply: MigrateAccelerators},
+	{version: 15, name: "agent_rollout", apply: MigrateAgentRollout},
+	{version: 16, name: "service_principals", apply: MigrateServicePrincipals},
+	{version: 17, name: "login_security", apply: MigrateLoginSecurity},
+	{version: 18, name: "resumable_restore_upload", apply: MigrateBackupUpload},
+	{version: 19, name: "advanced_diagnostics", apply: MigrateAdvancedDiagnostics},
+	{version: 20, name: "edge_access_policy", apply: MigrateEdgeAccessPolicy},
+	{version: 21, name: "traffic_calibration", apply: MigrateTrafficCalibration},
+	{version: 22, name: "metric_erasure", apply: MigrateMetricErasure},
+	{version: 23, name: "fleet_status_summary", apply: MigrateFleetSummary},
+	{version: 24, name: "application_data_lifecycle", apply: MigrateApplicationDataLifecycle},
+	{version: 25, name: "dashboard_collaboration", apply: applyDashboardCollaboration},
+	{version: 26, name: "agent_discovery", apply: applyAgentDiscovery},
+	{version: 27, name: "dashboard_versions", apply: applyDashboardVersions},
+	{version: 28, name: "agent_task_output", apply: applyAgentTaskOutput},
+	{version: 29, name: "agent_release_retention", apply: applyAgentReleaseRetention},
+	{version: 30, name: "accelerator_public_visibility", apply: applyAcceleratorPublicVisibility},
 }
 
 // applyThemePackages 引入主题包、激活历史、市场源与站点活动主题持久化。
@@ -253,29 +277,77 @@ func applyAgentTaskChannel(ctx context.Context, db schemaExecutor) error {
 }
 
 func applyMigrations(ctx context.Context, db *sql.DB) error {
+	return applyMigrationsObserved(ctx, db, nil)
+}
+
+// applyMigrationsObserved 应用全部规范迁移，并向可选观察者报告有界阶段。
+func applyMigrationsObserved(ctx context.Context, db *sql.DB, observer MigrationObserver) (resultErr error) {
 	if _, err := db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations (
 		version INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_at DATETIME NOT NULL
 	)`); err != nil {
-		return fmt.Errorf("create migration ledger: %w", err)
+		resultErr = migrationFail(MigrationFailureApply, fmt.Errorf("create migration ledger: %w", err))
+		notifyFailure(observer, resultErr)
+		return resultErr
 	}
-	var maximum sql.NullInt64
-	if err := db.QueryRowContext(ctx, "SELECT MAX(version) FROM schema_migrations").Scan(&maximum); err != nil {
-		return fmt.Errorf("query migration version: %w", err)
+	source, err := currentMigrationVersion(ctx, db)
+	if err != nil {
+		notifyFailure(observer, err)
+		return err
 	}
-	if maximum.Valid && maximum.Int64 > currentSchemaVersion {
-		return fmt.Errorf("database schema version %d is newer than supported version %d", maximum.Int64, currentSchemaVersion)
+	if source > currentSchemaVersion {
+		resultErr = migrationFail(MigrationFailureFutureSchema,
+			fmt.Errorf("database schema version %d is newer than supported version %d", source, currentSchemaVersion))
+		notifyFailure(observer, resultErr)
+		return resultErr
+	}
+	if observer != nil {
+		observer.MigrationStarted(source)
 	}
 	for _, migration := range sqliteMigrations {
-		applied, err := migrationApplied(ctx, db, migration.version)
-		if err != nil {
+		if err := applySingleMigration(ctx, db, migration, observer); err != nil {
+			notifyFailure(observer, err)
 			return err
 		}
-		if applied {
-			continue
+	}
+	if err := NewMetricCatalogStore(db).Reconcile(ctx); err != nil {
+		resultErr = migrationFail(MigrationFailureApply, err)
+		notifyFailure(observer, resultErr)
+		return resultErr
+	}
+	if observer != nil {
+		observer.MigrationCompleted(currentSchemaVersion)
+	}
+	return nil
+}
+
+func currentMigrationVersion(ctx context.Context, db *sql.DB) (int, error) {
+	var maximum sql.NullInt64
+	if err := db.QueryRowContext(ctx, "SELECT MAX(version) FROM schema_migrations").Scan(&maximum); err != nil {
+		return 0, migrationFail(MigrationFailureApply, fmt.Errorf("query migration version: %w", err))
+	}
+	if !maximum.Valid {
+		return 0, nil
+	}
+	return int(maximum.Int64), nil
+}
+
+func applySingleMigration(ctx context.Context, db *sql.DB, migration sqliteMigration, observer MigrationObserver) error {
+	applied, err := migrationApplied(ctx, db, migration.version)
+	if err != nil {
+		return migrationFail(MigrationFailureApply, err)
+	}
+	if applied {
+		return nil
+	}
+	if err := applyMigration(ctx, db, migration); err != nil {
+		code := MigrationFailureCode(err)
+		if code == MigrationFailureUnknown {
+			code = MigrationFailureApply
 		}
-		if err := applyMigration(ctx, db, migration); err != nil {
-			return err
-		}
+		return migrationFail(code, err)
+	}
+	if observer != nil {
+		observer.MigrationApplied(Migration{Version: migration.version, Name: migration.name}, migration.version)
 	}
 	return nil
 }
@@ -291,7 +363,9 @@ func migrationApplied(ctx context.Context, db *sql.DB, version int) (bool, error
 }
 
 func applyMigration(ctx context.Context, db *sql.DB, migration sqliteMigration) error {
-	tx, err := db.BeginTx(ctx, nil)
+	// 两个实例同时启动时，迁移事务的写锁可能被对方占着；这里沿用写入路径的
+	// busy 重试，而不是把一次 SQLITE_BUSY 直接升级成启动失败。
+	tx, err := beginWriteTx(ctx, db)
 	if err != nil {
 		return fmt.Errorf("begin migration %d: %w", migration.version, err)
 	}

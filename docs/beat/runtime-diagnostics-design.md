@@ -2,7 +2,11 @@
 
 Updated: 2026-07-30
 
-Status: reviewed design; implementation requires explicit approval
+Status: reviewed design; owner approved implementation on 2026-10-15 (blanket
+approval of all pending items). Backend, server wiring, bounded metrics and the
+admin surface are implemented in the current worktree; host acceptance
+(race/shuffle, deployed admin/public isolation, browser smoke) and the deferred
+automated test batch remain.
 
 ## Goal and competitor evidence
 
@@ -152,9 +156,39 @@ public-isolation acceptance.
 This is schema-free release batch `runtime-diagnostics` in
 [`commercial-parity-implementation-sequence.md`](./commercial-parity-implementation-sequence.md).
 It depends on deployed account security and may ship independently of Agent
-diagnostics migration `v14`. It changes no backup format and creates no metric
+diagnostics migration `v19`. It changes no backup format and creates no metric
 history outside MTS.
 
 Implementation requires separate explicit approval because runtime profiles are
 sensitive, CPU/trace capture can affect a production process, and the batch adds
-new owner-only routes plus a private writable artifact directory.
+new owner-only routes plus a private writable artifact directory. That approval
+was granted on 2026-10-15.
+
+## Implementation notes, 2026-10-15
+
+Implemented in the current worktree:
+
+- `internal/runtimediag` holds the fixed kind/limit enums, the in-memory registry,
+  the private `0700` directory, bounded single-artifact and directory writers,
+  expiry/session revocation, restart orphan cleanup, and a bounded lifecycle
+  observer. A completed download consumes the artifact; an aborted transfer
+  releases it so the owner can retry.
+- `internal/api` registers the five owner-only routes. Creation accepts only
+  `{kind, duration_seconds}` with a 16 KiB body cap and unknown fields rejected;
+  download sets `attachment`, `application/octet-stream`, `no-store` and
+  `nosniff` with an exact length; failures map to the fixed
+  `400/404/409/429/503` codes without leaking runtime text or paths.
+- Logout and session revocation cancel that session's captures.
+- `cmd/server` creates the service under `runtime-diagnostics/`, reports
+  readiness, closes it before exit, and exposes the bounded Prometheus counters
+  and gauges listed in the operator runbook.
+- The owner-only `Runtime diagnostics` tab in the Remote operations surface
+  provides the summary band, kind select, bounded duration stepper, confirmation
+  dialog, artifact table with download/cancel, and bounded polling.
+
+Not yet complete and therefore not claimed: terminal `runtime.capture.complete`,
+`.expire` and `.fail` audit rows (those outcomes are visible in the table and
+metrics only), size-overflow/disk-full/short-write fault injection, the full
+role/reauth/CSRF matrix in automated form, the deferred coverage batch, and host
+acceptance (race/shuffle, goroutine leak, browser smoke, rootless container
+writable-path proof, deployed admin/public-isolation checks).

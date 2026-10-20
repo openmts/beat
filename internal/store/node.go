@@ -8,10 +8,13 @@ import (
 	"time"
 
 	"github.com/beat/backend/internal/model"
+	"github.com/beat/backend/internal/secretbox"
 )
 
 type NodeStore struct {
-	db *sql.DB
+	db                    *sql.DB
+	geoIPSecrets          secretbox.ResourceService
+	credentialInvalidator func(string, string)
 }
 
 type NodeUpdate struct {
@@ -34,6 +37,9 @@ type NodeHeartbeat struct {
 	Port   int
 	System model.SystemInfo
 }
+
+// hiddenNodeFilter 把尚未认领的入网保留节点排除在所有对外读路径之外。
+const hiddenNodeFilter = `credential_state <> 'pending_claim'`
 
 const nodeSelectColumns = `id, name, alias, group_id, host, port, status, ssh_public_key,
 	cpu_model, os, platform, os_version, kernel, arch, virtualization, agent_version,
@@ -68,19 +74,23 @@ func (s *NodeStore) listNodes(ctx context.Context, groupID string, publicOnly bo
 	switch {
 	case groupID != "" && publicOnly:
 		rows, err = s.db.QueryContext(ctx,
-			"SELECT "+nodeSelectColumns+" FROM nodes WHERE group_id = ? AND is_public = 1 "+
-				"ORDER BY sort_order ASC, name ASC", groupID)
+			"SELECT "+nodeSelectColumns+" FROM nodes WHERE "+hiddenNodeFilter+
+				" AND group_id = ? AND is_public = 1 "+
+				"AND lifecycle_state = 'active' ORDER BY sort_order ASC, name ASC", groupID)
 	case groupID != "":
 		rows, err = s.db.QueryContext(ctx,
-			"SELECT "+nodeSelectColumns+" FROM nodes WHERE group_id = ? "+
+			"SELECT "+nodeSelectColumns+" FROM nodes WHERE "+hiddenNodeFilter+
+				" AND group_id = ? AND lifecycle_state = 'active' "+
 				"ORDER BY sort_order ASC, name ASC", groupID)
 	case publicOnly:
 		rows, err = s.db.QueryContext(ctx,
-			"SELECT "+nodeSelectColumns+" FROM nodes WHERE is_public = 1 "+
+			"SELECT "+nodeSelectColumns+" FROM nodes WHERE "+hiddenNodeFilter+
+				" AND is_public = 1 AND lifecycle_state = 'active' "+
 				"ORDER BY sort_order ASC, name ASC")
 	default:
 		rows, err = s.db.QueryContext(ctx,
-			"SELECT "+nodeSelectColumns+" FROM nodes ORDER BY sort_order ASC, name ASC")
+			"SELECT "+nodeSelectColumns+" FROM nodes WHERE "+hiddenNodeFilter+
+				" AND lifecycle_state = 'active' ORDER BY sort_order ASC, name ASC")
 	}
 	if err != nil {
 		return nil, fmt.Errorf("querying nodes: %w", err)
@@ -104,7 +114,8 @@ func (s *NodeStore) listNodes(ctx context.Context, groupID string, publicOnly bo
 
 func (s *NodeStore) GetPublicNode(ctx context.Context, id string) (*model.Node, error) {
 	node, err := scanNode(s.db.QueryRowContext(ctx,
-		"SELECT "+nodeSelectColumns+" FROM nodes WHERE id = ? AND is_public = 1", id,
+		"SELECT "+nodeSelectColumns+" FROM nodes WHERE "+hiddenNodeFilter+
+			" AND id = ? AND is_public = 1 AND lifecycle_state = 'active'", id,
 	))
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -117,7 +128,8 @@ func (s *NodeStore) GetPublicNode(ctx context.Context, id string) (*model.Node, 
 
 func (s *NodeStore) GetNode(ctx context.Context, id string) (*model.Node, error) {
 	n, err := scanNode(s.db.QueryRowContext(ctx,
-		"SELECT "+nodeSelectColumns+" FROM nodes WHERE id = ?", id,
+		"SELECT "+nodeSelectColumns+" FROM nodes WHERE "+hiddenNodeFilter+
+			" AND id = ? AND lifecycle_state = 'active'", id,
 	))
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -133,48 +145,64 @@ func (s *NodeStore) GetNodeByName(ctx context.Context, name string) (*model.Node
 }
 
 func (s *NodeStore) UpdateNode(ctx context.Context, id string, update NodeUpdate) (*model.Node, error) {
-	node, err := s.GetNode(ctx, id)
+	tx, err := beginWriteTx(ctx, s.db)
 	if err != nil {
 		return nil, err
 	}
-	if node == nil {
+	defer func() { _ = tx.Rollback() }()
+	mutation, err := beginMetadataMutation(ctx, tx, false)
+	if err != nil {
+		return nil, err
+	}
+	existing, err := scanNode(tx.QueryRowContext(ctx, "SELECT "+nodeSelectColumns+
+		" FROM nodes WHERE "+hiddenNodeFilter+" AND id=?", id))
+	if err == sql.ErrNoRows {
 		return nil, nil
 	}
-
-	now := model.NowUTC()
-	applyTrafficUpdate(node, update)
-	applyNodePresentationUpdate(node, update)
-	tagsJSON, err := json.Marshal(node.Tags)
 	if err != nil {
-		return nil, fmt.Errorf("encoding node tags: %w", err)
+		return nil, err
 	}
-	_, err = s.db.ExecContext(ctx,
-		`UPDATE nodes SET alias = ?, group_id = ?, ssh_public_key = ?, traffic_limit = ?,
-		 traffic_limit_type = ?, traffic_reset_day = ?, sort_order = ?, tags = ?, is_public = ?,
-		 public_remark = ?, private_remark = ?, updated_at = ? WHERE id = ?`,
-		update.Alias, update.GroupID, update.SSHPublicKey, node.TrafficLimit,
-		node.TrafficLimitType, node.TrafficResetDay, node.SortOrder, string(tagsJSON), node.IsPublic,
-		node.PublicRemark, node.PrivateRemark, now, id,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("updating node: %w", err)
+	node := &existing
+	previousGroup := node.GroupID
+	before := existing
+	if err := authorizeNodeUpdate(&mutation, existing, update); err != nil {
+		return nil, err
 	}
 
-	node.Alias = update.Alias
-	node.GroupID = update.GroupID
-	node.SSHPublicKey = update.SSHPublicKey
-	node.UpdatedAt = now
+	if err := writeNodeUpdate(ctx, tx, nodeUpdateMutation{node: node, update: update}); err != nil {
+		return nil, err
+	}
 
+	if previousGroup != node.GroupID {
+		if err := guardAlertScopeMutation(ctx, tx); err != nil {
+			return nil, err
+		}
+	}
+	if err := mutation.finish(nodeUpdateEvidence(before, *node)); err != nil {
+		return nil, err
+	}
+	if err := verifyNodeSnapshot(ctx, tx, *node); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
 	return node, nil
 }
 
 func (s *NodeStore) DeleteNode(ctx context.Context, id string) error {
-	_, err := s.db.ExecContext(ctx, "DELETE FROM nodes WHERE id = ?", id)
+	tx, err := beginWriteTx(ctx, s.db)
 	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if err := guardOperationNodeDelete(ctx, tx, id); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, "DELETE FROM nodes WHERE id=?", id); err != nil {
 		return fmt.Errorf("deleting node: %w", err)
 	}
-
-	return nil
+	return tx.Commit()
 }
 
 func (s *NodeStore) GetNodeMetrics(ctx context.Context, nodeID, metric string, from, to time.Time) ([]model.MetricData, error) {
@@ -183,7 +211,8 @@ func (s *NodeStore) GetNodeMetrics(ctx context.Context, nodeID, metric string, f
 
 func (s *NodeStore) ListOnlineNodes(ctx context.Context) ([]model.Node, error) {
 	rows, err := s.db.QueryContext(ctx,
-		"SELECT "+nodeSelectColumns+" FROM nodes WHERE status = ? ORDER BY sort_order ASC, name ASC",
+		"SELECT "+nodeSelectColumns+" FROM nodes WHERE "+hiddenNodeFilter+
+			" AND status = ? AND lifecycle_state = 'active' ORDER BY sort_order ASC, name ASC",
 		model.NodeStatusOnline,
 	)
 	if err != nil {

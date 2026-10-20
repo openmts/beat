@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "id": "beat-solar",
+  "name": "Solar",
+  "description": "Warm high-contrast list view with compact details and amber ink accents.",
+  "version": "1.0.0",
+  "author": "Beat contributors",
+  "license": "MIT",
+  "runtime": "declarative",
+  "minimum_beat_version": "0.1.0",
+  "preview": "preview.png",
+  "supported_locales": [
+    "en",
+    "zh-CN"
+  ]
+}

@@ -38,7 +38,11 @@ func (h *NetworkHandler) HandleNetworkResults(w http.ResponseWriter, r *http.Req
 		NodeName string                     `json:"node_name"`
 		Results  []model.NetworkProbeResult `json:"results"`
 	}
-	if err := ParseJSON(r, &body); err != nil || len(body.Results) == 0 || len(body.Results) > 64 {
+	if err := ParseJSON(r, &body); err != nil {
+		WriteBodyError(w, err)
+		return
+	}
+	if len(body.Results) == 0 || len(body.Results) > 64 {
 		JSONError(w, http.StatusBadRequest, "invalid network result batch")
 		return
 	}
@@ -51,6 +55,7 @@ func (h *NetworkHandler) HandleNetworkResults(w http.ResponseWriter, r *http.Req
 		JSONError(w, http.StatusInternalServerError, "failed to store network results")
 		return
 	}
+	h.invalidateNetworkQuality()
 	w.WriteHeader(http.StatusNoContent)
 }
 

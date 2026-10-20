@@ -1,0 +1,11 @@
+package remoteoperations
+
+import (
+	"os"
+
+	"golang.org/x/sys/unix"
+)
+
+func openPrivateSpoolFile(root *os.Root, name string) (*os.File, error) {
+	return root.OpenFile(name, os.O_RDONLY|unix.O_NOFOLLOW|unix.O_NONBLOCK, 0)
+}

@@ -3,6 +3,7 @@ import {
   ArrowUpIcon,
   BanIcon,
   FileJsonIcon,
+  GaugeIcon,
   KeyRoundIcon,
   MoreHorizontalIcon,
   Trash2Icon,
@@ -54,6 +55,7 @@ interface AdminNodeActionsProps {
   onRotate: () => void
   onRevoke: () => void
   onDelete: () => void
+  onCalibrate: () => void
 }
 
 export function AdminNodeActions(props: AdminNodeActionsProps) {
@@ -81,6 +83,9 @@ export function AdminNodeActions(props: AdminNodeActionsProps) {
           </DropdownMenuItem>
           <DropdownMenuItem onClick={props.onRotate}>
             <KeyRoundIcon />{t("agent.rotate")}
+          </DropdownMenuItem>
+          <DropdownMenuItem onClick={props.onCalibrate}>
+            <GaugeIcon />{t("traffic.calibrate")}
           </DropdownMenuItem>
           <DropdownMenuItem variant="destructive" onClick={props.onRevoke}>
             <BanIcon />{t("agent.revoke")}

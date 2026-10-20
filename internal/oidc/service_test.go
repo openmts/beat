@@ -12,12 +12,14 @@ import (
 	"time"
 
 	"github.com/beat/backend/internal/adminauth"
+	"github.com/beat/backend/internal/applicationsecrets"
 	"github.com/beat/backend/internal/model"
 	"github.com/beat/backend/internal/secretbox"
 	"github.com/beat/backend/internal/store"
+	"github.com/beat/backend/internal/testutil"
 )
 
-func setupOIDCService(t *testing.T) (*Service, *store.OIDCStore, *store.SQLiteStore, *secretbox.Manager, *testOIDCProvider, *model.AdminUser) {
+func setupOIDCService(t *testing.T) (*Service, *store.OIDCStore, *store.SQLiteStore, *applicationsecrets.Service, *testOIDCProvider, *model.AdminUser) {
 	t.Helper()
 	sqlite, err := store.NewSQLiteStore(filepath.Join(t.TempDir(), "beat.db"))
 	if err != nil {
@@ -25,10 +27,7 @@ func setupOIDCService(t *testing.T) (*Service, *store.OIDCStore, *store.SQLiteSt
 	}
 	t.Cleanup(func() { _ = sqlite.Close() })
 
-	secrets, err := secretbox.New(filepath.Join(t.TempDir(), "key.bin"), nil)
-	if err != nil {
-		t.Fatalf("create secretbox: %v", err)
-	}
+	secrets := testutil.NewSecrets(t, sqlite.DB)
 	oidcStore := store.NewOIDCStore(sqlite.DB)
 	adminStore := store.NewAdminStore(sqlite.DB)
 
@@ -71,14 +70,14 @@ func createTestProvider(t *testing.T, service *Service, issuer string, enabled b
 
 // createLoginTransaction 直接构造一个登录事务，便于精确控制 nonce/binding。
 func createLoginTransaction(
-	t *testing.T, secrets *secretbox.Manager, oidc *store.OIDCStore, provider *model.OIDCProvider,
+	t *testing.T, secrets secretbox.ResourceService, oidc *store.OIDCStore, provider *model.OIDCProvider,
 ) (state, binding string) {
 	t.Helper()
 	state = "state-controlled"
 	binding = "binding-controlled"
 	verifier := "verifier-controlled-value"
 	transactionID := "txn-1"
-	encrypted, err := secrets.EncryptEnvelope([]byte(verifier), secretbox.ResourceAAD{
+	encrypted, err := sealOIDCTestResource(secrets, []byte(verifier), secretbox.ResourceAAD{
 		Domain: "beat", Namespace: "oidc_transaction", RowID: transactionID,
 		Field: "pkce_verifier", Revision: provider.ID, PayloadVersion: "v1",
 	})
@@ -195,12 +194,12 @@ func TestUpdateProviderSecretRotationBumpsVersion(t *testing.T) {
 		t.Fatalf("version = %d, want %d", updated.ConfigurationVersion, created.ConfigurationVersion+1)
 	}
 	// 新版本 AAD 可解密，旧版本 AAD 必须失败
-	plaintext, err := service.secrets.DecryptEnvelope(updated.ClientSecretEncrypted,
+	plaintext, err := service.secrets.OpenResource(context.Background(), updated.ClientSecretEncrypted,
 		ProviderSecretAAD(updated.ID, updated.ConfigurationVersion))
 	if err != nil || string(plaintext) != "new-secret" {
 		t.Fatalf("decrypt rotated secret: %v / %q", err, plaintext)
 	}
-	if _, err := service.secrets.DecryptEnvelope(updated.ClientSecretEncrypted,
+	if _, err := service.secrets.OpenResource(context.Background(), updated.ClientSecretEncrypted,
 		ProviderSecretAAD(updated.ID, created.ConfigurationVersion)); err == nil {
 		t.Fatal("old-version AAD must fail to decrypt rotated secret")
 	}
@@ -355,7 +354,7 @@ func TestLinkCallbackSuccess(t *testing.T) {
 	state := "link-state"
 	binding := "link-binding"
 	transactionID := "txn-link"
-	encrypted, err := service.secrets.EncryptEnvelope([]byte("verifier"), secretbox.ResourceAAD{
+	encrypted, err := sealOIDCTestResource(service.secrets, []byte("verifier"), secretbox.ResourceAAD{
 		Domain: "beat", Namespace: "oidc_transaction", RowID: transactionID,
 		Field: "pkce_verifier", Revision: provider.ID, PayloadVersion: "v1",
 	})
@@ -494,7 +493,7 @@ func TestLoginCallbackNonceMismatchFails(t *testing.T) {
 	// 用错误的 nonce 哈希构造事务
 	state := "state-wrong-nonce"
 	binding := "binding-wrong-nonce"
-	encrypted, err := service.secrets.EncryptEnvelope([]byte("verifier"), secretbox.ResourceAAD{
+	encrypted, err := sealOIDCTestResource(service.secrets, []byte("verifier"), secretbox.ResourceAAD{
 		Domain: "beat", Namespace: "oidc_transaction", RowID: "txn-nonce",
 		Field: "pkce_verifier", Revision: provider.ID, PayloadVersion: "v1",
 	})
@@ -530,7 +529,7 @@ func TestLoginCallbackProviderVersionMismatchFails(t *testing.T) {
 
 	state := "state-version"
 	binding := "binding-version"
-	encrypted, err := service.secrets.EncryptEnvelope([]byte("verifier"), secretbox.ResourceAAD{
+	encrypted, err := sealOIDCTestResource(service.secrets, []byte("verifier"), secretbox.ResourceAAD{
 		Domain: "beat", Namespace: "oidc_transaction", RowID: "txn-version",
 		Field: "pkce_verifier", Revision: provider.ID, PayloadVersion: "v1",
 	})
@@ -634,7 +633,7 @@ func TestCompleteLinkRejectsDuplicateSubject(t *testing.T) {
 
 	state := "link-dup"
 	binding := "link-dup"
-	encrypted, err := service.secrets.EncryptEnvelope([]byte("verifier"), secretbox.ResourceAAD{
+	encrypted, err := sealOIDCTestResource(service.secrets, []byte("verifier"), secretbox.ResourceAAD{
 		Domain: "beat", Namespace: "oidc_transaction", RowID: "txn-dup",
 		Field: "pkce_verifier", Revision: provider.ID, PayloadVersion: "v1",
 	})

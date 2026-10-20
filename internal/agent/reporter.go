@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"fmt"
+	"errors"
 	"io"
 	"net/http"
 	"net/url"
@@ -15,78 +15,149 @@ import (
 )
 
 const (
-	reportPath        = "/api/v1/nodes/report"
-	httpClientTimeout = 15 * time.Second
-	maxErrorBody      = 4096
+	reportPath            = "/api/v1/nodes/report"
+	httpClientTimeout     = 15 * time.Second
+	maximumReportACKBytes = 16 << 10
+	maxErrorBody          = 4096
 )
 
-type NodeReport struct {
-	Name          string             `json:"name"`
-	Host          string             `json:"host"`
-	Port          int                `json:"port"`
-	System        model.SystemInfo   `json:"system"`
-	Metrics       model.NodeMetrics  `json:"metrics"`
-	CustomMetrics map[string]float64 `json:"custom_metrics,omitempty"`
-}
+type NodeReport = model.AgentReport
 
 type HTTPReporter struct {
-	endpoint string
-	token    string
-	report   NodeReport
-	client   *http.Client
+	accepted          func(time.Time)
+	failed            func(error)
+	acceleratorPolicy func(model.AcceleratorPolicy) error
+	endpoint          string
+	token             string
+	report            NodeReport
+	client            *http.Client
 }
 
 func NewHTTPReporter(config Config) (*HTTPReporter, error) {
 	serverURL, err := url.Parse(config.ServerURL)
-	if err != nil || (serverURL.Scheme != "http" && serverURL.Scheme != "https") || serverURL.Host == "" {
-		return nil, fmt.Errorf("parse server URL: %w", err)
+	if err != nil || (serverURL.Scheme != "http" && serverURL.Scheme != "https") || serverURL.Host == "" || serverURL.User != nil {
+		return nil, errors.New("invalid server URL")
 	}
 	serverURL.Path = strings.TrimRight(serverURL.Path, "/") + reportPath
-	serverURL.RawQuery = ""
-	serverURL.Fragment = ""
-	return &HTTPReporter{
-		endpoint: serverURL.String(), token: config.AgentToken,
-		report: NodeReport{Name: config.NodeName, Host: config.AdvertisedHost, Port: config.SSHPort},
-		client: &http.Client{Timeout: httpClientTimeout},
-	}, nil
+	serverURL.RawQuery, serverURL.Fragment = "", ""
+	interval := config.ReportInterval
+	if interval == 0 {
+		interval = model.MinimumAgentReportInterval
+	}
+	return &HTTPReporter{endpoint: serverURL.String(), token: config.AgentToken,
+		report: NodeReport{ProtocolVersion: model.AgentReportProtocol, ReportIntervalMS: interval.Milliseconds(),
+			Name: config.NodeName, Host: config.AdvertisedHost, Port: config.SSHPort},
+		client: &http.Client{Timeout: httpClientTimeout, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}, nil
 }
 
-func (r *HTTPReporter) Report(ctx context.Context, metrics model.NodeMetrics, customMetrics map[string]float64) (string, error) {
+func (r *HTTPReporter) Report(ctx context.Context, sample ReportSample) (key string, resultErr error) {
+	defer func() {
+		if resultErr != nil && r.failed != nil {
+			r.failed(resultErr)
+		}
+	}()
 	report := r.report
-	report.System = metrics.SystemInfo
-	report.Metrics = metrics
-	if len(customMetrics) > 0 {
-		report.CustomMetrics = customMetrics
+	report.SampleID, report.CapturedAt = sample.SampleID, sample.CapturedAt
+	report.System, report.Metrics, report.CustomMetrics = sample.Metrics.SystemInfo, &sample.Metrics, sample.CustomMetrics
+	report.CustomSamples = sample.CustomSamples
+	report.Accelerators = sample.Accelerators
+	if err := report.Validate(time.Now()); err != nil {
+		return "", invalidLocalReport(err)
 	}
 	body, err := json.Marshal(report)
-	if err != nil {
-		return "", fmt.Errorf("encode node report: %w", err)
+	if err != nil || len(body) > model.MaximumAgentReportBytes {
+		return "", &ReportError{Code: "invalid_report"}
 	}
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, r.endpoint, bytes.NewReader(body))
 	if err != nil {
-		return "", fmt.Errorf("create report request: %w", err)
+		return "", &ReportError{Code: "request_failed"}
 	}
 	request.Header.Set("Authorization", "Bearer "+r.token)
 	request.Header.Set("Content-Type", "application/json")
 	response, err := r.client.Do(request)
 	if err != nil {
-		return "", fmt.Errorf("send node report: %w", err)
+		if ctx.Err() != nil {
+			return "", ctx.Err()
+		}
+		return "", &ReportError{Code: "transport_failed", Retryable: true}
 	}
 	defer func() { _ = response.Body.Close() }()
-	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
-		message, readErr := io.ReadAll(io.LimitReader(response.Body, maxErrorBody))
-		if readErr != nil {
-			return "", fmt.Errorf("server rejected node report with status %d and unreadable body: %w", response.StatusCode, readErr)
-		}
-		return "", fmt.Errorf("server rejected node report with status %d: %s", response.StatusCode, strings.TrimSpace(string(message)))
+	return decodeReportACKWithReceivers(response, report, reportReceivers{policy: r.acceleratorPolicy, accepted: r.accepted})
+}
+
+func invalidLocalReport(err error) error {
+	code := "invalid_report"
+	if errors.Is(err, model.ErrAgentReportExpired) {
+		code = "sample_expired"
 	}
+	if errors.Is(err, model.ErrAgentReportFuture) {
+		code = "clock_skew"
+	}
+	return &ReportError{Code: code}
+}
+
+type reportReceivers struct {
+	policy   func(model.AcceleratorPolicy) error
+	accepted func(time.Time)
+}
+
+func (r *HTTPReporter) WithReportObserver(accepted func(time.Time), failed func(error)) {
+	r.accepted, r.failed = accepted, failed
+}
+
+func decodeReportACKWithReceivers(response *http.Response, report NodeReport, receivers reportReceivers) (string, error) {
+	status := response.StatusCode
+	retry := status == http.StatusTooManyRequests || status >= http.StatusInternalServerError
+	failure := &ReportError{Code: "rejected", Status: status, Retryable: retry,
+		RetryAfter: parseReportRetryAfter(response.Header.Get("Retry-After"), time.Now())}
+	ack, err := readReportACK(response, failure)
+	if err != nil {
+		return "", err
+	}
+	if err = applyReportAcceleratorPolicy(ack, report, receivers.policy); err != nil {
+		return "", err
+	}
+	if !successfulReportStatus(status) {
+		failure.Code = safeReportCode(ack.ErrorCode)
+		return "", failure
+	}
+	if !completeReportACK(ack, report) {
+		return "", &ReportError{Code: "invalid_ack", Status: status, Retryable: true, RetryAfter: failure.RetryAfter}
+	}
+	if receivers.accepted != nil {
+		receivers.accepted(*ack.ContactAt)
+	}
+	return strings.TrimSpace(ack.SSHPublicKey), nil
+}
+
+func readReportACK(response *http.Response, failure *ReportError) (model.AgentReportACK, error) {
+	content, err := io.ReadAll(io.LimitReader(response.Body, maximumReportACKBytes+1))
 	var envelope struct {
-		Data struct {
-			SSHPublicKey string `json:"ssh_public_key"`
-		} `json:"data"`
+		Data model.AgentReportACK `json:"data"`
 	}
-	if err := json.NewDecoder(response.Body).Decode(&envelope); err != nil {
-		return "", fmt.Errorf("decode node report response: %w", err)
+	decodeErr := json.Unmarshal(content, &envelope)
+	if err != nil || len(content) > maximumReportACKBytes || decodeErr != nil {
+		failure.Code = "invalid_ack"
+		failure.Retryable = failure.Retryable || successfulReportStatus(response.StatusCode)
+		return model.AgentReportACK{}, failure
 	}
-	return strings.TrimSpace(envelope.Data.SSHPublicKey), nil
+	return envelope.Data, nil
+}
+
+func applyReportAcceleratorPolicy(ack model.AgentReportACK, report NodeReport, receiver func(model.AcceleratorPolicy) error) error {
+	if receiver == nil || ack.AcceleratorPolicy == nil || !ack.Matches(report) {
+		return nil
+	}
+	if err := receiver(*ack.AcceleratorPolicy); err != nil {
+		return &ReportError{Code: "invalid_ack", Retryable: true}
+	}
+	return nil
+}
+
+func completeReportACK(ack model.AgentReportACK, report NodeReport) bool {
+	return ack.Matches(report) && ack.ContactAccepted && ack.MetricsAccepted && ack.ContactAt != nil && !ack.ContactAt.IsZero() && !ack.Retryable && ack.ErrorCode == ""
+}
+
+func successfulReportStatus(status int) bool {
+	return status >= http.StatusOK && status < http.StatusMultipleChoices
 }

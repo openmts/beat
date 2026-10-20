@@ -32,9 +32,9 @@ func TestBackupStoreLifecycle(t *testing.T) {
 	if err := store.Update(t.Context(), &record); err != nil {
 		t.Fatalf("update backup: %v", err)
 	}
-	records, err := store.List(t.Context())
-	if err != nil || len(records) != 1 || records[0].State != model.BackupStateReady {
-		t.Fatalf("backup records = %#v, %v", records, err)
+	page, err := store.ListBackupsPage(t.Context(), BackupQuery{})
+	if err != nil || len(page.Items) != 1 || page.Items[0].State != model.BackupStateReady {
+		t.Fatalf("backup records = %#v, %v", page.Items, err)
 	}
 	if missing, err := store.Get(t.Context(), "missing"); err != nil || missing != nil {
 		t.Fatalf("missing backup = %#v, %v", missing, err)

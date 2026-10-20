@@ -1,8 +1,8 @@
 # Signed Agent rollout and platform support
 
-Updated: 2026-07-30
+Updated: 2026-10-08
 
-Status: reviewed design; implementation requires explicit approval
+Status: authorized implementation under the commercial delivery registry; acceptance pending
 
 ## Goal and scope
 
@@ -79,7 +79,7 @@ verified Agent staging file.
 
 ## Rollout model
 
-This feature uses canonical SQLite migration `v10` after secure enrollment `v4`
+This feature uses canonical SQLite migration `v15` after secure enrollment `v7`
 and the release-signing foundation. It retains backup archive format `v4`. The
 assignment is maintained in
 [`commercial-parity-implementation-sequence.md`](./commercial-parity-implementation-sequence.md).
@@ -108,6 +108,21 @@ Promotion is manual by default. An optional owner-approved automatic promotion
 may proceed only after the complete observation window and all thresholds pass.
 Any threshold breach pauses the rollout; it never automatically widens the
 wave.
+
+### Transient error budget after a target turns healthy
+
+Owner decision (2026-10-18, option A): a target that already passed the health
+gate keeps one transient error allowance for the counter thresholds (restarts,
+protocol errors, metric errors, task failures). A single observation that
+exceeds a threshold by one, for example one `429` on `POST /nodes/report`
+recorded as one metric error, no longer fails a healthy canary and no longer
+pauses the rollout. The tolerance is recorded as an `assignment.healthy`
+event with reason `transient_error_tolerated`, and the target keeps its
+`healthy_since`. A second breach past the allowance still fails the target
+(`metric_error_threshold` and friends) and pauses the rollout with
+`health_gate_failed`. Targets that are still inside the observation window
+keep the strict gate, and explicit `failed` or `rolled_back` outcomes from the
+Agent ignore the allowance entirely.
 
 ## Agent update protocol
 
@@ -198,6 +213,26 @@ per-node and uses the locally retained verified binary. Once a release has
 changed the Agent configuration or protocol beyond the old Server range, the
 rollout must be blocked unless a tested downgrade path exists.
 
+## Release retention
+
+Release objects are never removed implicitly by default. Retention is an explicit
+opt-in and only ever touches objects the operator has already retired:
+
+- `BEAT_AGENT_ROLLOUT_RETENTION_DAYS` removes terminal rollouts
+  (`completed`/`aborted`) whose last update is older than the window.
+- `BEAT_AGENT_RELEASE_RETENTION_DAYS` removes releases that are already revoked,
+  are not referenced by any rollout, and were revoked before the window.
+
+Both default to `0`, which keeps all history; a malformed or out-of-range value
+fails startup instead of silently degrading. With at least one window configured,
+the supervised `agent_rollout_retention` worker checks every six hours and runs
+its first pass at startup. Deletion reuses the manual delete path: dependent
+targets/attempts/events go with the rollout, and an artifact file is removed only
+when no release references its digest any more. System-initiated deletions are
+audited as `rollout.delete`/`release.delete` with `reason=retention` and
+`actor_username=system`. In-flight rollouts, unrevoked releases and releases still
+referenced by a rollout are never touched.
+
 ## Test and acceptance gates
 
 Tests cover canonical signatures, key rotation/revocation, manifest expiry,
@@ -213,9 +248,38 @@ network interruption, and IPv4/IPv6 acceptance evidence. CI-aligned coverage,
 race/lint/security/build gates and signed artifact verification must pass before
 publishing or promoting a rollout.
 
+## Cross-platform build verification, 2026-10-14
+
+`CGO_ENABLED=0 go build ./cmd/agent` passes for linux/amd64, linux/arm64,
+linux/386, linux/arm, linux/loong64, windows/amd64, windows/arm64, darwin/amd64,
+darwin/arm64, freebsd/amd64 and freebsd/arm64; `./cmd/server`, `./cmd/theme` and
+`./cmd/beat-cli` build for linux/amd64 and linux/arm64. `GOOS=windows|darwin|freebsd
+go vet` passes for `./cmd/agent`, `./internal/agent/...`, `./internal/agentjoin/...`,
+`./internal/agentinstall/...`, `./internal/agentoperations/...`,
+`./internal/agentupdate/...` and `./internal/agentrollout/...`.
+
+Two defects blocked that matrix. The 32-bit Linux builds compared statfs magic
+numbers as `int64` on an `int32` field, so `BTRFS_SUPER_MAGIC` and `RAMFS_MAGIC`
+overflowed; `safeTransferFilesystem` now compares 32-bit bit patterns and a
+regression test pins the sign extension. The `cmd/agent` test package used
+Unix-only `syscall.Kill`, so the signal case moved to `app_signal_test.go` behind
+`//go:build !windows`.
+
+Linux 386/arm/loong64 and Windows arm64 keep `build-only` state: the artifacts
+compile, but install/upgrade/service-manager/telemetry acceptance still has to run
+on comparable targets before promotion. Server-side fixtures keep their own
+constraints: `internal/testutil/secrets.go` and
+`internal/agentinstall/enrollment_integration_test.go` compile on Linux only
+because they exercise the Linux-only application secret store.
+
 ## Approval boundary
 
-This design changes release, Agent, SQLite, API, and deployment behavior and is
-not authorized for implementation. It is canonical SQLite migration `v10` and
-must follow secure enrollment and release-signing acceptance, then be explicitly
-approved in full before any rollout route or self-replacement code is enabled.
+This design changes release, Agent, SQLite, API, and deployment behavior. The
+commercial delivery registry records the current implementation authorization.
+Canonical SQLite migration `v15` follows `v14`; rollout routes and local binary
+replacement remain disabled until their signing, authorization, restart, rollback
+and platform acceptance gates are met. A signature-verifier foundation alone
+does not satisfy the complete rollout contract.
+
+
+Implementation scope and remaining integration are tracked in [agent-rollout-foundation.md](./agent-rollout-foundation.md).

@@ -3,6 +3,7 @@ package handler
 import (
 	"encoding/json"
 	"net/http"
+	"reflect"
 )
 
 type Response struct {
@@ -16,7 +17,7 @@ func JSONResponse(w http.ResponseWriter, statusCode int, data interface{}) {
 	_ = json.NewEncoder(w).Encode(Response{
 		Code:    statusCode,
 		Message: "success",
-		Data:    data,
+		Data:    listSafeData(data),
 	})
 }
 
@@ -28,6 +29,12 @@ func JSONError(w http.ResponseWriter, statusCode int, message string) {
 	})
 }
 
-func ParseJSON(r *http.Request, v interface{}) error {
-	return json.NewDecoder(r.Body).Decode(v)
+// listSafeData 把 nil 切片改写成空切片：Go 的 nil 切片会编码成 JSON null，
+// 列表接口一旦返回 null，前端对结果取 length/map 时就会直接崩溃。
+func listSafeData(data interface{}) interface{} {
+	value := reflect.ValueOf(data)
+	if value.Kind() == reflect.Slice && value.IsNil() {
+		return reflect.MakeSlice(value.Type(), 0, 0).Interface()
+	}
+	return data
 }

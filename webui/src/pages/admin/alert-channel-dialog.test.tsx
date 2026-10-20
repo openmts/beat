@@ -1,116 +1,89 @@
+import { useState } from "react"
 import { fireEvent, render, screen } from "@testing-library/react"
 import { beforeEach, describe, expect, it, vi } from "vitest"
-import type { Dispatch, SetStateAction } from "react"
 import { LocaleProvider } from "@/context/locale"
 import AlertChannelDialog from "@/pages/admin/alert-channel-dialog"
-import type { AlertChannelFormState } from "@/pages/admin/alert-channel-config"
-import { emptyAlertChannelForm } from "@/pages/admin/alert-channel-config"
+import { alertChannelFormFrom, emptyAlertChannelForm, type AlertChannelFormState } from "@/pages/admin/alert-channel-config"
+import { notificationChannel } from "@/test/notification-fixtures"
+import { notificationChannelTypes } from "@/lib/notification-fields"
 
 vi.mock("@/components/ui/dialog", async () => {
-  const mocks = await vi.importActual<typeof import("@/test/admin-ui-mocks")>("@/test/admin-ui-mocks")
-  return {
-    Dialog: mocks.MockDialog, DialogContent: mocks.PassThrough,
-    DialogHeader: mocks.PassThrough, DialogTitle: mocks.PassThrough,
-    DialogFooter: mocks.PassThrough,
-  }
+  const m = await vi.importActual<typeof import("@/test/admin-ui-mocks")>("@/test/admin-ui-mocks")
+  return { Dialog: m.MockDialog, DialogContent: m.PassThrough, DialogHeader: m.PassThrough, DialogTitle: m.PassThrough, DialogDescription: m.PassThrough, DialogFooter: m.PassThrough }
 })
 vi.mock("@/components/ui/select", async () => {
-  const mocks = await vi.importActual<typeof import("@/test/admin-ui-mocks")>("@/test/admin-ui-mocks")
-  return {
-    Select: mocks.MockSelect, SelectContent: mocks.PassThrough,
-    SelectGroup: mocks.PassThrough, SelectItem: mocks.MockSelectItem,
-    SelectTrigger: () => null, SelectValue: () => null,
-  }
+  const m = await vi.importActual<typeof import("@/test/admin-ui-mocks")>("@/test/admin-ui-mocks")
+  return { Select: m.MockSelect, SelectContent: m.PassThrough, SelectGroup: m.PassThrough, SelectItem: m.MockSelectItem, SelectTrigger: () => null, SelectValue: () => null }
 })
 
-function view(props: Partial<{
-  open: boolean
-  editing: boolean
-  loading: boolean
-  form: AlertChannelFormState
-  onSave: () => void
-  onOpenChange: (open: boolean) => void
-}>) {
-  const setForm: Dispatch<SetStateAction<AlertChannelFormState>> = vi.fn() as unknown as Dispatch<SetStateAction<AlertChannelFormState>>
-  return {
-    setForm,
-    view: render(<LocaleProvider><AlertChannelDialog
-      open={props.open ?? true}
-      editing={props.editing ?? false}
-      loading={props.loading ?? false}
-      form={props.form ?? emptyAlertChannelForm()}
-      setForm={setForm}
-      onOpenChange={props.onOpenChange ?? (() => undefined)}
-      onSave={props.onSave ?? (() => undefined)}
-    /></LocaleProvider>),
-  }
+function Harness({ initial = emptyAlertChannelForm(), editing = false, loading = false, save = vi.fn(), close = vi.fn() }: { initial?: AlertChannelFormState; editing?: boolean; loading?: boolean; save?: (form: AlertChannelFormState) => void; close?: (open: boolean) => void }) {
+  const [form, setForm] = useState(initial)
+  return <LocaleProvider><AlertChannelDialog open editing={editing} loading={loading} form={form} setForm={setForm} onOpenChange={close} onSave={() => save(form)} /></LocaleProvider>
 }
 
-describe("AlertChannelDialog", () => {
-  beforeEach(() => {
-    localStorage.setItem("locale", "en")
+describe("notification channel editor", () => {
+  beforeEach(() => localStorage.setItem("locale", "en"))
+  it("renders all supported providers using readable labels", () => {
+    const expected = ["Webhook", "Telegram", "Email", "Bark", "ServerChan Turbo", "ServerChan 3", "Custom HTTP"]
+    for (const [index, type] of notificationChannelTypes.entries()) {
+      const view = render(<Harness initial={emptyAlertChannelForm(type)} />)
+      expect(screen.getAllByTestId("select")[0]).toHaveAttribute("data-selected-label", expected[index])
+      expect(screen.getByRole("button", { name: "Save" })).toBeDisabled()
+      view.unmount()
+    }
   })
-
-  it("renders webhook and telegram forms with edit hints", () => {
-    const { view: rendered } = view({ editing: true })
-    expect(screen.getByLabelText("Name")).toBeInTheDocument()
-    expect(screen.getByLabelText("Webhook URL")).toBeInTheDocument()
-    expect(screen.getByTestId("select")).toHaveAttribute("data-selected-label", "Webhook")
-    rendered.unmount()
-    view({ form: { ...emptyAlertChannelForm(), channelType: "telegram" }, editing: true })
-    expect(screen.getByLabelText("Bot token")).toBeInTheDocument()
-    expect(screen.getByText("Leave blank to keep the current credential.")).toBeInTheDocument()
-    expect(screen.getByLabelText("Chat ID")).toBeInTheDocument()
+  it("updates provider fields and subscriptions without submitting IDs as labels", () => {
+    const save = vi.fn()
+    render(<Harness save={save} />)
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "SMTP operations" } })
+    fireEvent.change(screen.getAllByTestId("select")[0], { target: { value: "email" } })
+    fireEvent.change(screen.getByLabelText(/^SMTP host/), { target: { value: "smtp.example.test" } })
+    fireEvent.change(screen.getByLabelText(/^Port/), { target: { value: "465" } })
+    fireEvent.change(screen.getAllByTestId("select")[1], { target: { value: "tls" } })
+    fireEvent.change(screen.getByLabelText(/^Sender address/), { target: { value: "ops@example.test" } })
+    fireEvent.change(screen.getByLabelText(/^Recipients/), { target: { value: "team@example.test" } })
+    fireEvent.click(screen.getByRole("checkbox", { name: "Alert resolved" }))
+    fireEvent.click(screen.getByRole("button", { name: "Save" }))
+    expect(save).toHaveBeenCalledWith(expect.objectContaining({ name: "SMTP operations", channelType: "email", values: expect.objectContaining({ host: "smtp.example.test", security: "tls", port: "465", to: "team@example.test" }) }))
+    expect(save.mock.calls[0][0].eventKinds).not.toContain("alert.resolved")
   })
-
-  it("disables save while loading or with an empty name", () => {
-    const { view: rendered } = view({ loading: true })
-    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled()
-    rendered.unmount()
-    view({ form: { ...emptyAlertChannelForm(), name: "Channel" } })
-    expect(screen.getByRole("button", { name: "Save" })).not.toBeDisabled()
+  it("retains saved credentials and explicitly clears parent or individual secrets", () => {
+    const save = vi.fn()
+    const form = alertChannelFormFrom(notificationChannel({ channel_type: "custom_http", secret_present: { endpoint: true, headers: true, auth: true, hmac: true, "named_secrets.signing": true } }))
+    render(<Harness initial={form} editing save={save} />)
+    expect(screen.getAllByTestId("select")[0]).toBeDisabled()
+    expect(screen.getByLabelText(/^Delivery address/)).toHaveValue("")
+    fireEvent.click(screen.getByText("Optional settings"))
+    fireEvent.click(screen.getByRole("checkbox", { name: "Clear saved Replacement request headers" }))
+    fireEvent.click(screen.getByRole("checkbox", { name: "Clear saved authentication" }))
+    fireEvent.click(screen.getByRole("checkbox", { name: "Clear saved named_secrets.signing" }))
+    fireEvent.click(screen.getByRole("button", { name: "Save" }))
+    expect(save.mock.calls[0][0].clearSecrets).toEqual(["headers", "auth", "named_secrets.signing"])
+    expect(screen.getByLabelText("Basic authentication password")).toBeDisabled()
+    fireEvent.click(screen.getByRole("checkbox", { name: "Clear saved authentication" }))
+    expect(screen.getByLabelText("Basic authentication password")).not.toBeDisabled()
   })
-
-  it("edits every email field and updates security defaults", () => {
-    view({ form: { ...emptyAlertChannelForm(), channelType: "email" } })
-    fireEvent.change(screen.getByLabelText("SMTP host"), { target: { value: "smtp.example.com" } })
-    fireEvent.change(screen.getByLabelText("Port"), { target: { value: "465" } })
-    fireEvent.change(screen.getByLabelText("Username"), { target: { value: "user" } })
-    fireEvent.change(screen.getByLabelText("Password"), { target: { value: "secret" } })
-    fireEvent.change(screen.getByLabelText("Sender address"), { target: { value: "ops@example.com" } })
-    fireEvent.change(screen.getByLabelText("Recipients"), { target: { value: "team@example.com" } })
-    const selects = screen.getAllByTestId("select")
-    expect(selects[0]).toHaveAttribute("data-selected-label", "Email")
-    expect(selects[1]).toHaveAttribute("data-selected-label", "STARTTLS")
-    fireEvent.change(selects[1], { target: { value: "tls" } })
-  })
-
-  it("edits webhook and telegram fields", () => {
-    const { view: rendered } = view({ form: { ...emptyAlertChannelForm(), channelType: "webhook" } })
-    fireEvent.change(screen.getByLabelText("Webhook URL"), { target: { value: "https://example.com/hook" } })
-    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Ops" } })
-    rendered.unmount()
-    view({ form: { ...emptyAlertChannelForm(), channelType: "telegram" } })
-    fireEvent.change(screen.getByLabelText("Bot token"), { target: { value: "123:abc" } })
-    fireEvent.change(screen.getByLabelText("Chat ID"), { target: { value: "99" } })
-  })
-
-  it("shows placeholders and inserts the common template", () => {
-    const setForm: Dispatch<SetStateAction<AlertChannelFormState>> = vi.fn() as unknown as Dispatch<SetStateAction<AlertChannelFormState>>
-    render(<LocaleProvider><AlertChannelDialog
-      open editing={false} loading={false} form={emptyAlertChannelForm()}
-      setForm={setForm} onOpenChange={() => undefined} onSave={() => undefined}
-    /></LocaleProvider>)
-    // Placeholder list rendered.
-    expect(screen.getByText("Template placeholders")).toBeInTheDocument()
-    expect(screen.getByText("{{rule}}")).toBeInTheDocument()
-    expect(screen.getByText("{{node}}")).toBeInTheDocument()
-    // Clicking "Use common template" sets the form template.
+  it("edits templates, uses the common example and changes optional values", () => {
+    const save = vi.fn()
+    render(<Harness initial={{ ...emptyAlertChannelForm("serverchan_turbo"), name: "Ops" }} save={save} />)
+    fireEvent.click(screen.getByText("Optional settings"))
+    fireEvent.click(screen.getByRole("checkbox", { name: "Hide source IP" }))
+    fireEvent.click(screen.getByText("Message templates"))
+    fireEvent.change(screen.getByLabelText("Subject template"), { target: { value: "{{rule.name}}" } })
+    fireEvent.change(screen.getByLabelText("Message template"), { target: { value: "{{event.message}}" } })
     fireEvent.click(screen.getByRole("button", { name: "Use common template" }))
-    expect(setForm).toHaveBeenCalledWith(expect.any(Function))
-    const updater = vi.mocked(setForm).mock.calls[0][0] as (prev: AlertChannelFormState) => AlertChannelFormState
-    const next = updater(emptyAlertChannelForm())
-    expect(next.template).toContain("{{rule}}")
-    expect(next.template).toContain("{{metric}}")
+    fireEvent.click(screen.getByRole("button", { name: "Save" }))
+    expect(save.mock.calls[0][0]).toMatchObject({ templateSubject: "{{rule.name}}", values: expect.objectContaining({ noip: "true" }) })
+    expect(save.mock.calls[0][0].template).toContain("{{event.severity}}")
+  })
+  it("disables editing during a save and permits cancelling before it", () => {
+    const close = vi.fn()
+    const view = render(<Harness loading initial={{ ...emptyAlertChannelForm(), name: "Ops" }} close={close} />)
+    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled()
+    expect(screen.getByLabelText("Name")).toBeDisabled()
+    view.unmount()
+    render(<Harness close={close} />)
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }))
+    expect(close).toHaveBeenCalledWith(false)
   })
 })

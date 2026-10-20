@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"net/http"
 	"time"
@@ -39,6 +40,7 @@ func (h *SSHKeyHandler) HandleListSSHKeys(w http.ResponseWriter, r *http.Request
 }
 
 func (h *SSHKeyHandler) HandleGetSSHKey(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
 	id := r.PathValue("id")
 	k, err := h.sshKeyStore.GetSSHKeyByID(r.Context(), id)
 	if err != nil {
@@ -52,12 +54,20 @@ func (h *SSHKeyHandler) HandleGetSSHKey(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	privateKey, err := h.sshKeyStore.ReadPrivateKey(r.Context(), k.ID)
+	if err != nil {
+		if respondMetadataMutationError(w, err) {
+			return
+		}
+		JSONError(w, http.StatusInternalServerError, "failed to read ssh key")
+		return
+	}
 	JSONResponse(w, http.StatusOK, sshKeyDetailResponse{
 		ID:          k.ID,
 		Name:        k.Name,
 		KeyType:     k.KeyType,
 		PublicKey:   k.PublicKey,
-		PrivateKey:  k.PrivateKey,
+		PrivateKey:  privateKey,
 		Fingerprint: k.Fingerprint,
 		CreatedAt:   k.CreatedAt,
 	})
@@ -70,8 +80,8 @@ func (h *SSHKeyHandler) HandleCreateSSHKey(w http.ResponseWriter, r *http.Reques
 		PrivateKey string `json:"private_key"`
 		KeyType    string `json:"key_type"`
 	}
-	if err := ParseJSON(r, &body); err != nil {
-		JSONError(w, http.StatusBadRequest, "invalid request body")
+	if err := ParseJSONStrict(r, &body); err != nil {
+		WriteBodyError(w, err)
 
 		return
 	}
@@ -84,10 +94,9 @@ func (h *SSHKeyHandler) HandleCreateSSHKey(w http.ResponseWriter, r *http.Reques
 
 	fingerprint := generateFingerprint(body.PublicKey)
 
-	k, err := h.sshKeyStore.CreateSSHKey(r.Context(), body.Name, body.KeyType, body.PublicKey, body.PrivateKey, fingerprint)
+	k, err := h.sshKeyStore.CreateSSHKey(r.Context(), store.SSHKeyInput{Name: body.Name, KeyType: body.KeyType, PublicKey: body.PublicKey, PrivateKey: body.PrivateKey, Fingerprint: fingerprint})
 	if err != nil {
-		JSONError(w, http.StatusInternalServerError, "failed to create ssh key")
-
+		respondSSHKeyStoreError(w, err, "failed to create ssh key")
 		return
 	}
 
@@ -95,12 +104,13 @@ func (h *SSHKeyHandler) HandleCreateSSHKey(w http.ResponseWriter, r *http.Reques
 }
 
 func (h *SSHKeyHandler) HandleGenerateSSHKey(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
 	var body struct {
 		Name    string `json:"name"`
 		KeyType string `json:"key_type"`
 	}
-	if err := ParseJSON(r, &body); err != nil {
-		JSONError(w, http.StatusBadRequest, "invalid request body")
+	if err := ParseJSONStrict(r, &body); err != nil {
+		WriteBodyError(w, err)
 
 		return
 	}
@@ -137,10 +147,9 @@ func (h *SSHKeyHandler) HandleGenerateSSHKey(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	k, err := h.sshKeyStore.CreateSSHKey(r.Context(), body.Name, body.KeyType, publicKeyStr, privateKeyPEM, fingerprint)
+	k, err := h.sshKeyStore.CreateSSHKey(r.Context(), store.SSHKeyInput{Name: body.Name, KeyType: body.KeyType, PublicKey: publicKeyStr, PrivateKey: privateKeyPEM, Fingerprint: fingerprint, Generated: true})
 	if err != nil {
-		JSONError(w, http.StatusInternalServerError, "failed to store ssh key")
-
+		respondSSHKeyStoreError(w, err, "failed to store ssh key")
 		return
 	}
 
@@ -153,6 +162,19 @@ func (h *SSHKeyHandler) HandleGenerateSSHKey(w http.ResponseWriter, r *http.Requ
 		Fingerprint: k.Fingerprint,
 		CreatedAt:   k.CreatedAt,
 	})
+}
+
+// respondSSHKeyStoreError 统一分类 SSH 密钥写入错误；重名是冲突而不是服务端故障。
+func respondSSHKeyStoreError(w http.ResponseWriter, err error, fallback string) bool {
+	if respondMetadataMutationError(w, err) {
+		return true
+	}
+	if errors.Is(err, store.ErrSSHKeyNameConflict) {
+		JSONError(w, http.StatusConflict, "ssh key name already exists")
+		return true
+	}
+	JSONError(w, http.StatusInternalServerError, fallback)
+	return true
 }
 
 type sshKeyDetailResponse struct {
@@ -169,6 +191,9 @@ func (h *SSHKeyHandler) HandleDeleteSSHKey(w http.ResponseWriter, r *http.Reques
 	id := r.PathValue("id")
 
 	if err := h.sshKeyStore.DeleteSSHKey(r.Context(), id); err != nil {
+		if respondMetadataMutationError(w, err) {
+			return
+		}
 		JSONError(w, http.StatusInternalServerError, "failed to delete ssh key")
 
 		return

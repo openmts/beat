@@ -1,3 +1,4 @@
+import { notificationChannel } from "@/test/notification-fixtures"
 import { fireEvent, render, screen } from "@testing-library/react"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import { LocaleProvider } from "@/context/locale"
@@ -35,7 +36,8 @@ const node: ManagedNode = {
   agent_token_revoked_at: null, last_seen: "", created_at: "", updated_at: "",
 }
 const channel: AlertChannel = {
-  id: "channel-1", name: "Ops", channel_type: "telegram", config: "{}",
+  ...notificationChannel(),
+  id: "channel-1", name: "Ops", channel_type: "telegram", config: {},
   enabled: true, created_at: "", updated_at: "",
 }
 

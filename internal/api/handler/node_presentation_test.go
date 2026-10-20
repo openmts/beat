@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/beat/backend/internal/model"
 	"github.com/beat/backend/internal/store"
 )
 
@@ -29,7 +30,7 @@ func TestPublicNodeHandlersExcludeHiddenNodes(t *testing.T) {
 	handler := NewNodeHandler(nodes, mtsStore)
 
 	list := httptest.NewRecorder()
-	handler.HandleListNodes(list, httptest.NewRequest(http.MethodGet, "/api/v1/nodes", nil))
+	handler.HandleListNodes(list, jsonRequest(http.MethodGet, "/api/v1/nodes", nil))
 	if list.Code != http.StatusOK || strings.Contains(list.Body.String(), "hidden-node") ||
 		strings.Contains(list.Body.String(), privateRemark) {
 		t.Fatalf("public list status = %d, body = %s", list.Code, list.Body.String())
@@ -74,14 +75,14 @@ func TestPublicNodeHandlersRespectIPVisibility(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get settings: %v", err)
 	}
-	settings.ShowIPAddresses = false
+	settings.PublicAddressMode = model.PublicAddressHidden
 	if _, err := settingsStore.Update(t.Context(), settings); err != nil {
 		t.Fatalf("hide IP addresses: %v", err)
 	}
 	handler := NewNodeHandler(nodes, mtsStore, settingsStore)
 
 	list := httptest.NewRecorder()
-	handler.HandleListNodes(list, httptest.NewRequest(http.MethodGet, "/api/v1/nodes", nil))
+	handler.HandleListNodes(list, jsonRequest(http.MethodGet, "/api/v1/nodes", nil))
 	if list.Code != http.StatusOK || strings.Contains(list.Body.String(), "2001:db8::1") {
 		t.Fatalf("public list status = %d, body = %s", list.Code, list.Body.String())
 	}
@@ -119,8 +120,9 @@ func TestHandleUpdateNodePresentationValidation(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			request := httptest.NewRequest(http.MethodPut, "/api/v1/nodes/"+node.ID,
+			request := jsonRequest(http.MethodPut, "/api/v1/nodes/"+node.ID,
 				strings.NewReader(test.body))
+			request.Header.Set("Content-Type", "application/json")
 			request.SetPathValue("id", node.ID)
 			response := httptest.NewRecorder()
 			handler.HandleUpdateNode(response, request)
@@ -143,8 +145,9 @@ func TestHandleSortNodes(t *testing.T) {
 		t.Fatalf("create second node: %v", err)
 	}
 	handler := NewNodeHandler(nodes, mtsStore)
-	request := httptest.NewRequest(http.MethodPut, "/api/v1/nodes/sort",
+	request := jsonRequest(http.MethodPut, "/api/v1/nodes/sort",
 		strings.NewReader(`{"ids":["`+second.ID+`","`+first.ID+`"]}`))
+	request.Header.Set("Content-Type", "application/json")
 	response := httptest.NewRecorder()
 	handler.HandleSortNodes(response, request)
 	if response.Code != http.StatusNoContent {
@@ -152,14 +155,14 @@ func TestHandleSortNodes(t *testing.T) {
 	}
 
 	invalid := httptest.NewRecorder()
-	handler.HandleSortNodes(invalid, httptest.NewRequest(http.MethodPut, "/api/v1/nodes/sort",
+	handler.HandleSortNodes(invalid, jsonRequest(http.MethodPut, "/api/v1/nodes/sort",
 		strings.NewReader(`{"ids":[]}`)))
 	if invalid.Code != http.StatusBadRequest {
 		t.Fatalf("invalid sort status = %d", invalid.Code)
 	}
 
 	invalidJSON := httptest.NewRecorder()
-	handler.HandleSortNodes(invalidJSON, httptest.NewRequest(http.MethodPut, "/api/v1/nodes/sort",
+	handler.HandleSortNodes(invalidJSON, jsonRequest(http.MethodPut, "/api/v1/nodes/sort",
 		strings.NewReader(`{"ids":`)))
 	if invalidJSON.Code != http.StatusBadRequest {
 		t.Fatalf("invalid JSON sort status = %d", invalidJSON.Code)
@@ -169,9 +172,52 @@ func TestHandleSortNodes(t *testing.T) {
 		t.Fatalf("close database: %v", err)
 	}
 	failed := httptest.NewRecorder()
-	handler.HandleSortNodes(failed, httptest.NewRequest(http.MethodPut, "/api/v1/nodes/sort",
+	handler.HandleSortNodes(failed, jsonRequest(http.MethodPut, "/api/v1/nodes/sort",
 		strings.NewReader(`{"ids":["`+first.ID+`","`+second.ID+`"]}`)))
 	if failed.Code != http.StatusInternalServerError {
 		t.Fatalf("failed sort status = %d, body = %s", failed.Code, failed.Body.String())
+	}
+}
+
+func TestPublicNodeHandlersMaskAddressesWhileAdminKeepsThem(t *testing.T) {
+	sqliteStore, mtsStore := setupNodeTestDB(t)
+	nodes := store.NewNodeStore(sqliteStore.DB)
+	node, err := nodes.UpsertNode(t.Context(), "masked-node", "203.0.113.10", 22)
+	if err != nil {
+		t.Fatalf("create node: %v", err)
+	}
+	settingsStore := store.NewSiteSettingsStore(sqliteStore.DB)
+	settings, err := settingsStore.Get(t.Context())
+	if err != nil {
+		t.Fatalf("get settings: %v", err)
+	}
+	settings.PublicAddressMode = model.PublicAddressMasked
+	if _, err := settingsStore.Update(t.Context(), settings); err != nil {
+		t.Fatalf("mask addresses: %v", err)
+	}
+	handler := NewNodeHandler(nodes, mtsStore, settingsStore)
+
+	list := httptest.NewRecorder()
+	handler.HandleListNodes(list, jsonRequest(http.MethodGet, "/api/v1/nodes", nil))
+	if list.Code != http.StatusOK || strings.Contains(list.Body.String(), "203.0.113.10") {
+		t.Fatalf("public list leaked the full address: %d %s", list.Code, list.Body.String())
+	}
+	if !strings.Contains(list.Body.String(), `"host":"203.*.*.*"`) {
+		t.Fatalf("public list did not mask the address: %s", list.Body.String())
+	}
+
+	detailRequest := httptest.NewRequest(http.MethodGet, "/api/v1/nodes/"+node.ID, nil)
+	detailRequest.SetPathValue("id", node.ID)
+	detail := httptest.NewRecorder()
+	handler.HandleGetNode(detail, detailRequest)
+	if detail.Code != http.StatusOK || !strings.Contains(detail.Body.String(), `"host":"203.*.*.*"`) {
+		t.Fatalf("public detail body = %s", detail.Body.String())
+	}
+
+	managed := managedNodeRequestForTest(
+		handler.HandleListManagedNodes, http.MethodGet, "/api/v1/nodes/manage", "", "",
+	)
+	if managed.Code != http.StatusOK || !strings.Contains(managed.Body.String(), "203.0.113.10") {
+		t.Fatalf("managed nodes must keep the full address: %d %s", managed.Code, managed.Body.String())
 	}
 }

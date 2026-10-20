@@ -11,8 +11,12 @@ import (
 func writeConfig(t *testing.T, content string, mode os.FileMode) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "agent.json")
-	if err := os.WriteFile(path, []byte(content), mode); err != nil {
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		t.Fatalf("write config: %v", err)
+	}
+	// 显式设置反例权限，避免进程 umask 将不安全文件收紧为 0600。
+	if err := os.Chmod(path, mode); err != nil {
+		t.Fatalf("set config permissions: %v", err)
 	}
 	return path
 }

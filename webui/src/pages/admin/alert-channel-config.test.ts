@@ -1,144 +1,79 @@
 import { describe, expect, it } from "vitest"
-import {
-  alertChannelFormError,
-  alertChannelFormFrom,
-  emptyAlertChannelForm,
-  headersFromString,
-  headersToString,
-  serializeAlertChannelConfig,
-} from "@/pages/admin/alert-channel-config"
+import { alertChannelFormError, alertChannelFormFrom, alertChannelPayload, channelFieldIsCleared, channelFieldPresent, emptyAlertChannelForm, serializeAlertChannelConfig } from "@/pages/admin/alert-channel-config"
+import { notificationChannel } from "@/test/notification-fixtures"
+import { notificationChannelTypes, notificationFields } from "@/lib/notification-fields"
 
-describe("alert channel config", () => {
-  it("parses legacy webhook and sanitized secrets", () => {
-    const webhook = alertChannelFormFrom({
-      id: "w", name: "Webhook", channel_type: "webhook", config: "https://example.com/hook",
-      enabled: true, created_at: "", updated_at: "",
-    })
-    expect(webhook.webhookURL).toBe("https://example.com/hook")
-
-    const telegram = alertChannelFormFrom({
-      id: "t", name: "Telegram", channel_type: "telegram",
-      config: `{"bot_token":"","chat_id":"42","has_bot_token":true}`,
-      enabled: true, created_at: "", updated_at: "",
-    })
-    expect(telegram.chatID).toBe("42")
-    expect(telegram.botToken).toBe("")
+describe("notification channel configuration", () => {
+  it("never copies saved credentials into an editable form", () => {
+    const form = alertChannelFormFrom(notificationChannel({ channel_type: "telegram", config: { bot_token: "must-not-display", chat_id: "private", parse_mode: "HTML" }, secret_present: { bot_token: true, chat_id: true } }))
+    expect(form.values.bot_token).toBe("")
+    expect(form.values.chat_id).toBe("")
+    expect(form.values.parse_mode).toBe("HTML")
+    expect(alertChannelFormError(form)).toBeNull()
+    expect(serializeAlertChannelConfig(form)).toEqual({ parse_mode: "HTML" })
+    expect(alertChannelPayload(form)).toMatchObject({ expected_revision: 3, config: { parse_mode: "HTML" } })
   })
 
-  it("serializes email recipients and validates forms", () => {
-    const form = {
-      ...emptyAlertChannelForm(), name: "Email", channelType: "email" as const,
-      smtpHost: "smtp.example.com", smtpPort: "587", smtpFrom: "beat@example.com",
-      smtpTo: "ops@example.com, owner@example.com", smtpSecurity: "starttls" as const,
-    }
-    expect(alertChannelFormError(form, false)).toBeNull()
-    expect(JSON.parse(serializeAlertChannelConfig(form))).toMatchObject({
-      port: 587, to: ["ops@example.com", "owner@example.com"], security: "starttls",
-    })
-    expect(alertChannelFormError({ ...form, smtpPort: "bad" }, false)).toBe("alert.invalid_smtp")
-    expect(alertChannelFormError({ ...form, smtpTo: "bad" }, false)).toBe("alert.invalid_email")
+  it("retains blank secrets and separates explicit clearing", () => {
+    const form = alertChannelFormFrom(notificationChannel({ secret_present: { endpoint: true, headers: true } }))
+    expect(serializeAlertChannelConfig(form)).toEqual({})
+    form.clearSecrets = ["headers"]
+    expect(alertChannelPayload(form)).toMatchObject({ config: {}, clear_secrets: ["headers"] })
+    form.clearSecrets.push("endpoint")
+    expect(alertChannelFormError(form)).toBe("notification.required_fields")
+    form.enabled = false
+    expect(alertChannelFormError(form)).toBeNull()
+    expect(channelFieldIsCleared({ ...form, clearSecrets: ["auth"] }, "auth.password")).toBe(true)
+    expect(channelFieldPresent({ ...form, present: { "named_secrets.key": true } }, "named_secrets")).toBe(true)
   })
 
-  it("requires new secrets but permits blank secrets while editing", () => {
-    const telegram = {
-      ...emptyAlertChannelForm(), name: "Telegram", channelType: "telegram" as const, chatID: "42",
+  it("serializes each provider with typed JSON and safe defaults", () => {
+    for (const channelType of notificationChannelTypes) {
+      const form = emptyAlertChannelForm(channelType)
+      form.name = channelType
+      for (const field of notificationFields[channelType]) {
+        if (field.required) form.values[field.key] = field.kind === "number" ? "587" : field.key === "to" ? "ops@example.test, team@example.test" : field.kind === "url" ? "https://notify.example.test" : "configured"
+      }
+      const payload = alertChannelPayload(form)
+      expect(typeof payload.config).toBe("object")
+      expect(payload.channel_type).toBe(channelType)
+      expect(alertChannelFormError(form)).toBeNull()
     }
-    expect(alertChannelFormError(telegram, false)).toBe("alert.invalid_telegram")
-    expect(alertChannelFormError(telegram, true)).toBeNull()
-
-    const email = {
-      ...emptyAlertChannelForm(), name: "Email", channelType: "email" as const,
-      smtpHost: "smtp.example.com", smtpPort: "587", smtpUsername: "beat",
-      smtpFrom: "beat@example.com", smtpTo: "ops@example.com",
-    }
-    expect(alertChannelFormError(email, false)).toBe("alert.smtp_password_required")
-    expect(alertChannelFormError(email, true)).toBeNull()
+    const form = emptyAlertChannelForm("custom_http")
+    form.values = { ...form.values, endpoint: "https://notify.example.test", headers: '{"Authorization":"{{secret.key}}"}', query: '{"topic":"ops"}', named_secrets: '{"key":"test-value"}', "auth.mode": "basic", "auth.username": "user", "auth.password": " pass ", "hmac.secret": "signing", "hmac.header": "X-Signature", body: '{"message":"{{event.message}}"}' }
+    expect(serializeAlertChannelConfig(form)).toMatchObject({ method: "POST", timeout_seconds: 15, auth: { mode: "basic", username: "user", password: " pass " }, hmac: { secret: "signing", header: "X-Signature" }, body: { message: "{{event.message}}" } })
+    form.values.body_mode = "text"; form.values.body = "plain text"
+    expect(serializeAlertChannelConfig(form).body).toBe("plain text")
+    const turbo = emptyAlertChannelForm("serverchan_turbo"); turbo.values.noip = "true"
+    expect(serializeAlertChannelConfig(turbo).noip).toBe(true)
   })
 
-  it("serializes and restores custom push templates", () => {
-    const webhook = {
-      ...emptyAlertChannelForm(), name: "Webhook", channelType: "webhook" as const,
-      webhookURL: "https://example.com/hook", template: "[{{severity}}] {{rule}}",
-    }
-    const serialized = serializeAlertChannelConfig(webhook)
-    expect(JSON.parse(serialized)).toMatchObject({
-      url: "https://example.com/hook", template: "[{{severity}}] {{rule}}",
-    })
-    const restored = alertChannelFormFrom({
-      id: "w", name: "Webhook", channel_type: "webhook", config: serialized,
-      enabled: true, created_at: "", updated_at: "",
-    })
-    expect(restored.template).toBe("[{{severity}}] {{rule}}")
-
-    const telegram = {
-      ...emptyAlertChannelForm(), name: "Telegram", channelType: "telegram" as const,
-      chatID: "42", template: "node {{node}}",
-    }
-    expect(JSON.parse(serializeAlertChannelConfig(telegram))).toMatchObject({
-      chat_id: "42", template: "node {{node}}",
-    })
-
-    const plainWebhook = {
-      ...emptyAlertChannelForm(), name: "Webhook", channelType: "webhook" as const,
-      webhookURL: "https://example.com/hook", template: "",
-    }
-    const plain = JSON.parse(serializeAlertChannelConfig(plainWebhook))
-    expect(plain.template).toBeUndefined()
+  it("requires actual saved values before permitting blank required fields", () => {
+    const form = emptyAlertChannelForm("telegram"); form.name = "Telegram"
+    expect(alertChannelFormError(form)).toBe("notification.required_fields")
+    form.present = { bot_token: true, chat_id: true }
+    expect(alertChannelFormError(form)).toBeNull()
+    const saved = alertChannelFormFrom(notificationChannel({ channel_type: "serverchan_3", config: { tags: ["ops", "prod"] } }))
+    expect(saved.values.tags).toBe("ops, prod")
   })
 
-  it("round-trips webhook custom headers", () => {
-    const form = {
-      ...emptyAlertChannelForm(), name: "Hook", channelType: "webhook" as const,
-      webhookURL: "https://example.com/hook",
-      webhookHeaders: "Authorization: Bearer token\nX-Custom: abc",
+  it("rejects malformed or oversized configurations before sending", () => {
+    const valid = emptyAlertChannelForm("custom_http"); valid.name = "Custom"; valid.values.endpoint = "https://notify.example.test"
+    expect(alertChannelFormError({ ...valid, name: "" })).toBe("notification.invalid_name")
+    expect(alertChannelFormError({ ...valid, name: "x".repeat(81) })).toBe("notification.invalid_name")
+    for (const endpoint of ["bad", "file:///tmp/a", "https://user:password@example.test", "https://example.test/#fragment"]) {
+      expect(alertChannelFormError({ ...valid, values: { ...valid.values, endpoint } })).toBe("notification.invalid_url")
     }
-    const serialized = JSON.parse(serializeAlertChannelConfig(form))
-    expect(serialized.headers).toEqual({
-      Authorization: "Bearer token",
-      "X-Custom": "abc",
-    })
-    const restored = alertChannelFormFrom({
-      id: "w", name: "Hook", channel_type: "webhook", config: JSON.stringify(serialized),
-      enabled: true, created_at: "", updated_at: "",
-    })
-    expect(restored.webhookHeaders).toBe("Authorization: Bearer token\nX-Custom: abc")
-  })
-
-  it("omits headers when empty and parses helpers", () => {
-    const form = {
-      ...emptyAlertChannelForm(), name: "Hook", channelType: "webhook" as const,
-      webhookURL: "https://example.com/hook", webhookHeaders: "  \n",
+    for (const raw of ["{", "[]", "null", '{"value":2}', JSON.stringify(Object.fromEntries(Array.from({ length: 33 }, (_, i) => [i, "x"])))]) {
+      expect(alertChannelFormError({ ...valid, values: { ...valid.values, headers: raw } })).not.toBeNull()
     }
-    const serialized = JSON.parse(serializeAlertChannelConfig(form))
-    expect(serialized.headers).toBeUndefined()
-
-    expect(headersToString({ A: "1" })).toBe("A: 1")
-    expect(headersFromString("A: 1\nB: 2\n\nbadline")).toEqual({ A: "1", B: "2" })
-    expect(headersFromString("")).toEqual({})
-  })
-
-  it("serializes telegram parse mode", () => {
-    const form = {
-      ...emptyAlertChannelForm(), name: "TG", channelType: "telegram" as const,
-      chatID: "42", telegramParseMode: "MarkdownV2", template: "{{rule}}",
+    for (const [key, value] of [["timeout_seconds", "31"], ["timeout_seconds", "bad"], ["redirects", "4"], ["redirects", "-1"], ["body", "{"]]) {
+      expect(alertChannelFormError({ ...valid, values: { ...valid.values, [key]: value } })).not.toBeNull()
     }
-    const serialized = JSON.parse(serializeAlertChannelConfig(form))
-    expect(serialized.parse_mode).toBe("MarkdownV2")
-    expect(serialized.template).toBe("{{rule}}")
-
-    const restored = alertChannelFormFrom({
-      id: "t", name: "TG", channel_type: "telegram", config: JSON.stringify(serialized),
-      enabled: true, created_at: "", updated_at: "",
-    })
-    expect(restored.telegramParseMode).toBe("MarkdownV2")
-  })
-
-  it("omits telegram parse mode when empty", () => {
-    const form = {
-      ...emptyAlertChannelForm(), name: "TG", channelType: "telegram" as const,
-      chatID: "42", telegramParseMode: "",
-    }
-    const serialized = JSON.parse(serializeAlertChannelConfig(form))
-    expect(serialized.parse_mode).toBeUndefined()
+    expect(alertChannelFormError({ ...valid, templateSubject: "x".repeat(201) })).toBe("notification.too_large")
+    expect(alertChannelFormError({ ...valid, template: "x".repeat(16_385) })).toBe("notification.too_large")
+    expect(alertChannelFormError({ ...valid, values: { ...valid.values, endpoint: `https://example.test/${"a".repeat(16_385)}` } })).toBe("notification.too_large")
+    const email = emptyAlertChannelForm("email"); email.name = "Mail"; email.enabled = false; email.values.port = "65536"
+    expect(alertChannelFormError(email)).toBe("notification.invalid_number")
   })
 })

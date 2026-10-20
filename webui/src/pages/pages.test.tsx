@@ -1,5 +1,7 @@
 import type { ReactNode } from "react"
-import { act, fireEvent, render, screen } from "@testing-library/react"
+import type { PublicMetricWorkspace } from "@/hooks/use-public-metric-workspace"
+import { workspaceDashboard, workspaceQuery, workspaceSources, workspaceNode } from "@/test/metric-workspace-fixtures"
+import { fireEvent, render, screen } from "@testing-library/react"
 import { MemoryRouter, Route, Routes } from "react-router"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import { LocaleProvider } from "@/context/locale"
@@ -9,7 +11,12 @@ import NodeDetail from "@/pages/node-detail"
 import NotFound from "@/pages/not-found"
 import * as hooks from "@/hooks/use-api"
 
+const fleet = vi.hoisted(() => ({ nodes: [] as unknown[], groups: [], loading: false, error: "", offline: false, connected: true, stale: false, receivedAt: null, serverTime: null, refresh: vi.fn() }))
+vi.mock("@/hooks/use-public-fleet", () => ({ usePublicFleet: () => fleet }))
 const site = vi.hoisted(() => ({ showNetworkQuality: true }))
+const publicWorkspace = vi.hoisted(() => ({ value: null as unknown }))
+vi.mock("@/hooks/use-public-metric-workspace", () => ({ usePublicMetricWorkspace: () => publicWorkspace.value }))
+vi.mock("@/components/metric-workspace/data-view", () => ({ WorkspaceDataView: ({ panel }: { panel: { title: string } }) => <div data-testid={`chart-${panel.title}`}>{panel.title}</div>, WorkspaceDataTable: () => <p>Data table</p> }))
 
 vi.mock("@/hooks/use-api")
 vi.mock("@/context/site-settings", () => ({
@@ -19,6 +26,7 @@ vi.mock("@/context/site-settings", () => ({
       logo_url: "",
       show_network_quality: site.showNetworkQuality,
     },
+    reportInteraction: vi.fn(),
   }),
 }))
 vi.mock("@/components/network-quality-band", () => ({
@@ -39,37 +47,34 @@ const hookState = (overrides = {}) => ({ data: [], loading: false, error: null, 
 describe("public pages", () => {
   beforeEach(() => {
     vi.resetAllMocks()
+    fleet.nodes = []; fleet.groups = []; fleet.loading = false; fleet.error = ""
     vi.mocked(hooks.useNodes).mockReturnValue(hookState() as never)
     vi.mocked(hooks.useLiveNodes).mockReturnValue(hookState() as never)
     vi.mocked(hooks.useGroups).mockReturnValue(hookState() as never)
     vi.mocked(hooks.useNode).mockReturnValue(hookState({ data: nodeWithTraffic() }) as never)
     vi.mocked(hooks.useNodeMetrics).mockReturnValue(hookState({ data: {} }) as never)
     vi.mocked(hooks.useNodeCustomMetrics).mockReturnValue(hookState({ data: [] }) as never)
+    publicWorkspace.value = pageWorkspace()
     site.showNetworkQuality = true
   })
 
   it("renders dashboard loading, errors, empty, and nodes", () => {
-    vi.mocked(hooks.useLiveNodes).mockReturnValue(hookState({ loading: true, error: "nodes failed" }) as never)
-    vi.mocked(hooks.useGroups).mockReturnValue(hookState({ loading: true, error: "groups failed" }) as never)
+    fleet.loading = true; fleet.error = "unavailable"
     const { rerender } = render(<Providers><Dashboard /></Providers>)
-    expect(screen.getByText("nodes failed")).toBeInTheDocument()
-    vi.mocked(hooks.useLiveNodes).mockReturnValue(hookState() as never)
-    vi.mocked(hooks.useGroups).mockReturnValue(hookState() as never)
+    expect(screen.getByRole("alert")).toBeInTheDocument()
+    fleet.loading = false; fleet.error = ""
     rerender(<Providers><Dashboard /></Providers>)
-    expect(screen.getByText("No nodes yet")).toBeInTheDocument()
-    vi.mocked(hooks.useLiveNodes).mockReturnValue(hookState({ data: [{ id: "n", name: "Node", alias: "", status: "online", metrics: {} }] }) as never)
+    expect(screen.getByText("No matching public nodes")).toBeInTheDocument()
+    fleet.nodes = [{ ...workspaceNode("n"), name: "Node" }]
     rerender(<Providers><Dashboard /></Providers>)
     expect(screen.getByText("Node")).toBeInTheDocument()
   })
 
-  it("refreshes dashboard on its timer", () => {
-    vi.useFakeTimers()
-    const refresh = vi.fn()
-    vi.mocked(hooks.useLiveNodes).mockReturnValue(hookState({ refresh }) as never)
+  it("delegates explicit retry to the shared live controller", () => {
+    fleet.error = "unavailable"
     render(<Providers><Dashboard /></Providers>)
-    act(() => vi.advanceTimersByTime(30_000))
-    expect(refresh).toHaveBeenCalledWith({ silent: true })
-    vi.useRealTimers()
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }))
+    expect(fleet.refresh).toHaveBeenCalledOnce()
   })
 
   it("hides public network quality when disabled by site settings", () => {
@@ -78,44 +83,33 @@ describe("public pages", () => {
     expect(screen.queryByText("network-quality-band")).not.toBeInTheDocument()
   })
 
-  it("renders node detail states and changes range", () => {
-    vi.mocked(hooks.useNode).mockReturnValue(hookState({ data: null, loading: true, error: "node failed" }) as never)
-    vi.mocked(hooks.useNodeMetrics).mockReturnValue(hookState({ data: {}, loading: true, error: "metrics failed" }) as never)
-    const { rerender } = render(<Providers><Routes><Route path="/node/:id" element={<NodeDetail />} /></Routes></Providers>)
+  it("renders node detail loading/error states with the public workspace", () => {
+    const workspace = pageWorkspace()
+    workspace.node = { ...workspace.node, data: null, loading: true, error: "node failed" }
+    workspace.source.error = "workspace.load_failed"
+    publicWorkspace.value = workspace
+    const view = render(<Providers><Routes><Route path="/node/:id" element={<NodeDetail />} /></Routes></Providers>)
     expect(screen.getByText("Loading node...")).toBeInTheDocument()
-    expect(screen.getByText("metrics failed")).toBeInTheDocument()
-    vi.mocked(hooks.useNode).mockReturnValue(hookState({ data: { ...nodeWithTraffic(), alias: "Alias" } }) as never)
-    vi.mocked(hooks.useNodeMetrics).mockReturnValue(hookState({ data: {} }) as never)
-    rerender(<Providers><Routes><Route path="/node/:id" element={<NodeDetail />} /></Routes></Providers>)
+    expect(screen.getByText("The metric workspace could not be loaded.")).toBeInTheDocument()
+    workspace.node = { ...workspace.node, data: { ...nodeWithTraffic(), alias: "Alias" } as never, loading: false, error: null }
+    workspace.source.error = null
+    view.rerender(<Providers><Routes><Route path="/node/:id" element={<NodeDetail />} /></Routes></Providers>)
     expect(screen.getByText("Alias")).toBeInTheDocument()
     expect(screen.getByRole("link", { name: "Back" })).toHaveAttribute("href", "/")
     expect(screen.getByText("25 GiB / 100 GiB")).toBeInTheDocument()
-    fireEvent.click(screen.getByText("6h"))
-    expect(hooks.useNodeMetrics).toHaveBeenLastCalledWith(
-      "node",
-      expect.arrayContaining(["cpu", "memory"]),
-      6,
-    )
+    fireEvent.click(screen.getByRole("button", { name: "Refresh now" }))
+    expect(workspace.refresh).toHaveBeenCalledOnce()
   })
 
-  it("renders custom metrics after built-in metrics on node detail", () => {
-    const builtIn = hookState({ data: { cpu: [{ timestamp: 1, value: 10 }], custom_http_latency: [{ timestamp: 1, value: 12.5 }] } })
-    vi.mocked(hooks.useNode).mockReturnValue(hookState({ data: nodeWithTraffic() }) as never)
-    vi.mocked(hooks.useNodeMetrics).mockReturnValue(builtIn as never)
-    vi.mocked(hooks.useNodeCustomMetrics).mockReturnValue(
-      hookState({ data: [{ id: "m1", name: "http_latency", interval_seconds: 10 }] }) as never,
-    )
+  it("renders only template-defined panels without invoking legacy metric collectors", () => {
+    const workspace = pageWorkspace()
+    workspace.definition.panels.push({ ...workspace.definition.panels[0], id: "custom", title: "Public latency", series: [{ ...workspace.definition.panels[0].series[0], metric: "custom_http_latency" }] })
+    publicWorkspace.value = workspace
     render(<Providers><Routes><Route path="/node/:id" element={<NodeDetail />} /></Routes></Providers>)
-    // Custom metrics section renders the metric chart alongside built-in ones.
-    expect(screen.getByText("Custom Metrics")).toBeInTheDocument()
-    expect(screen.getByTestId("chart-http_latency")).toBeInTheDocument()
-    expect(screen.getByTestId("chart-CPU Usage")).toBeInTheDocument()
-    // The metrics request must include the custom metric so its data is fetched.
-    expect(hooks.useNodeMetrics).toHaveBeenLastCalledWith(
-      "node",
-      expect.arrayContaining(["custom_http_latency"]),
-      expect.any(Number),
-    )
+    expect(screen.getByRole("region", { name: "Public latency" })).toBeInTheDocument()
+    expect(screen.getByRole("region", { name: "CPU usage" })).toBeInTheDocument()
+    expect(hooks.useNodeMetrics).not.toHaveBeenCalled()
+    expect(hooks.useNodeCustomMetrics).not.toHaveBeenCalled()
   })
 
   it("renders node resource cards, runtime stats, and tags", () => {
@@ -139,8 +133,7 @@ describe("public pages", () => {
         tcp_connections: 7, udp_connections: 3,
       },
     }
-    vi.mocked(hooks.useNode).mockReturnValue(hookState({ data: richNode }) as never)
-    vi.mocked(hooks.useNodeMetrics).mockReturnValue(hookState({ data: {} }) as never)
+    ;(publicWorkspace.value as PublicMetricWorkspace).node.data = richNode as never
     render(<Providers><Routes><Route path="/node/:id" element={<NodeDetail />} /></Routes></Providers>)
     expect(screen.getByText("12.3%")).toBeInTheDocument()
     expect(screen.getByText("1 / 8 cores")).toBeInTheDocument()
@@ -175,4 +168,13 @@ function nodeWithTraffic() {
       status: "normal",
     },
   }
+}
+
+function pageWorkspace(): PublicMetricWorkspace {
+  const definition = workspaceDashboard().definition
+  return { node: { nodeId: "node", data: nodeWithTraffic() as never, loading: false, error: null, refresh: vi.fn() },
+    source: { nodeId: "node", data: { ...workspaceSources(), dashboard: { ...workspaceDashboard(), scope: "public" } }, loading: false, error: null, reload: vi.fn() },
+    definition, queries: { dashboardId: "public", panels: {}, domain: { from: workspaceQuery().from, to: workspaceQuery().to }, refresh: vi.fn(), retryPanel: vi.fn() },
+    values: { node: ["node"] }, range: { mode: "relative", seconds: 3600 }, refreshSeconds: 5, history: undefined, historyMetricNames: [], metricsState: "ready",
+    setRange: vi.fn(), setRefreshSeconds: vi.fn(), setVariable: vi.fn(), toggleRow: vi.fn(), refresh: vi.fn() }
 }

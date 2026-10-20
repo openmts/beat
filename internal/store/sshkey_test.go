@@ -2,15 +2,16 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"testing"
 
-	"github.com/beat/backend/internal/model"
+	"github.com/beat/backend/internal/testutil"
 )
 
 func TestListSSHKeys(t *testing.T) {
 	store := setupTestDB(t)
 	ctx := context.Background()
-	sshStore := NewSSHKeyStore(store.DB)
+	sshStore := newTestSSHKeyStore(t, store.DB)
 
 	data := []struct {
 		id, name, keyType, publicKey, privateKey, fingerprint string
@@ -19,10 +20,7 @@ func TestListSSHKeys(t *testing.T) {
 		{"key-2", "key-two", "ed25519", "public-two", "private-two", "fp-two"},
 	}
 	for _, d := range data {
-		_, err := store.DB.ExecContext(ctx,
-			"INSERT INTO ssh_keys (id, name, key_type, public_key, private_key, fingerprint, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-			d.id, d.name, d.keyType, d.publicKey, d.privateKey, d.fingerprint, model.NowUTC(),
-		)
+		_, err := sshStore.CreateSSHKey(ctx, SSHKeyInput{Name: d.name, KeyType: d.keyType, PublicKey: d.publicKey, PrivateKey: d.privateKey, Fingerprint: d.fingerprint})
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -40,7 +38,7 @@ func TestListSSHKeys(t *testing.T) {
 func TestListSSHKeysEmpty(t *testing.T) {
 	store := setupTestDB(t)
 	ctx := context.Background()
-	sshStore := NewSSHKeyStore(store.DB)
+	sshStore := newTestSSHKeyStore(t, store.DB)
 
 	keys, err := sshStore.ListSSHKeys(ctx)
 	if err != nil {
@@ -54,9 +52,9 @@ func TestListSSHKeysEmpty(t *testing.T) {
 func TestCreateSSHKey(t *testing.T) {
 	store := setupTestDB(t)
 	ctx := context.Background()
-	sshStore := NewSSHKeyStore(store.DB)
+	sshStore := newTestSSHKeyStore(t, store.DB)
 
-	key, err := sshStore.CreateSSHKey(ctx, "my-key", "rsa", "public-data", "private-data", "aa:bb:cc")
+	key, err := sshStore.CreateSSHKey(ctx, SSHKeyInput{Name: "my-key", KeyType: "rsa", PublicKey: "public-data", PrivateKey: "private-data", Fingerprint: "aa:bb:cc"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -86,9 +84,9 @@ func TestCreateSSHKey(t *testing.T) {
 func TestGetSSHKeyByPublicKey(t *testing.T) {
 	store := setupTestDB(t)
 	ctx := context.Background()
-	sshStore := NewSSHKeyStore(store.DB)
+	sshStore := newTestSSHKeyStore(t, store.DB)
 
-	created, err := sshStore.CreateSSHKey(ctx, "lookup", "ed25519", "ssh-ed25519 public", "private", "fingerprint")
+	created, err := sshStore.CreateSSHKey(ctx, SSHKeyInput{Name: "lookup", KeyType: "ed25519", PublicKey: "ssh-ed25519 public", PrivateKey: "private", Fingerprint: "fingerprint"})
 	if err != nil {
 		t.Fatalf("create key: %v", err)
 	}
@@ -97,7 +95,7 @@ func TestGetSSHKeyByPublicKey(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get key: %v", err)
 	}
-	if key == nil || key.ID != created.ID || key.PrivateKey != "private" {
+	if key == nil || key.ID != created.ID || key.PrivateKey != "" {
 		t.Fatalf("key = %#v, want created key", key)
 	}
 
@@ -110,12 +108,19 @@ func TestGetSSHKeyByPublicKey(t *testing.T) {
 	}
 }
 
+func newTestSSHKeyStore(t *testing.T, database *sql.DB) *SSHKeyStore {
+	t.Helper()
+	keys := NewSSHKeyStore(database)
+	keys.SetSecrets(testutil.NewSecrets(t, database))
+	return keys
+}
+
 func TestDeleteSSHKey(t *testing.T) {
 	store := setupTestDB(t)
 	ctx := context.Background()
-	sshStore := NewSSHKeyStore(store.DB)
+	sshStore := newTestSSHKeyStore(t, store.DB)
 
-	key, err := sshStore.CreateSSHKey(ctx, "delete-me", "rsa", "pub", "priv", "fp")
+	key, err := sshStore.CreateSSHKey(ctx, SSHKeyInput{Name: "delete-me", KeyType: "rsa", PublicKey: "pub", PrivateKey: "priv", Fingerprint: "fp"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -137,7 +142,7 @@ func TestDeleteSSHKey(t *testing.T) {
 func TestDeleteSSHKeyNonExistent(t *testing.T) {
 	store := setupTestDB(t)
 	ctx := context.Background()
-	sshStore := NewSSHKeyStore(store.DB)
+	sshStore := newTestSSHKeyStore(t, store.DB)
 
 	err := sshStore.DeleteSSHKey(ctx, "nonexistent-id")
 	if err != nil {
@@ -148,8 +153,8 @@ func TestDeleteSSHKeyNonExistent(t *testing.T) {
 func TestGetSSHKeyByPublicKeyTrimmedMatch(t *testing.T) {
 	s := setupTestDB(t)
 	ctx := context.Background()
-	sshStore := NewSSHKeyStore(s.DB)
-	key, err := sshStore.CreateSSHKey(ctx, "trim-key", "ed25519", "ssh-ed25519 AAA\n", "private", "fp")
+	sshStore := newTestSSHKeyStore(t, s.DB)
+	key, err := sshStore.CreateSSHKey(ctx, SSHKeyInput{Name: "trim-key", KeyType: "ed25519", PublicKey: "ssh-ed25519 AAA\n", PrivateKey: "private", Fingerprint: "fp"})
 	if err != nil {
 		t.Fatalf("create key: %v", err)
 	}
@@ -165,9 +170,9 @@ func TestGetSSHKeyByPublicKeyTrimmedMatch(t *testing.T) {
 func TestGetSSHKeyByPublicKeyLegacyNewlineRow(t *testing.T) {
 	s := setupTestDB(t)
 	ctx := context.Background()
-	sshStore := NewSSHKeyStore(s.DB)
+	sshStore := newTestSSHKeyStore(t, s.DB)
 	// Simulate a legacy row created before public key trimming was introduced.
-	key, err := sshStore.CreateSSHKey(ctx, "legacy-key", "ed25519", "ssh-ed25519 AAA\n", "private", "fp")
+	key, err := sshStore.CreateSSHKey(ctx, SSHKeyInput{Name: "legacy-key", KeyType: "ed25519", PublicKey: "ssh-ed25519 AAA\n", PrivateKey: "private", Fingerprint: "fp"})
 	if err != nil {
 		t.Fatalf("create key: %v", err)
 	}
@@ -181,5 +186,30 @@ func TestGetSSHKeyByPublicKeyLegacyNewlineRow(t *testing.T) {
 	}
 	if got == nil || got.ID != key.ID {
 		t.Fatalf("key = %#v, want id %s", got, key.ID)
+	}
+}
+
+func TestGetSSHKeyByIDReturnsStoredKeyAndNilWhenMissing(t *testing.T) {
+	store := setupTestDB(t)
+	ctx := t.Context()
+	sshStore := newTestSSHKeyStore(t, store.DB)
+
+	created, err := sshStore.CreateSSHKey(ctx, SSHKeyInput{Name: "lookup", KeyType: "ed25519", PublicKey: "pub-lookup", PrivateKey: "priv-lookup", Fingerprint: "fp-lookup"})
+	if err != nil {
+		t.Fatalf("create ssh key: %v", err)
+	}
+	found, err := sshStore.GetSSHKeyByID(ctx, created.ID)
+	if err != nil {
+		t.Fatalf("get ssh key by id: %v", err)
+	}
+	if found == nil || found.ID != created.ID || found.Name != "lookup" || found.Fingerprint != "fp-lookup" {
+		t.Fatalf("looked up key = %#v", found)
+	}
+	missing, err := sshStore.GetSSHKeyByID(ctx, "missing-id")
+	if err != nil {
+		t.Fatalf("get missing ssh key: %v", err)
+	}
+	if missing != nil {
+		t.Fatalf("missing key = %#v, want nil", missing)
 	}
 }

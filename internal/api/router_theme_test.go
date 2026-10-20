@@ -26,7 +26,7 @@ func setupThemeRouter(t *testing.T) (*Router, *theme.Service) {
 	}
 	t.Cleanup(func() { _ = sqlite.Close() })
 	adminStore := store.NewAdminStore(sqlite.DB)
-	secrets := newTestSecrets(t)
+	secrets := newTestSecrets(t, sqlite.DB)
 	security := newTestSecurity(t, adminStore, secrets)
 
 	themeService, err := theme.NewService(store.NewThemeStore(sqlite.DB), adminStore,
@@ -63,8 +63,9 @@ func routerLoginCookie(router *Router) (*http.Cookie, error) {
 func themeRouterZip(t *testing.T) []byte {
 	t.Helper()
 	files := []model.ThemeManifestFile{
-		{Path: "preview.png", Size: 1, SHA256: fmt.Sprintf("%x", sha256.Sum256([]byte("p")))},
+		{Path: "preview.png", Size: int64(len(routerThemePNG)), SHA256: fmt.Sprintf("%x", sha256.Sum256([]byte(routerThemePNG)))},
 		{Path: "assets/theme.css", Size: 1, SHA256: fmt.Sprintf("%x", sha256.Sum256([]byte("c")))},
+		{Path: "theme.json", Size: int64(len(routerThemeDefinitionJSON)), SHA256: fmt.Sprintf("%x", sha256.Sum256([]byte(routerThemeDefinitionJSON)))},
 	}
 	manifest, _ := json.Marshal(map[string]any{
 		"schema_version": 1, "id": "router-theme", "name": "Router Theme",
@@ -75,7 +76,7 @@ func themeRouterZip(t *testing.T) []byte {
 	var buffer bytes.Buffer
 	zipWriter := zip.NewWriter(&buffer)
 	for name, content := range map[string]string{
-		"beat-theme.json": string(manifest), "preview.png": "p", "assets/theme.css": "c",
+		"beat-theme.json": string(manifest), "preview.png": routerThemePNG, "assets/theme.css": "c", "theme.json": routerThemeDefinitionJSON,
 	} {
 		entry, _ := zipWriter.Create(name)
 		_, _ = entry.Write([]byte(content))
@@ -126,25 +127,55 @@ func TestRouterThemePublicAndOwnerBoundaries(t *testing.T) {
 		t.Fatalf("upload = %d %s", upload.Code, upload.Body.String())
 	}
 
-	// 资产路由通过真实 mux 匹配
+	// 资产路由按生产装配挂载：SPA 兜底不得吞掉 /themes/assets 前缀
 	pkgs, err := service.ListPackages(t.Context())
 	if err != nil || len(pkgs) != 1 {
 		t.Fatalf("packages = %v / %v", pkgs, err)
 	}
+	mux := http.NewServeMux()
+	mux.Handle("/api/v1/", router.ServeHandler())
+	router.MountThemeAssets(mux)
+	fallback := 0
+	mux.HandleFunc("/", func(w http.ResponseWriter, request *http.Request) { fallback++; http.NotFound(w, request) })
+
 	asset := httptest.NewRequest(http.MethodGet,
 		"http://example.com/themes/assets/"+pkgs[0].ArchiveDigest+"/assets/theme.css", nil)
 	assetResponse := httptest.NewRecorder()
-	router.ServeHandler().ServeHTTP(assetResponse, asset)
+	mux.ServeHTTP(assetResponse, asset)
 	if assetResponse.Code != http.StatusOK || assetResponse.Body.String() != "c" {
 		t.Fatalf("asset = %d %q", assetResponse.Code, assetResponse.Body.String())
+	}
+	if fallback != 0 {
+		t.Fatalf("SPA fallback swallowed the theme asset %d time(s)", fallback)
 	}
 
 	// 资产路由不得遮蔽 API
 	apiShadow := httptest.NewRequest(http.MethodGet,
 		"http://example.com/themes/assets/"+pkgs[0].ArchiveDigest+"/../../api/v1/themes/active", nil)
 	shadowResponse := httptest.NewRecorder()
-	router.ServeHandler().ServeHTTP(shadowResponse, apiShadow)
+	mux.ServeHTTP(shadowResponse, apiShadow)
 	if shadowResponse.Code == http.StatusOK && strings.Contains(shadowResponse.Body.String(), "built_in") {
 		t.Fatal("asset route shadowed the API")
+	}
+
+	// 预览图与沙箱入口同属该前缀：主题卡片与 iframe 都依赖它可读
+	preview := httptest.NewRecorder()
+	mux.ServeHTTP(preview, httptest.NewRequest(http.MethodGet,
+		"http://example.com/themes/assets/"+pkgs[0].ArchiveDigest+"/preview.png", nil))
+	if preview.Code != http.StatusOK || preview.Header().Get("Content-Type") != "image/png" ||
+		!strings.HasPrefix(preview.Header().Get("Cache-Control"), "public, max-age=31536000") {
+		t.Fatalf("preview = %d %q %q", preview.Code, preview.Header().Get("Content-Type"), preview.Header().Get("Cache-Control"))
+	}
+}
+
+func TestMountThemeAssetsWithoutThemeService(t *testing.T) {
+	(&Router{}).MountThemeAssets(nil)
+	mux := http.NewServeMux()
+	(&Router{}).MountThemeAssets(mux)
+	mux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusTeapot) })
+	response := httptest.NewRecorder()
+	mux.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "http://example.com/themes/assets/x/y.css", nil))
+	if response.Code != http.StatusTeapot {
+		t.Fatalf("root = %d", response.Code)
 	}
 }

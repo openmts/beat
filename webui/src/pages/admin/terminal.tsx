@@ -17,6 +17,7 @@ import { Terminal } from "@xterm/xterm"
 import { FitAddon } from "@xterm/addon-fit"
 import { WebLinksAddon } from "@xterm/addon-web-links"
 import "@xterm/xterm/css/xterm.css"
+import "@/styles/terminal.css"
 import { PageHeader } from "@/components/page-header"
 
 function TerminalPage() {

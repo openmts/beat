@@ -10,6 +10,7 @@ vi.mock("@/context/auth", () => ({
 vi.mock("@/pages/admin/security-account-panel", () => ({ SecurityAccountPanel: () => <div>account-panel</div> }))
 vi.mock("@/pages/admin/security-admins-panel", () => ({ SecurityAdminsPanel: () => <div>admins-panel</div> }))
 vi.mock("@/pages/admin/security-audit-panel", () => ({ SecurityAuditPanel: () => <div>audit-panel</div> }))
+vi.mock("@/pages/admin/security-events-panel", () => ({ SecurityEventsPanel: () => <div>events-panel</div> }))
 vi.mock("@/pages/admin/security-backup-panel", () => ({ SecurityBackupPanel: () => <div>backup-panel</div> }))
 vi.mock("@/pages/admin/security-sessions-panel", () => ({ SecuritySessionsPanel: () => <div>sessions-panel</div> }))
 vi.mock("@/pages/admin/security-totp-panel", () => ({ SecurityTOTPPanel: () => <div>totp-panel</div> }))
@@ -21,6 +22,7 @@ describe("security page roles", () => {
     render(<LocaleProvider><Security /></LocaleProvider>)
     expect(screen.getByRole("tab", { name: "Administrators" })).toBeInTheDocument()
     expect(screen.getByRole("tab", { name: "Backup and restore" })).toBeInTheDocument()
+    expect(screen.getByRole("tab", { name: "Sign-in security events" })).toBeInTheDocument()
   })
 
   it("hides owner-only tabs from administrators", () => {
@@ -28,5 +30,6 @@ describe("security page roles", () => {
     render(<LocaleProvider><Security /></LocaleProvider>)
     expect(screen.queryByRole("tab", { name: "Administrators" })).not.toBeInTheDocument()
     expect(screen.queryByRole("tab", { name: "Backup and restore" })).not.toBeInTheDocument()
+    expect(screen.getByRole("tab", { name: "Sign-in security events" })).toBeInTheDocument()
   })
 })

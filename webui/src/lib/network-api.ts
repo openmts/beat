@@ -1,4 +1,8 @@
 import { api } from "@/lib/api"
+import {
+  deleteNetworkTaskWithErasure,
+  type MetricErasureJob,
+} from "@/lib/metric-erasure-api"
 import type {
   NetworkHistoryResponse,
   NetworkTask,
@@ -48,8 +52,14 @@ export async function updateNetworkTask(
   return response.data
 }
 
-export async function deleteNetworkTask(taskId: string): Promise<void> {
-  await api.delete(`/network/tasks/${taskId}`)
+/** 删除任务同样走异步擦除契约：确认值是任务显示名，返回耐久任务。 */
+export async function deleteNetworkTask(
+  taskId: string,
+  confirmation: string,
+  requestId: string,
+): Promise<MetricErasureJob> {
+  const accepted = await deleteNetworkTaskWithErasure(taskId, confirmation, requestId)
+  return accepted.job
 }
 
 export async function sortNetworkTasks(ids: string[]): Promise<void> {

@@ -4,6 +4,7 @@ import * as React from "react"
 import { Dialog as SheetPrimitive } from "@base-ui/react/dialog"
 
 import { cn } from "@/lib/utils"
+import { useOptionalLocale } from "@/context/locale"
 import { Button } from "@/components/ui/button"
 import { XIcon } from "lucide-react"
 
@@ -41,11 +42,15 @@ function SheetContent({
   children,
   side = "right",
   showCloseButton = true,
+  closeLabel,
   ...props
 }: SheetPrimitive.Popup.Props & {
   side?: "top" | "right" | "bottom" | "left"
   showCloseButton?: boolean
+  closeLabel?: string
 }) {
+  const locale = useOptionalLocale()
+  const label = closeLabel ?? locale?.t("app.close")
   return (
     <SheetPortal>
       <SheetOverlay />
@@ -72,7 +77,7 @@ function SheetContent({
           >
             <XIcon
             />
-            <span className="sr-only">Close</span>
+            <span className="sr-only">{label}</span>
           </SheetPrimitive.Close>
         )}
       </SheetPrimitive.Popup>

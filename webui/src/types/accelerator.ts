@@ -1,0 +1,6 @@
+import type { AcceleratorMetricKey } from "@/lib/accelerator-metrics"
+export interface AcceleratorDevicePublic { device_id: string; ordinal: number; vendor: string; model: string; capabilities: string[]; metrics: Partial<Record<AcceleratorMetricKey, number>>; captured_at?: string; cadence_ms: number; stale: boolean }
+export interface AcceleratorDeviceAdmin extends AcceleratorDevicePublic { fingerprint: string; driver_version?: string; first_seen_at: string; last_seen_at: string; inactive_at?: string; error_codes: string[] }
+export interface AcceleratorPolicy { configured: boolean; effective_source: "default" | "installation" | "node" | "enrollment_policy"; scope_kind: string; scope_id: string; enabled: boolean; sample_interval_seconds: number; maximum_devices: number; metrics: string[]; revision: number }
+export interface AcceleratorPolicyWrite { enabled: boolean; sample_interval_seconds: number; maximum_devices: number; metrics: string[]; expected_revision: number }
+export interface NodeAcceleratorsAdmin { public_visible: boolean; state: "disabled" | "unsupported" | "unavailable" | "ok" | "partial"; error_code?: string; collector_version: string; observed_at?: string; policy: AcceleratorPolicy; devices: AcceleratorDeviceAdmin[] }

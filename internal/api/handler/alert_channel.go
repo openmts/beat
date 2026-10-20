@@ -28,8 +28,8 @@ func (h *AlertHandler) HandleListAlertChannels(w http.ResponseWriter, r *http.Re
 
 func (h *AlertHandler) HandleCreateAlertChannel(w http.ResponseWriter, r *http.Request) {
 	var body alertChannelRequest
-	if err := ParseJSON(r, &body); err != nil {
-		JSONError(w, http.StatusBadRequest, "invalid request body")
+	if err := ParseJSONStrict(r, &body); err != nil {
+		WriteBodyError(w, err)
 		return
 	}
 	if body.Name == "" || body.ChannelType == "" {
@@ -85,8 +85,8 @@ func (h *AlertHandler) parseAlertChannelUpdate(
 	r *http.Request,
 ) (alertChannelRequest, *model.AlertChannel, bool) {
 	var body alertChannelRequest
-	if err := ParseJSON(r, &body); err != nil {
-		JSONError(w, http.StatusBadRequest, "invalid request body")
+	if err := ParseJSONStrict(r, &body); err != nil {
+		WriteBodyError(w, err)
 		return body, nil, false
 	}
 	if body.Name == "" || body.ChannelType == "" {

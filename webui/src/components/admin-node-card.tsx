@@ -26,6 +26,7 @@ interface AdminNodeCardProps {
   onInstall: () => void
   onRevoke: () => void
   onRotate: () => void
+  onCalibrate: () => void
   canMoveUp: boolean
   canMoveDown: boolean
   onMoveUp: () => void
@@ -40,6 +41,7 @@ export function AdminNodeCard({
   onInstall,
   onRevoke,
   onRotate,
+  onCalibrate,
   canMoveUp,
   canMoveDown,
   onMoveUp,
@@ -153,6 +155,7 @@ export function AdminNodeCard({
           onRotate={onRotate}
           onRevoke={onRevoke}
           onDelete={onDelete}
+          onCalibrate={onCalibrate}
         />
       </CardFooter>
     </Card>

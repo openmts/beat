@@ -8,7 +8,7 @@ interface PageHeaderProps {
 
 export function PageHeader({ title, description, children }: PageHeaderProps) {
   return (
-    <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+    <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
       <div className="min-w-0">
         <h2 className="text-xl font-semibold tracking-tight">{title}</h2>
         {description ? (
@@ -16,7 +16,7 @@ export function PageHeader({ title, description, children }: PageHeaderProps) {
         ) : null}
       </div>
       {children ? (
-        <div className="flex shrink-0 flex-wrap items-center gap-2">{children}</div>
+        <div className="flex min-w-0 flex-wrap items-center gap-2">{children}</div>
       ) : null}
     </div>
   )

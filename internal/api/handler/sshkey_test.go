@@ -11,12 +11,14 @@ import (
 	"golang.org/x/crypto/ssh"
 
 	"github.com/beat/backend/internal/store"
+	"github.com/beat/backend/internal/testutil"
 )
 
 func TestHandleDeleteSSHKey_NotFound(t *testing.T) {
 	s := setupTestDB(t)
 	ctx := context.Background()
 	sshKeyStore := store.NewSSHKeyStore(s.DB)
+	sshKeyStore.SetSecrets(testutil.NewSecrets(t, s.DB))
 	h := NewSSHKeyHandler(sshKeyStore)
 
 	req := httptest.NewRequest(http.MethodDelete, "/api/ssh-keys/nonexistent", nil)
@@ -35,6 +37,7 @@ func TestHandleDeleteSSHKey_MissingID(t *testing.T) {
 	s := setupTestDB(t)
 	ctx := context.Background()
 	sshKeyStore := store.NewSSHKeyStore(s.DB)
+	sshKeyStore.SetSecrets(testutil.NewSecrets(t, s.DB))
 	h := NewSSHKeyHandler(sshKeyStore)
 
 	req := httptest.NewRequest(http.MethodDelete, "/api/ssh-keys/", nil)
@@ -52,10 +55,11 @@ func TestHandleListSSHKeys(t *testing.T) {
 	s := setupTestDB(t)
 	ctx := context.Background()
 	sshKeyStore := store.NewSSHKeyStore(s.DB)
+	sshKeyStore.SetSecrets(testutil.NewSecrets(t, s.DB))
 	h := NewSSHKeyHandler(sshKeyStore)
 
-	_, _ = sshKeyStore.CreateSSHKey(ctx, "key1", "rsa", "pub1", "priv1", "fp1")
-	_, _ = sshKeyStore.CreateSSHKey(ctx, "key2", "ed25519", "pub2", "priv2", "fp2")
+	_, _ = sshKeyStore.CreateSSHKey(ctx, store.SSHKeyInput{Name: "key1", KeyType: "rsa", PublicKey: "pub1", PrivateKey: "priv1", Fingerprint: "fp1"})
+	_, _ = sshKeyStore.CreateSSHKey(ctx, store.SSHKeyInput{Name: "key2", KeyType: "ed25519", PublicKey: "pub2", PrivateKey: "priv2", Fingerprint: "fp2"})
 
 	req := httptest.NewRequest(http.MethodGet, "/api/ssh-keys", nil)
 	req = req.WithContext(ctx)
@@ -73,6 +77,7 @@ func TestHandleCreateSSHKey(t *testing.T) {
 		s := setupTestDB(t)
 		ctx := context.Background()
 		sshKeyStore := store.NewSSHKeyStore(s.DB)
+		sshKeyStore.SetSecrets(testutil.NewSecrets(t, s.DB))
 		h := NewSSHKeyHandler(sshKeyStore)
 
 		body := `{"name": "test-key", "key_type": "rsa", "public_key": "ssh-rsa AAA...", "private_key": "-----BEGIN RSA PRIVATE KEY-----"}`
@@ -91,10 +96,12 @@ func TestHandleCreateSSHKey(t *testing.T) {
 	t.Run("creates public-only ssh key", func(t *testing.T) {
 		s := setupTestDB(t)
 		sshKeyStore := store.NewSSHKeyStore(s.DB)
+		sshKeyStore.SetSecrets(testutil.NewSecrets(t, s.DB))
 		h := NewSSHKeyHandler(sshKeyStore)
 
 		body := `{"name":"public-only","key_type":"ed25519","public_key":"ssh-ed25519 AAAApublic"}`
 		req := httptest.NewRequest(http.MethodPost, "/api/ssh-keys", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
 
 		h.HandleCreateSSHKey(w, req)
@@ -111,6 +118,7 @@ func TestHandleCreateSSHKey(t *testing.T) {
 		s := setupTestDB(t)
 		ctx := context.Background()
 		sshKeyStore := store.NewSSHKeyStore(s.DB)
+		sshKeyStore.SetSecrets(testutil.NewSecrets(t, s.DB))
 		h := NewSSHKeyHandler(sshKeyStore)
 
 		body := `{"name": "test-key"}`
@@ -130,6 +138,7 @@ func TestHandleCreateSSHKey(t *testing.T) {
 		s := setupTestDB(t)
 		ctx := context.Background()
 		sshKeyStore := store.NewSSHKeyStore(s.DB)
+		sshKeyStore.SetSecrets(testutil.NewSecrets(t, s.DB))
 		h := NewSSHKeyHandler(sshKeyStore)
 
 		body := `not-json`
@@ -151,6 +160,7 @@ func TestHandleGenerateSSHKey(t *testing.T) {
 		s := setupTestDB(t)
 		ctx := context.Background()
 		sshKeyStore := store.NewSSHKeyStore(s.DB)
+		sshKeyStore.SetSecrets(testutil.NewSecrets(t, s.DB))
 		h := NewSSHKeyHandler(sshKeyStore)
 
 		body := `{"name": "rsa-key", "key_type": "rsa"}`
@@ -171,6 +181,7 @@ func TestHandleGenerateSSHKey(t *testing.T) {
 		s := setupTestDB(t)
 		ctx := context.Background()
 		sshKeyStore := store.NewSSHKeyStore(s.DB)
+		sshKeyStore.SetSecrets(testutil.NewSecrets(t, s.DB))
 		h := NewSSHKeyHandler(sshKeyStore)
 
 		body := `{"name": "ed25519-key", "key_type": "ed25519"}`
@@ -191,6 +202,7 @@ func TestHandleGenerateSSHKey(t *testing.T) {
 		s := setupTestDB(t)
 		ctx := context.Background()
 		sshKeyStore := store.NewSSHKeyStore(s.DB)
+		sshKeyStore.SetSecrets(testutil.NewSecrets(t, s.DB))
 		h := NewSSHKeyHandler(sshKeyStore)
 
 		body := `{"name": "default-key"}`
@@ -210,6 +222,7 @@ func TestHandleGenerateSSHKey(t *testing.T) {
 		s := setupTestDB(t)
 		ctx := context.Background()
 		sshKeyStore := store.NewSSHKeyStore(s.DB)
+		sshKeyStore.SetSecrets(testutil.NewSecrets(t, s.DB))
 		h := NewSSHKeyHandler(sshKeyStore)
 
 		body := `{"name": "bad-key", "key_type": "dsa"}`
@@ -229,6 +242,7 @@ func TestHandleGenerateSSHKey(t *testing.T) {
 		s := setupTestDB(t)
 		ctx := context.Background()
 		sshKeyStore := store.NewSSHKeyStore(s.DB)
+		sshKeyStore.SetSecrets(testutil.NewSecrets(t, s.DB))
 		h := NewSSHKeyHandler(sshKeyStore)
 
 		body := `{"key_type": "rsa"}`
@@ -249,9 +263,10 @@ func TestHandleDeleteSSHKey(t *testing.T) {
 	s := setupTestDB(t)
 	ctx := context.Background()
 	sshKeyStore := store.NewSSHKeyStore(s.DB)
+	sshKeyStore.SetSecrets(testutil.NewSecrets(t, s.DB))
 	h := NewSSHKeyHandler(sshKeyStore)
 
-	k, err := sshKeyStore.CreateSSHKey(ctx, "to-delete", "rsa", "pub", "priv", "fp")
+	k, err := sshKeyStore.CreateSSHKey(ctx, store.SSHKeyInput{Name: "to-delete", KeyType: "rsa", PublicKey: "pub", PrivateKey: "priv", Fingerprint: "fp"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -294,9 +309,10 @@ func TestHandleGetSSHKey(t *testing.T) {
 	s := setupTestDB(t)
 	ctx := context.Background()
 	sshKeyStore := store.NewSSHKeyStore(s.DB)
+	sshKeyStore.SetSecrets(testutil.NewSecrets(t, s.DB))
 	h := NewSSHKeyHandler(sshKeyStore)
 
-	k, err := sshKeyStore.CreateSSHKey(ctx, "detail-key", "rsa", "ssh-rsa public", "PRIVATE-KEY-CONTENT", "fp")
+	k, err := sshKeyStore.CreateSSHKey(ctx, store.SSHKeyInput{Name: "detail-key", KeyType: "rsa", PublicKey: "ssh-rsa public", PrivateKey: "PRIVATE-KEY-CONTENT", Fingerprint: "fp"})
 	if err != nil {
 		t.Fatalf("create key: %v", err)
 	}
@@ -348,6 +364,7 @@ func TestHandleGetSSHKey(t *testing.T) {
 func TestHandleGetSSHKeyStoreError(t *testing.T) {
 	s := setupTestDB(t)
 	sshKeyStore := store.NewSSHKeyStore(s.DB)
+	sshKeyStore.SetSecrets(testutil.NewSecrets(t, s.DB))
 	h := NewSSHKeyHandler(sshKeyStore)
 	if err := s.Close(); err != nil {
 		t.Fatalf("close db: %v", err)

@@ -55,15 +55,18 @@ type AlertDeliveryStatus struct {
 }
 
 type AlertEvent struct {
-	ID             string      `json:"id"`
-	RuleID         string      `json:"rule_id"`
-	NodeID         string      `json:"node_id"`
-	Message        string      `json:"message"`
-	Value          float64     `json:"value"`
-	Status         AlertStatus `json:"status"`
-	TriggeredAt    time.Time   `json:"triggered_at"`
-	AcknowledgedAt *time.Time  `json:"acknowledged_at,omitempty"`
-	ResolvedAt     *time.Time  `json:"resolved_at"`
+	DeviceID         string      `json:"device_id,omitempty"`
+	DeviceName       string      `json:"device_name,omitempty"`
+	ResolutionReason string      `json:"resolution_reason,omitempty"`
+	ID               string      `json:"id"`
+	RuleID           string      `json:"rule_id"`
+	NodeID           string      `json:"node_id"`
+	Message          string      `json:"message"`
+	Value            float64     `json:"value"`
+	Status           AlertStatus `json:"status"`
+	TriggeredAt      time.Time   `json:"triggered_at"`
+	AcknowledgedAt   *time.Time  `json:"acknowledged_at,omitempty"`
+	ResolvedAt       *time.Time  `json:"resolved_at"`
 
 	// RuleName, NodeName, Metric and Severity carry extra context for
 	// notification templates. They are populated at delivery time and are not
@@ -72,4 +75,9 @@ type AlertEvent struct {
 	NodeName string        `json:"node_name,omitempty"`
 	Metric   string        `json:"metric,omitempty"`
 	Severity AlertSeverity `json:"severity,omitempty"`
+
+	// RuleNameSnapshot 与 NodeNameSnapshot 是事件创建时的显示名快照，持久化在应用库里。
+	// 实体删除后快照仍然保留；空串表示创建时实体已不存在，界面渲染“已删除”，绝不回退成 ID。
+	RuleNameSnapshot string `json:"rule_name_snapshot,omitempty"`
+	NodeNameSnapshot string `json:"node_name_snapshot,omitempty"`
 }

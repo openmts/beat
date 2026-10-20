@@ -51,7 +51,7 @@ func (applier *Applier) preserveOld(
 		if _, err := os.Lstat(target.live); os.IsNotExist(err) {
 			continue
 		} else if err != nil {
-			return nil, nil, fmt.Errorf("inspect restore target %s: %w", target.live, err)
+			return nil, nil, errors.Join(fmt.Errorf("inspect restore target %s: %w", target.live, err), applier.restoreOld(moved, rollbacks))
 		}
 		rollback := target.live + ".restore-rollback-" + token
 		if err := applier.rename(target.live, rollback); err != nil {

@@ -1,6 +1,6 @@
 import { fireEvent, render, renderHook, screen, waitFor } from "@testing-library/react"
 import { beforeEach, describe, expect, it, vi } from "vitest"
-import { LocaleProvider, useLocale } from "@/context/locale"
+import { LocaleProvider, useLocale, useOptionalLocale } from "@/context/locale"
 import { ThemeProvider, useTheme } from "@/context/theme"
 import { AuthProvider, useAuth } from "@/context/auth"
 import * as security from "@/lib/security-api"
@@ -41,18 +41,26 @@ describe("application contexts", () => {
     vi.mocked(security.logoutAdmin).mockResolvedValue()
   })
 
-  it("persists and translates locale", () => {
+  // 语言分片按需加载，切换与首屏恢复都要等分片到位后再断言文案。
+  it("persists and translates locale", async () => {
     render(<LocaleProvider><LocaleHarness /></LocaleProvider>)
     expect(screen.getByRole("button")).toHaveTextContent("Dashboard")
     fireEvent.click(screen.getByRole("button"))
-    expect(screen.getByRole("button")).toHaveTextContent("仪表盘")
+    await waitFor(() => { expect(screen.getByRole("button")).toHaveTextContent("仪表盘") })
     expect(localStorage.getItem("locale")).toBe("zh-CN")
   })
 
-  it("restores locale and rejects use outside provider", () => {
+  it("offers a non-throwing locale hook for shared UI components", async () => {
+    expect(renderHook(() => useOptionalLocale()).result.current).toBeNull()
+    const { result } = renderHook(() => useOptionalLocale(), { wrapper: LocaleProvider })
+    expect(result.current?.locale).toBe("en")
+    await waitFor(() => { expect(result.current?.t("app.close")).toBe("Close") })
+  })
+
+  it("restores locale and rejects use outside provider", async () => {
     localStorage.setItem("locale", "zh-CN")
     render(<LocaleProvider><LocaleHarness /></LocaleProvider>)
-    expect(screen.getByRole("button")).toHaveTextContent("仪表盘")
+    await waitFor(() => { expect(screen.getByRole("button")).toHaveTextContent("仪表盘") })
     expect(() => renderHook(() => useLocale())).toThrow("LocaleProvider")
   })
 

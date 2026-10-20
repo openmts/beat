@@ -70,8 +70,7 @@ func (a *Alerter) trafficUsagePercent(
 		return 0, false, nil
 	}
 	now := a.now()
-	start, end := model.BillingPeriod(now, node.TrafficResetDay)
-	totals, err := a.mtsStore.QueryTrafficUsage(ctx, node.ID, start, end)
+	totals, err := a.cycleTotals(ctx, node, now)
 	if err != nil {
 		return 0, false, fmt.Errorf("query traffic usage: %w", err)
 	}
@@ -88,6 +87,16 @@ func (a *Alerter) trafficUsagePercent(
 		return 0, false, nil
 	}
 	return *summary.Percentage, true, nil
+}
+
+// cycleTotals 优先使用校准感知解析器；未注入时退回原始 MTS 周期聚合。
+func (a *Alerter) cycleTotals(ctx context.Context, node *model.Node, now time.Time) (model.TrafficTotals, error) {
+	if a.trafficCycle != nil {
+		totals, _, err := a.trafficCycle.CycleTotals(ctx, *node, now)
+		return totals, err
+	}
+	start, end := model.BillingPeriod(now, node.TrafficResetDay)
+	return a.mtsStore.QueryTrafficUsage(ctx, node.ID, start, end)
 }
 
 func evaluateThreshold(value float64, operator string, threshold float64) bool {

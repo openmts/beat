@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -13,8 +12,8 @@ import (
 	"github.com/pquerna/otp/totp"
 
 	"github.com/beat/backend/internal/adminauth"
-	"github.com/beat/backend/internal/secretbox"
 	"github.com/beat/backend/internal/store"
+	"github.com/beat/backend/internal/testutil"
 )
 
 func TestRouterAdministratorSecurityLifecycle(t *testing.T) {
@@ -123,7 +122,7 @@ func TestRouterAdministratorSecurityLifecycle(t *testing.T) {
 		t.Fatalf("delete administrator status = %d, body = %s", deleted.Code, deleted.Body.String())
 	}
 	audit := requestRouterWithCookie(router, http.MethodGet, "/api/v1/admin/audit-events?limit=20", "", cookie, "")
-	if audit.Code != http.StatusOK || !strings.Contains(audit.Body.String(), "admin.mutation") {
+	if audit.Code != http.StatusOK || !strings.Contains(audit.Body.String(), "admin.totp.enable") {
 		t.Fatalf("audit status = %d, body = %s", audit.Code, audit.Body.String())
 	}
 	logout := requestRouterWithCookie(router, http.MethodPost, "/api/v1/auth/logout", "", cookie, "http://example.com")
@@ -172,6 +171,7 @@ func TestRouterSecureCookieAndHeaders(t *testing.T) {
 	request := httptest.NewRequest(http.MethodPost, "https://example.com/api/v1/auth/bootstrap",
 		strings.NewReader(`{"bootstrap_token":"admin-secret","username":"owner","display_name":"Owner",`+
 			`"password":"correct horse battery staple"}`))
+	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("Origin", "https://example.com")
 	response := httptest.NewRecorder()
 	router.ServeHandler().ServeHTTP(response, request)
@@ -202,10 +202,7 @@ func setupSessionRouterWithOptions(t *testing.T, options ...RouterOption) *Route
 		randomData[index] = byte(index)
 	}
 	random := bytes.NewReader(randomData)
-	secrets, err := secretbox.New(filepath.Join(t.TempDir(), "admin-data.key"), random)
-	if err != nil {
-		t.Fatalf("new secret box: %v", err)
-	}
+	secrets := testutil.NewSecrets(t, sqlite.DB)
 	adminStore := store.NewAdminStore(sqlite.DB)
 	security, err := adminauth.NewService(adminauth.ServiceConfig{
 		Store: adminStore, Secrets: secrets, LegacyToken: "admin-secret", Random: random,
@@ -227,6 +224,7 @@ func requestRouter(
 	router *Router, method, path, body, authorization, origin string,
 ) *httptest.ResponseRecorder {
 	request := httptest.NewRequest(method, "http://example.com"+path, strings.NewReader(body))
+	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("Authorization", authorization)
 	request.Header.Set("Origin", origin)
 	response := httptest.NewRecorder()
@@ -238,6 +236,7 @@ func requestRouterWithCookie(
 	router *Router, method, path, body string, cookie *http.Cookie, origin string,
 ) *httptest.ResponseRecorder {
 	request := httptest.NewRequest(method, "http://example.com"+path, strings.NewReader(body))
+	request.Header.Set("Content-Type", "application/json")
 	request.AddCookie(cookie)
 	request.Header.Set("Origin", origin)
 	response := httptest.NewRecorder()

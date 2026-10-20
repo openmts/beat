@@ -98,6 +98,40 @@ describe("custom metrics", () => {
     await waitFor(() => expect(api.setCustomMetricNodes).toHaveBeenCalledWith("m1", ["n1"]))
   })
 
+  it("shows collection health next to the history", async () => {
+    vi.mocked(api.listCustomMetricNodes).mockResolvedValue(["n1"])
+    vi.mocked(api.getCustomMetricHealth).mockResolvedValue({
+      metric: { id: "m1", name: "http_latency", enabled: true, interval_seconds: 30, stale_after_seconds: 90 },
+      nodes: [
+        { node_id: "n1", state: "ok", value: 12.5, age_seconds: 12, cadence_ms: 30000,
+          definition_version: "v1", sample_id: "abcdefgh-1111-4111-8111-111111111111" },
+        { node_id: "n2", state: "missing", age_seconds: 0 },
+      ],
+    })
+    vi.mocked(api.getNodeMetrics).mockResolvedValue({})
+    view()
+    fireEvent.click(await screen.findByRole("button", { name: "View data" }))
+    expect(await screen.findByText("Collection health")).toBeInTheDocument()
+    expect(await screen.findByText("Collecting")).toBeInTheDocument()
+    expect(screen.getByText("No data")).toBeInTheDocument()
+    expect(screen.getByText("Primary")).toBeInTheDocument()
+    expect(screen.getByText("n2")).toBeInTheDocument()
+    expect(screen.getByText(/Last sample 12s/)).toBeInTheDocument()
+    expect(screen.getByText(/No measurement received/)).toBeInTheDocument()
+  })
+
+  it("keeps the history rendered when collection health is unavailable", async () => {
+    vi.mocked(api.listCustomMetricNodes).mockResolvedValue(["n1"])
+    vi.mocked(api.getCustomMetricHealth).mockRejectedValue(new Error("503"))
+    vi.mocked(api.getNodeMetrics).mockResolvedValue({
+      "custom_http_latency": [{ timestamp: 1700000000, value: 12.5 }],
+    })
+    view()
+    fireEvent.click(await screen.findByRole("button", { name: "View data" }))
+    expect(await screen.findByTestId("metrics-chart")).toBeInTheDocument()
+    expect(screen.queryByText("Collection health")).not.toBeInTheDocument()
+  })
+
   it("views collected data", async () => {
     vi.mocked(api.listCustomMetricNodes).mockResolvedValue(["n1"])
     vi.mocked(api.getNodeMetrics).mockResolvedValue({

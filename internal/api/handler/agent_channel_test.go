@@ -41,10 +41,10 @@ func (f *fakeChannelOps) RegisterAgent(_ context.Context, nodeID string) ([]mode
 	return f.pending, nil
 }
 
-func (f *fakeChannelOps) CompleteAgentTask(_ context.Context, taskID string, status string, _ string) error {
+func (f *fakeChannelOps) CompleteAgentTask(_ context.Context, result model.AgentTaskResult) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.completed = append(f.completed, model.AgentTaskResult{TaskID: taskID, Success: status == model.AgentTaskStatusDone})
+	f.completed = append(f.completed, result)
 	return f.completeErr
 }
 

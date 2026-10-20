@@ -3,6 +3,7 @@ import { LoaderCircleIcon, PencilIcon, PlusIcon, SendIcon, Trash2Icon } from "lu
 import { useAlertChannels, useManagedNodes, useTrafficReportSchedules } from "@/hooks/use-api"
 import * as api from "@/lib/api"
 import { useLocale } from "@/context/locale"
+import { formatDateTime } from "@/lib/intl-format"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -200,8 +201,8 @@ function ScopeSummary(props: {
 
 function DeliveryBadge(props: { status?: TrafficReportDeliveryStatus; t: (key: string) => string }) {
   if (!props.status) return <Badge variant="secondary">{props.t("traffic_report.delivery.never")}</Badge>
-  const variant = props.status.state === "failed" ? "destructive" : props.status.state === "partial" ? "outline" : "default"
-  return <Badge variant={variant}>{props.t(`traffic_report.delivery.${props.status.state}`)} · {props.status.delivered}/{props.status.total}</Badge>
+  const variant = props.status.state === "failed" ? "destructive" : props.status.state === "success" ? "default" : "outline"
+  return <Badge variant={variant} title={props.status.message}>{props.t(`traffic_report.delivery.${props.status.state}`)}{props.status.total > 0 ? ` · ${props.status.delivered}/${props.status.total}` : ""}</Badge>
 }
 
 function scopeNames(nodes: ManagedNode[], channels: AlertChannel[]) {
@@ -216,5 +217,5 @@ function readableNames(ids: string[], names: Map<string, string>, t: (key: strin
 }
 
 function formatDate(value: string, locale: string): string {
-  return value ? new Date(value).toLocaleString(locale) : "--"
+  return value ? formatDateTime(locale, value) : "--"
 }

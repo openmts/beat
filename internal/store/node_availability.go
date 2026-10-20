@@ -21,3 +21,10 @@ func (s *NodeStore) MarkStaleNodesOffline(ctx context.Context, cutoff time.Time)
 	}
 	return updated, nil
 }
+
+func (s *NodeStore) MarkNodeStaleOffline(ctx context.Context, nodeID string, cutoff time.Time) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE nodes SET status=?,updated_at=?
+		WHERE id=? AND status=? AND last_seen IS NOT NULL AND last_seen<?`,
+		model.NodeStatusOffline, model.NowUTC(), nodeID, model.NodeStatusOnline, cutoff)
+	return err
+}

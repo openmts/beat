@@ -5,10 +5,17 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react"
 import { getSiteSettings } from "@/lib/api"
+import {
+  createPublicTelemetryReporter,
+  publicTelemetryConfig,
+  type PublicTelemetryEvent,
+  type PublicTelemetrySurface,
+} from "@/lib/public-telemetry"
 import type { SiteSettings } from "@/types"
 
 export const defaultSiteSettings: SiteSettings = {
@@ -17,8 +24,9 @@ export const defaultSiteSettings: SiteSettings = {
   logo_url: "",
   favicon_url: "/favicon.svg",
   default_theme: "system",
-  show_ip_addresses: true,
+  public_address_mode: "hidden",
   show_network_quality: true,
+  show_accelerators: true,
   updated_at: "",
 }
 
@@ -28,6 +36,7 @@ interface SiteSettingsContextValue {
   error: string | null
   applySettings: (settings: SiteSettings) => void
   reload: () => Promise<void>
+  reportInteraction: (event: PublicTelemetryEvent, surface: PublicTelemetrySurface) => void
 }
 
 const fallbackContext: SiteSettingsContextValue = {
@@ -36,6 +45,7 @@ const fallbackContext: SiteSettingsContextValue = {
   error: null,
   applySettings: () => undefined,
   reload: async () => undefined,
+  reportInteraction: () => undefined,
 }
 
 const SiteSettingsContext = createContext<SiteSettingsContextValue>(fallbackContext)
@@ -44,6 +54,7 @@ export function SiteSettingsProvider({ children }: { children: ReactNode }) {
   const [settings, setSettings] = useState(defaultSiteSettings)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const reporter = useRef(createPublicTelemetryReporter())
 
   const reload = useCallback(async () => {
     setLoading(true)
@@ -63,13 +74,22 @@ export function SiteSettingsProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => applyDocumentMetadata(settings), [settings])
 
+  useEffect(() => {
+    reporter.current.configure(publicTelemetryConfig(settings))
+  }, [settings])
+
+  const reportInteraction = useCallback((event: PublicTelemetryEvent, surface: PublicTelemetrySurface) => {
+    reporter.current.report(event, surface)
+  }, [])
+
   const value = useMemo(() => ({
     settings,
     loading,
     error,
     applySettings: setSettings,
     reload,
-  }), [error, loading, reload, settings])
+    reportInteraction,
+  }), [error, loading, reload, reportInteraction, settings])
 
   return <SiteSettingsContext.Provider value={value}>{children}</SiteSettingsContext.Provider>
 }

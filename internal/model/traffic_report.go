@@ -10,6 +10,8 @@ const (
 	TrafficReportDeliverySuccess = "success"
 	TrafficReportDeliveryPartial = "partial"
 	TrafficReportDeliveryFailed  = "failed"
+	TrafficReportDeliveryQueued  = "queued"
+	TrafficReportDeliveryUnknown = "unknown"
 )
 
 type TrafficReportSchedule struct {
@@ -35,11 +37,12 @@ type TrafficReportSchedule struct {
 }
 
 type TrafficReportDeliveryStatus struct {
-	State       string    `json:"state"`
-	Message     string    `json:"message"`
-	Delivered   int       `json:"delivered"`
-	Total       int       `json:"total"`
-	DeliveredAt time.Time `json:"delivered_at"`
+	State       string     `json:"state"`
+	Message     string     `json:"message"`
+	Delivered   int        `json:"delivered"`
+	Total       int        `json:"total"`
+	DeliveredAt time.Time  `json:"delivered_at,omitzero"`
+	QueuedAt    *time.Time `json:"queued_at,omitempty"`
 }
 
 type TrafficReportPeriod struct {

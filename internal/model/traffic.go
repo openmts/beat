@@ -45,6 +45,11 @@ type TrafficSummary struct {
 	NextReset    time.Time  `json:"next_reset"`
 	TrackedSince *time.Time `json:"tracked_since"`
 	Status       string     `json:"status"`
+
+	// AccountingMode/CalibratedAt 是校准感知的结算元数据：raw 表示未调整，
+	// calibrated 表示当前周期存在生效的账面校准。只有公共/管理摘要下发它们。
+	AccountingMode string     `json:"accounting_mode,omitempty"`
+	CalibratedAt   *time.Time `json:"calibrated_at,omitempty"`
 }
 
 func (policy TrafficPolicy) Validate() error {

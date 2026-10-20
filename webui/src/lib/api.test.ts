@@ -42,7 +42,7 @@ describe("API client", () => {
 
   it("covers all resource operations", async () => {
     mock.onAny().reply((config) => {
-      if (config.method === "delete") return [204]
+      if (config.method === "delete") return [202, { code: 202, data: { job: { id: "job" }, replayed: false } }]
       return [200, { code: 200, data: config.url?.includes("metrics") ? {} : [] }]
     })
 
@@ -50,8 +50,8 @@ describe("API client", () => {
     await client.getSiteSettings()
     await client.updateSiteSettings({
       site_title: "Beat", site_description: "Status", logo_url: "", favicon_url: "",
-      default_theme: "system", show_ip_addresses: true, show_network_quality: true,
-      updated_at: "",
+      default_theme: "system", public_address_mode: "full", show_network_quality: true,
+      show_accelerators: true, updated_at: "",
     })
     await client.getMaintenanceOverview()
     await client.updateMaintenanceSettings({
@@ -62,7 +62,7 @@ describe("API client", () => {
     await client.getNode("node")
     await client.updateNode("node", { alias: "alias" })
     await client.updateNodeSort(["node"])
-    await client.deleteNode("node")
+    await client.deleteNode("node", "Primary", "11111111-1111-4111-8111-111111111111")
     await client.listManagedNodes()
     await client.createManagedNode({
       name: "node", host: "host", port: 22, server_url: "https://beat.example",
@@ -86,8 +86,9 @@ describe("API client", () => {
     await client.updateAlertRule("rule", { enabled: false })
     await client.deleteAlertRule("rule")
     await client.listAlertChannels()
-    await client.createAlertChannel({ name: "channel", channel_type: "webhook", config: "https://example.test", enabled: true })
-    await client.updateAlertChannel("channel", { enabled: false })
+    const channelWrite = { name: "channel", channel_type: "webhook" as const, config: { endpoint: "https://example.test" }, enabled: true, expected_revision: 0, event_kinds: [], template_subject: "", template_text: "" }
+    await client.createAlertChannel(channelWrite)
+    await client.updateAlertChannel("channel", { ...channelWrite, enabled: false, expected_revision: 1 })
     await client.testAlertChannel("channel")
     await client.deleteAlertChannel("channel")
     await client.listAlertEvents()
@@ -101,6 +102,35 @@ describe("API client", () => {
     await client.updateTrafficReportSchedule("report", report)
     await client.testTrafficReportSchedule("report")
     await client.deleteTrafficReportSchedule("report")
+  })
+
+  it("sends bounded alert event filters and unwraps the cursor page", async () => {
+    mock.onGet("/api/v1/alerts/events").reply((config) => {
+      expect(config.params).toMatchObject({
+        status: "resolved", rule_id: "rule-1", node_id: "node-1", cursor: "page-1", limit: 25,
+      })
+      return [200, { code: 200, data: { items: [{ id: "event-1" }], next_cursor: "page-2" } }]
+    })
+    await expect(client.listAlertEvents({
+      status: "resolved", ruleId: "rule-1", nodeId: "node-1", cursor: "page-1", limit: 25,
+    })).resolves.toEqual({ items: [{ id: "event-1" }], next_cursor: "page-2" })
+  })
+
+  it("drops read-only public telemetry from site settings updates", async () => {
+    const settings = {
+      site_title: "Beat", site_description: "Status", logo_url: "", favicon_url: "",
+      default_theme: "system" as const, public_address_mode: "full" as const,
+      show_network_quality: false, show_accelerators: false, updated_at: "",
+      public_telemetry: { enabled: false, allowed_events: ["page_view"], sample_ceiling: 1000 },
+    }
+    mock.onPut("/api/v1/settings/site").reply((config) => {
+      const body = JSON.parse(String(config.data))
+      expect(body.public_telemetry).toBeUndefined()
+      expect(body.show_network_quality).toBe(false)
+      expect(body.show_accelerators).toBe(false)
+      return [200, { code: 200, data: { ...settings, show_network_quality: false } }]
+    })
+    await expect(client.updateSiteSettings(settings)).resolves.toMatchObject({ show_network_quality: false })
   })
 
   it("falls back to generic Axios errors", async () => {

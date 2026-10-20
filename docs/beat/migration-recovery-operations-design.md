@@ -2,7 +2,11 @@
 
 Updated: 2026-07-30
 
-Status: reviewed design; implementation requires explicit approval
+Status: reviewed design; owner approved implementation on 2026-10-15 (blanket
+approval of all pending items). `migration-status`, the startup marker,
+`migration-check` and the owner-only read-only Operations section are implemented
+in the current worktree; host drills, the deferred automated test batch and the
+fault-injection matrix remain.
 
 ## Goal and competitor classification
 
@@ -160,4 +164,43 @@ Implementation requires separate explicit approval for the local status/check
 commands, the private migration status marker, owner-only read-only UI, startup
 marker writes, backup-copy preflight, deployment/runbook behavior, and the
 explicit decision to keep arbitrary DSN/driver changes and online migration
-actions out of Beat.
+actions out of Beat. That approval was granted on 2026-10-15.
+
+## Implementation notes, 2026-10-15
+
+- `beat-server admin-recovery migration-check --data-dir DIR [--db-path FILE]
+  --backup FILE` takes the same data-directory lease as startup, so a running
+  server reports `lock_conflict` instead of reading live bytes. It then validates
+  the exact archive (`internal/backup.InspectArchive`), the archived SQLite
+  integrity and ledger, the supported source/target range, the free-space floor
+  (`2 x archive + 256 MiB`), and pending restore state.
+- The check copies the archived `platform.sqlite` into private `0700` staging,
+  replays the canonical migrations on that copy, and verifies integrity,
+  `foreign_key_check`, ledger continuity (`ValidateSnapshotSchema`) and
+  table/index inventory equivalence against a freshly created database. It never
+  opens the live database file; live size/mtime/inode fingerprints are compared
+  before and after and reported as `live_database_unchanged`.
+- Output is a single bounded JSON report with fixed codes
+  (`archive_unreadable`, `archive_incompatible`, `insufficient_space`,
+  `schema_mismatch`, `migration_failed`, `lock_conflict`, `pending_restore`,
+  plus the shared ledger/integrity/future-schema codes). It contains no SQL, row
+  IDs, secrets, digests, DSNs, private paths or archive payloads, and removes only
+  its own generated staging.
+- Schema equivalence compares the ordered table/index/view/trigger inventory
+  rather than DDL text: the post-migration secret sanitize step legitimately
+  rewrites column definitions (for example `ssh_keys`) on both live and restored
+  databases, so text comparison would report a false mismatch.
+- `GET /api/v1/admin/migration` returns the owner-only read-only view:
+  build version, state/code, current and supported schema range, latest completed
+  migration, pending migrations, restore pending/staged flags, application and
+  MTS health, the last sanitized failure marker, and a runbook anchor. The
+  Operations surface renders it as a `Migration and recovery` tab with no
+  mutation control.
+- Audit of the read route reuses the generic `admin.read` row; there is no
+  mutation endpoint, no network recovery listener and no restart action.
+
+Not yet complete and therefore not claimed: automated coverage for every
+supported source version, corruption/BUSY/read-only/symlink/low-space fault
+injection, crash-at-every-phase marker tests, browser accessibility checks, the
+deferred coverage batch and the host-level
+backup/migrate/fail/rollback/retry drills.

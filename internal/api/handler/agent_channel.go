@@ -19,6 +19,7 @@ import (
 const (
 	agentTaskResultMessage = "task_result"
 	agentChannelPingEvery  = 30 * time.Second
+	agentChannelWriteQueue = 16
 	// 读超时为 ping 周期的 3 倍；agent 收到 ping 会回复 pong 续期。
 	agentChannelReadTimeout  = 90 * time.Second
 	agentChannelWriteTimeout = 30 * time.Second
@@ -28,15 +29,16 @@ const (
 type AgentChannelOperations interface {
 	EnqueueAuthorizedKeyTask(context.Context, string, string) (*model.AgentTask, error)
 	RegisterAgent(context.Context, string) ([]model.AgentTask, error)
-	CompleteAgentTask(context.Context, string, string, string) error
+	CompleteAgentTask(context.Context, model.AgentTaskResult) error
 	// RefreshCustomMetrics enqueues a registration task so the agent rebuilds
 	// its local custom metric registry on every (re)connect.
 	RefreshCustomMetrics(context.Context, string) (*model.AgentTask, error)
 }
 
 type AgentChannelHandler struct {
-	operations AgentChannelOperations
-	hub        *service.AgentHub
+	operations     AgentChannelOperations
+	hub            *service.AgentHub
+	verifyIdentity func(context.Context, model.AgentIdentity) error
 }
 
 func NewAgentChannelHandler(operations AgentChannelOperations, hub *service.AgentHub) *AgentChannelHandler {
@@ -46,11 +48,18 @@ func NewAgentChannelHandler(operations AgentChannelOperations, hub *service.Agen
 // agentWebSocketConn adapts a websocket connection for the AgentHub and pumps
 // outbound task messages from a channel.
 type agentWebSocketConn struct {
-	conn    *websocket.Conn
-	writeCh chan []byte
+	conn      *websocket.Conn
+	writeCh   chan []byte
+	authorize func(context.Context) error
+	binding   string
 }
 
 func (c *agentWebSocketConn) WriteTask(ctx context.Context, task model.AgentTask) error {
+	if c.authorize != nil {
+		if err := c.authorize(ctx); err != nil {
+			return err
+		}
+	}
 	message, err := service.NewTaskMessage(task)
 	if err != nil {
 		return err
@@ -91,44 +100,36 @@ func (h *AgentChannelHandler) HandleAgentWebSocket(w http.ResponseWriter, r *htt
 }
 
 func (h *AgentChannelHandler) serveConnection(ctx context.Context, nodeID string, conn *websocket.Conn) {
-	wrapped := &agentWebSocketConn{conn: conn, writeCh: make(chan []byte, 16)}
-	h.hub.Register(nodeID, wrapped)
-	defer h.hub.Unregister(nodeID, wrapped)
-
-	pending, err := h.operations.RegisterAgent(ctx, nodeID)
-	if err != nil {
-		slog.WarnContext(ctx, "agent channel register failed",
-			"node_id", nodeID, "error", err)
-		_ = conn.Close()
-		return
-	}
-	for _, task := range pending {
-		if err := wrapped.WriteTask(ctx, task); err != nil {
+	ctx, cancel := context.WithCancel(ctx)
+	wrapped := &agentWebSocketConn{conn: conn, writeCh: make(chan []byte, agentChannelWriteQueue)}
+	if identity, ok := middleware.AgentIdentity(ctx); ok && h.verifyIdentity != nil {
+		wrapped.binding = agentCredentialBinding(identity)
+		wrapped.authorize = func(check context.Context) error { return h.verifyIdentity(check, identity) }
+		if err := wrapped.authorize(ctx); err != nil {
+			cancel()
+			_ = conn.Close()
 			return
 		}
 	}
-	// Re-sync the custom metric registry on every connect so agents that
-	// restarted (or lost the earlier registration task) rebuild their state.
-	task, refreshErr := h.operations.RefreshCustomMetrics(ctx, nodeID)
-	if refreshErr != nil {
-		slog.WarnContext(ctx, "agent channel refresh custom metrics failed",
-			"node_id", nodeID, "error", refreshErr)
+	h.hub.Register(nodeID, wrapped)
+	defer h.hub.Unregister(nodeID, wrapped)
+	writeDone, readDone := make(chan struct{}), make(chan struct{})
+	go func() { defer close(writeDone); writeLoop(ctx, wrapped); cancel(); _ = conn.Close() }()
+	go func() { defer close(readDone); h.receiveResults(ctx, nodeID, conn); cancel(); _ = conn.Close() }()
+	defer func() { cancel(); _ = conn.Close(); <-writeDone; <-readDone }()
+	if err := h.replayAgentTasks(ctx, nodeID, wrapped); err != nil {
+		slog.WarnContext(ctx, "agent task replay failed")
+		return
+	}
+	task, err := h.operations.RefreshCustomMetrics(ctx, nodeID)
+	if err != nil {
+		slog.WarnContext(ctx, "agent custom metric refresh failed")
 	} else if task != nil {
 		if err := wrapped.WriteTask(ctx, *task); err != nil {
 			return
 		}
 	}
-
-	writeDone := make(chan struct{})
-	go func() {
-		defer close(writeDone)
-		writeLoop(ctx, wrapped)
-	}()
-
-	h.receiveResults(ctx, nodeID, conn)
-
-	_ = conn.Close()
-	<-writeDone
+	<-ctx.Done()
 }
 
 // receiveResults reads task result messages until the connection closes.
@@ -149,15 +150,14 @@ func (h *AgentChannelHandler) receiveResults(
 		if err := websocket.JSON.Receive(conn, &message); err != nil {
 			return
 		}
+		if identity, ok := middleware.AgentIdentity(ctx); ok && h.verifyIdentity != nil {
+			if err := h.verifyIdentity(ctx, identity); err != nil {
+				return
+			}
+		}
 		switch {
 		case message.Type == agentTaskResultMessage && message.Result != nil:
-			status := model.AgentTaskStatusFailed
-			if message.Result.Success {
-				status = model.AgentTaskStatusDone
-			}
-			if err := h.operations.CompleteAgentTask(
-				ctx, message.Result.TaskID, status, message.Result.Error,
-			); err != nil {
+			if err := h.operations.CompleteAgentTask(ctx, *message.Result); err != nil {
 				slog.WarnContext(ctx, "record agent task result failed; task stays pending for redelivery",
 					"node_id", nodeID, "task_id", message.Result.TaskID, "error", err)
 			}
@@ -177,14 +177,27 @@ type agentChannelMessage struct {
 func writeLoop(ctx context.Context, conn *agentWebSocketConn) {
 	ping := time.NewTicker(agentChannelPingEvery)
 	defer ping.Stop()
+	authority := time.NewTicker(agentIdentityCheckEvery)
+	defer authority.Stop()
 	for {
 		select {
 		case message, ok := <-conn.writeCh:
 			if !ok {
 				return
 			}
+			if conn.authorize != nil {
+				if err := conn.authorize(ctx); err != nil {
+					return
+				}
+			}
 			if err := sendAgentFrame(conn.conn, message); err != nil {
 				return
+			}
+		case <-authority.C:
+			if conn.authorize != nil {
+				if err := conn.authorize(ctx); err != nil {
+					return
+				}
 			}
 		case <-ping.C:
 			if err := sendAgentFrame(conn.conn, []byte(`{"type":"ping"}`)); err != nil {

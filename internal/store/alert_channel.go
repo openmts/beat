@@ -22,8 +22,12 @@ func NewAlertChannelStore(db *sql.DB) *AlertChannelStore {
 }
 
 func (s *AlertChannelStore) GetAlertChannel(ctx context.Context, id string) (*model.AlertChannel, error) {
+	query, err := s.readQuery(ctx)
+	if err != nil {
+		return nil, err
+	}
 	row := s.db.QueryRowContext(ctx,
-		"SELECT "+alertChannelColumns+" FROM alert_channels WHERE id = ?",
+		query+" AND c.id = ?",
 		id,
 	)
 	channel, err := scanAlertChannel(row.Scan)
@@ -37,7 +41,11 @@ func (s *AlertChannelStore) GetAlertChannel(ctx context.Context, id string) (*mo
 }
 
 func (s *AlertChannelStore) ListAlertChannels(ctx context.Context) ([]model.AlertChannel, error) {
-	return s.listChannels(ctx, "SELECT "+alertChannelColumns+" FROM alert_channels ORDER BY created_at ASC")
+	query, err := s.readQuery(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return s.listChannels(ctx, query+" ORDER BY c.created_at ASC")
 }
 
 func (s *AlertChannelStore) CreateAlertChannel(
@@ -94,9 +102,24 @@ func (s *AlertChannelStore) DeleteAlertChannel(ctx context.Context, id string) e
 }
 
 func (s *AlertChannelStore) ListEnabledChannels(ctx context.Context) ([]model.AlertChannel, error) {
-	query := "SELECT " + alertChannelColumns +
-		" FROM alert_channels WHERE enabled = 1 ORDER BY created_at ASC"
-	return s.listChannels(ctx, query)
+	query, err := s.readQuery(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return s.listChannels(ctx, query+" AND c.enabled = 1 ORDER BY c.created_at ASC")
+}
+
+func (s *AlertChannelStore) readQuery(ctx context.Context) (string, error) {
+	var legacy int
+	err := s.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM pragma_table_info('alert_channels') WHERE name='config'").Scan(&legacy)
+	if err != nil {
+		return "", fmt.Errorf("querying channel storage: %w", err)
+	}
+	if legacy != 0 {
+		return "SELECT " + alertChannelColumns + " FROM alert_channels c WHERE 1=1", nil
+	}
+	return `SELECT c.id,c.name,c.channel_type,r.public_config_json,c.enabled,c.created_at,c.updated_at
+		FROM alert_channels c JOIN alert_channel_revisions r ON r.channel_id=c.id AND r.revision=c.current_revision WHERE c.deleted_at IS NULL`, nil
 }
 
 func (s *AlertChannelStore) listChannels(ctx context.Context, query string) ([]model.AlertChannel, error) {

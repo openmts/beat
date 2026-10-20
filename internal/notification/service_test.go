@@ -160,7 +160,7 @@ func TestServiceRecordsFailures(t *testing.T) {
 	}
 	channel := &model.AlertChannel{ID: "email", ChannelType: TypeEmail, Config: `{"host":"smtp.example.com","port":587,"from":"beat@example.com","to":["ops@example.com"],"security":"starttls"}`}
 	status, err := service.Send(t.Context(), channel, testEvent())
-	if err == nil || status.State != DeliveryFailed || status.Message != "smtp unavailable" {
+	if err == nil || status.State != DeliveryFailed || status.Message != "email request failed: transport error" {
 		t.Fatalf("status = %#v, error = %v", status, err)
 	}
 	if !status.DeliveredAt.Equal(service.now()) {
@@ -313,7 +313,7 @@ func TestServiceSendWebhookWithCustomHeaders(t *testing.T) {
 	}
 }
 
-func TestServiceSendWebhookErrorIncludesDetail(t *testing.T) {
+func TestServiceSendWebhookErrorIncludesStatusWithoutResponseBody(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
 		_, _ = w.Write([]byte("invalid signature"))
@@ -328,8 +328,8 @@ func TestServiceSendWebhookErrorIncludesDetail(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error")
 	}
-	if !strings.Contains(err.Error(), "400") || !strings.Contains(err.Error(), "invalid signature") {
-		t.Fatalf("error = %v, want status 400 and body detail", err)
+	if !strings.Contains(err.Error(), "400") || strings.Contains(err.Error(), "invalid signature") {
+		t.Fatalf("error = %v, want status 400 without untrusted response body", err)
 	}
 	if status.State != DeliveryFailed || status.Message != err.Error() {
 		t.Fatalf("status = %#v, want failed with detail", status)

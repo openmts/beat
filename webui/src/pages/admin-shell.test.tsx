@@ -18,6 +18,7 @@ vi.mock("@/context/auth", () => ({
 vi.mock("@/pages/admin/login", () => ({ default: () => <div>login-page</div> }))
 vi.mock("@/pages/admin/groups", () => ({ default: () => <div>groups-page</div> }))
 vi.mock("@/pages/admin/nodes", () => ({ default: () => <div>nodes-page</div> }))
+vi.mock("@/pages/admin/agent-setup", () => ({ default: () => <div>agent-setup-page</div> }))
 vi.mock("@/pages/admin/ssh-keys", () => ({ default: () => <div>keys-page</div> }))
 vi.mock("@/pages/admin/terminal", () => ({ default: () => <div>terminal-page</div> }))
 vi.mock("@/pages/admin/alerts", () => ({ default: () => <div>alerts-page</div> }))
@@ -49,19 +50,45 @@ describe("admin shell", () => {
     auth.authenticated = false
   })
 
-  it("gates and routes admin pages", () => {
+  it("gates and routes admin pages", async () => {
     const adminRoutes = <Routes><Route path="/admin/*" element={<Admin />} /></Routes>
     const { unmount } = render(providers(adminRoutes))
     expect(screen.getByText("login-page")).toBeInTheDocument()
     unmount()
     auth.authenticated = true
     render(providers(adminRoutes))
-    expect(screen.getByText("groups-page")).toBeInTheDocument()
+    expect(await screen.findByText("groups-page")).toBeInTheDocument()
+  })
+
+  // 管理端文案按语言分片懒加载：分片就绪前不得渲染内容（否则会先出现英文再跳转目标语言）。
+  it("waits for the admin locale shard before rendering", async () => {
+    localStorage.setItem("locale", "zh-CN")
+    auth.authenticated = true
+    render(providers(<Routes><Route path="/admin/*" element={<Admin />} /></Routes>))
+    expect(screen.queryByText("groups-page")).not.toBeInTheDocument()
+    expect(await screen.findByText("groups-page")).toBeInTheDocument()
+  })
+
+  it("renders a not-found page for an unknown authenticated admin route", async () => {
+    auth.authenticated = true
+    render(providers(<Routes><Route path="/admin/*" element={<Admin />} /></Routes>, "/admin/missing-page"))
+    expect(await screen.findByRole("heading", { name: "404" })).toBeInTheDocument()
   })
 
   it("renders layout outlet", () => {
     render(providers(<Routes><Route element={<AdminLayout />}><Route path="/admin/groups" element={<div>outlet-page</div>} /></Route></Routes>))
     expect(screen.getByText("outlet-page")).toBeInTheDocument()
+  })
+
+  it("requires login before opening the node setup guide", async () => {
+    const adminRoutes = <Routes><Route path="/admin/*" element={<Admin />} /></Routes>
+    const { unmount } = render(providers(adminRoutes, "/admin/agent-setup"))
+    expect(screen.getByText("login-page")).toBeInTheDocument()
+    expect(screen.queryByText("agent-setup-page")).not.toBeInTheDocument()
+    unmount()
+    auth.authenticated = true
+    render(providers(adminRoutes, "/admin/agent-setup"))
+    expect(await screen.findByText("agent-setup-page")).toBeInTheDocument()
   })
 
   it("renders sidebar navigation", () => {
@@ -70,6 +97,12 @@ describe("admin shell", () => {
     expect(screen.getByText("Dashboard")).toBeInTheDocument()
     expect(screen.getByText("Site settings")).toBeInTheDocument()
     expect(document.querySelector('a[href="/admin/nodes"]')).toBeInTheDocument()
+    expect(screen.getByText("Node setup")).toBeInTheDocument()
+    expect(document.querySelector('a[href="/admin/agent-setup"]')).toBeInTheDocument()
+    expect(screen.getByText("Nodes & access")).toBeInTheDocument()
+    expect(screen.getByText("Advanced operations")).toBeInTheDocument()
+    expect(screen.getByText("Agent versions & staged upgrades")).toBeInTheDocument()
+    expect(document.querySelector('a[href="/admin/agent-releases"]')).toBeInTheDocument()
   })
 
   it("runs header actions", () => {
@@ -77,7 +110,7 @@ describe("admin shell", () => {
     fireEvent.click(screen.getByRole("button", { name: "Theme" }))
     expect(document.documentElement).toHaveClass("dark")
     fireEvent.click(screen.getByRole("button", { name: "Sign out" }))
-    fireEvent.click(screen.getByRole("button", { name: "Language" }))
+    fireEvent.click(screen.getByRole("button", { name: "Language · English" }))
     expect(auth.logout).toHaveBeenCalled()
   })
 })

@@ -48,8 +48,10 @@ func (h *TerminalHandler) HandleTerminalWS(w http.ResponseWriter, r *http.Reques
 	server := websocket.Server{
 		Handshake: terminalHandshake,
 		Handler: websocket.Handler(func(conn *websocket.Conn) {
+			stop := context.AfterFunc(r.Context(), func() { _ = conn.Close() })
+			defer stop()
 			err := h.operations.OpenTerminal(r.Context(), nodeID, conn)
-			if err != nil {
+			if err != nil && r.Context().Err() == nil {
 				_, writeErr := io.WriteString(conn, "\r\n[terminal error] "+err.Error()+"\r\n")
 				if writeErr != nil {
 					return
@@ -65,8 +67,8 @@ func (h *TerminalHandler) HandleExecuteBatch(w http.ResponseWriter, r *http.Requ
 		NodeIDs []string `json:"node_ids"`
 		Command string   `json:"command"`
 	}
-	if err := ParseJSON(r, &body); err != nil {
-		JSONError(w, http.StatusBadRequest, "invalid request body")
+	if err := ParseJSONStrict(r, &body); err != nil {
+		WriteBodyError(w, err)
 		return
 	}
 	if len(body.NodeIDs) == 0 || len(body.NodeIDs) > maxBatchNodes {

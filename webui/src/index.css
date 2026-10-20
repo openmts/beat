@@ -1,6 +1,6 @@
 @import "tailwindcss";
 @import "tw-animate-css";
-@import "shadcn/tailwind.css";
+@import "./styles/shadcn/index.css";
 @import "@fontsource-variable/geist";
 
 @custom-variant dark (&:is(.dark *));
@@ -257,18 +257,4 @@
   --sidebar-accent-foreground: oklch(0.985 0 0);
   --sidebar-border: oklch(1 0 0 / 10%);
   --sidebar-ring: oklch(0.556 0 0);
-}
-
-/* WebShell: pin the terminal background to the active theme so xterm's
-   default black background never leaks through in light mode. */
-.light .xterm,
-.light .xterm-screen,
-.light .xterm-viewport {
-  background-color: #fafafa !important;
-}
-
-.dark .xterm,
-.dark .xterm-screen,
-.dark .xterm-viewport {
-  background-color: #282c34 !important;
 }

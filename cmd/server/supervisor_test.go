@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -11,97 +12,48 @@ import (
 	"time"
 )
 
-// newFastSupervisor 返回毫秒级退避的监督器，供重启行为测试使用。
-func newFastSupervisor(maxRestarts int) *workerSupervisor {
-	s := newWorkerSupervisor()
-	s.backoffBase = time.Millisecond
-	s.backoffMax = 5 * time.Millisecond
-	s.maxRestarts = maxRestarts
-	return s
-}
-
-func TestSupervisorPanicIsContainedAndReported(t *testing.T) {
-	supervisor := newFastSupervisor(1)
-	var wg sync.WaitGroup
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	worker := supervisor.register("boom", time.Minute)
-	supervisor.start(&wg, ctx, worker, func(context.Context) {
-		panic("worker exploded")
-	})
-	wg.Wait()
-
-	workers := supervisor.snapshot()
-	if len(workers) != 1 {
-		t.Fatalf("expected 1 supervised worker, got %d", len(workers))
-	}
-	if workers[0].Running {
-		t.Fatal("panicking worker must be reported as not running")
-	}
-	if workers[0].Restarts == 0 {
-		t.Fatal("panicking worker should have consumed restart attempts")
+func TestSupervisorTerminalExitCancelsRootWithoutRestart(t *testing.T) {
+	for _, panics := range []bool{false, true} {
+		t.Run(fmt.Sprint(panics), func(t *testing.T) {
+			supervisor := newWorkerSupervisor()
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			supervisor.bind(ctx, cancel)
+			worker := supervisor.register("alerts", time.Minute)
+			var wg sync.WaitGroup
+			var calls atomic.Int64
+			supervisor.start(&wg, worker, func(context.Context) {
+				calls.Add(1)
+				if panics {
+					panic("sensitive panic payload")
+				}
+			})
+			wg.Wait()
+			if ctx.Err() == nil || calls.Load() != 1 || !supervisor.terminal.Load() {
+				t.Fatal("unexpected exit did not terminate root")
+			}
+			value := worker.snapshot()
+			if value.Running || value.Restarts != 0 || value.State != "failed" {
+				t.Fatal(value)
+			}
+			if healthy, reason := worker.healthy(time.Now()); healthy || reason != "failed" {
+				t.Fatal(healthy, reason)
+			}
+		})
 	}
 }
 
-func TestSupervisorRestartsFailedWorkerUntilHealthy(t *testing.T) {
-	supervisor := newFastSupervisor(3)
+func TestSupervisorExpectedStopDoesNotFail(t *testing.T) {
+	supervisor := newWorkerSupervisor()
+	ctx, cancel := context.WithCancel(t.Context())
+	supervisor.bind(ctx, cancel)
+	worker := supervisor.register("maintenance", time.Minute)
 	var wg sync.WaitGroup
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	var attempts atomic.Int64
-	started := make(chan struct{}, 4)
-	release := make(chan struct{})
-	worker := supervisor.register("flaky", time.Minute)
-	supervisor.start(&wg, ctx, worker, func(context.Context) {
-		if attempts.Add(1) <= 2 {
-			panic("transient failure")
-		}
-		started <- struct{}{}
-		<-release
-	})
-
-	select {
-	case <-started:
-	case <-time.After(3 * time.Second):
-		t.Fatal("worker did not recover after restarts")
-	}
-
-	snapshot := worker.snapshot()
-	if !snapshot.Running {
-		t.Fatal("recovered worker must be running")
-	}
-	if snapshot.Restarts != 2 {
-		t.Fatalf("restarts = %d, want 2", snapshot.Restarts)
-	}
-
-	close(release)
+	supervisor.start(&wg, worker, func(ctx context.Context) { <-ctx.Done() })
 	cancel()
 	wg.Wait()
-}
-
-func TestSupervisorGivesUpAfterMaxRestarts(t *testing.T) {
-	supervisor := newFastSupervisor(2)
-	var wg sync.WaitGroup
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	worker := supervisor.register("hopeless", time.Minute)
-	supervisor.start(&wg, ctx, worker, func(context.Context) {
-		panic("permanent failure")
-	})
-	wg.Wait()
-
-	snapshot := worker.snapshot()
-	if snapshot.Running {
-		t.Fatal("worker that exhausted restarts must stay stopped")
-	}
-	if snapshot.Restarts != 2 {
-		t.Fatalf("restarts = %d, want 2", snapshot.Restarts)
-	}
-	if ok, reason := worker.healthy(time.Now()); ok || reason != "stopped" {
-		t.Fatalf("health = %v/%q, want false/stopped", ok, reason)
+	if supervisor.terminal.Load() || worker.snapshot().State != "stopped" {
+		t.Fatal(worker.snapshot())
 	}
 }
 
@@ -113,7 +65,8 @@ func TestSupervisorObserverTracksSuccessAndFailures(t *testing.T) {
 
 	worker := supervisor.register("observed", 10*time.Second)
 	observe := worker.observe()
-	supervisor.start(&wg, ctx, worker, func(context.Context) {
+	supervisor.bind(ctx, cancel)
+	supervisor.start(&wg, worker, func(context.Context) {
 		<-ctx.Done()
 	})
 
@@ -228,8 +181,8 @@ func TestReadyzReportsNotReadyWhenWorkerExits(t *testing.T) {
 		t.Fatalf("readyz status = %d, want 503", response.Code)
 	}
 	body := response.Body.String()
-	if !strings.Contains(body, "alerts stopped") ||
-		!strings.Contains(body, "traffic_reports stopped") {
+	if !strings.Contains(body, `"worker_alerts"`) ||
+		!strings.Contains(body, `"worker_traffic_reports"`) {
 		t.Fatalf("readyz body %q should name stopped workers", body)
 	}
 }

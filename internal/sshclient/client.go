@@ -65,10 +65,12 @@ func (c *Connector) Execute(
 		return "", err
 	}
 	defer func() { _ = client.Close() }()
+	stop := context.AfterFunc(ctx, func() { _ = client.Close() })
+	defer stop()
 
 	session, err := client.NewSession()
 	if err != nil {
-		return "", fmt.Errorf("create ssh session: %w", err)
+		return "", fmt.Errorf("create ssh session: %w", errors.Join(ctx.Err(), err))
 	}
 	defer func() { _ = session.Close() }()
 
@@ -95,10 +97,12 @@ func (c *Connector) OpenTerminal(
 		return err
 	}
 	defer func() { _ = client.Close() }()
+	stop := context.AfterFunc(ctx, func() { _ = client.Close() })
+	defer stop()
 
 	session, err := client.NewSession()
 	if err != nil {
-		return fmt.Errorf("create ssh session: %w", err)
+		return fmt.Errorf("create ssh session: %w", errors.Join(ctx.Err(), err))
 	}
 	defer func() { _ = session.Close() }()
 	defer func() { _ = stream.Close() }()
@@ -111,7 +115,7 @@ func (c *Connector) OpenTerminal(
 	session.Stdout = writer
 	session.Stderr = writer
 	if err := startShell(session); err != nil {
-		return err
+		return errors.Join(ctx.Err(), err)
 	}
 	return bridgeTerminal(ctx, session, stdin, stream)
 }
@@ -130,6 +134,8 @@ func (c *Connector) dial(ctx context.Context, node model.Node, signer ssh.Signer
 	if err != nil {
 		return nil, fmt.Errorf("dial ssh server: %w", err)
 	}
+	stop := context.AfterFunc(ctx, func() { _ = raw.Close() })
+	defer stop()
 
 	if err := setHandshakeDeadline(ctx, raw); err != nil {
 		_ = raw.Close()
@@ -138,11 +144,11 @@ func (c *Connector) dial(ctx context.Context, node model.Node, signer ssh.Signer
 	connection, channels, requests, err := ssh.NewClientConn(raw, address, config)
 	if err != nil {
 		_ = raw.Close()
-		return nil, fmt.Errorf("ssh handshake: %w", err)
+		return nil, fmt.Errorf("ssh handshake: %w", errors.Join(ctx.Err(), err))
 	}
 	if err := raw.SetDeadline(time.Time{}); err != nil {
 		_ = connection.Close()
-		return nil, fmt.Errorf("clear ssh deadline: %w", err)
+		return nil, fmt.Errorf("clear ssh deadline: %w", errors.Join(ctx.Err(), err))
 	}
 	return ssh.NewClient(connection, channels, requests), nil
 }
@@ -160,7 +166,7 @@ func setHandshakeDeadline(ctx context.Context, connection net.Conn) error {
 		deadline = contextDeadline
 	}
 	if err := connection.SetDeadline(deadline); err != nil {
-		return fmt.Errorf("set ssh deadline: %w", err)
+		return fmt.Errorf("set ssh deadline: %w", errors.Join(ctx.Err(), err))
 	}
 	return nil
 }

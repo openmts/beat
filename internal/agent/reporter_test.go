@@ -42,9 +42,7 @@ func TestHTTPReporter(t *testing.T) {
 			t.Fatalf("report = %#v", report)
 		}
 		w.WriteHeader(http.StatusCreated)
-		if _, err := w.Write([]byte(`{"data":{"ssh_public_key":"ssh-ed25519 AAA"}}`)); err != nil {
-			t.Fatalf("write response: %v", err)
-		}
+		writeTestReportACK(t, w, testACKFixture{report: report, key: "ssh-ed25519 AAA"})
 	}))
 	t.Cleanup(server.Close)
 
@@ -61,7 +59,7 @@ func TestHTTPReporter(t *testing.T) {
 		MemoryUsed: 400, MemoryTotal: 800,
 		DiskUsed: 40, DiskTotal: 100,
 	}
-	assigned, err := reporter.Report(context.Background(), metrics, nil)
+	assigned, err := reporter.Report(context.Background(), testReportSample(t, metrics, nil))
 	if err != nil {
 		t.Fatalf("report: %v", err)
 	}
@@ -82,7 +80,7 @@ func TestHTTPReporterErrors(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create reporter: %v", err)
 	}
-	if _, err := reporter.Report(context.Background(), model.NodeMetrics{}, nil); err == nil || !strings.Contains(err.Error(), "401") {
+	if _, err := reporter.Report(context.Background(), testReportSample(t, model.NodeMetrics{}, nil)); err == nil || !strings.Contains(err.Error(), "401") {
 		t.Fatalf("error = %v, want status error", err)
 	}
 	if _, err := NewHTTPReporter(Config{ServerURL: "://invalid"}); err == nil {
@@ -104,7 +102,7 @@ func TestHTTPReporterTransportAndBodyErrors(t *testing.T) {
 	reporter.client.Transport = roundTripperFunc(func(*http.Request) (*http.Response, error) {
 		return nil, errors.New("send failed")
 	})
-	if _, err := reporter.Report(context.Background(), model.NodeMetrics{}, nil); err == nil || !strings.Contains(err.Error(), "send") {
+	if _, err := reporter.Report(context.Background(), testReportSample(t, model.NodeMetrics{}, nil)); err == nil || !strings.Contains(err.Error(), "transport_failed") {
 		t.Fatalf("error = %v, want send error", err)
 	}
 
@@ -113,8 +111,8 @@ func TestHTTPReporterTransportAndBodyErrors(t *testing.T) {
 		statusCode int
 		want       string
 	}{
-		{name: "error body", statusCode: http.StatusBadRequest, want: "unreadable body"},
-		{name: "success body", statusCode: http.StatusOK, want: "decode node report response"},
+		{name: "error body", statusCode: http.StatusBadRequest, want: "invalid_ack"},
+		{name: "success body", statusCode: http.StatusOK, want: "invalid_ack"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -123,7 +121,7 @@ func TestHTTPReporterTransportAndBodyErrors(t *testing.T) {
 					StatusCode: tt.statusCode, Body: errorReader{}, Header: make(http.Header),
 				}, nil
 			})
-			_, err := reporter.Report(context.Background(), model.NodeMetrics{}, nil)
+			_, err := reporter.Report(context.Background(), testReportSample(t, model.NodeMetrics{}, nil))
 			if err == nil || !strings.Contains(err.Error(), tt.want) {
 				t.Fatalf("error = %v, want containing %q", err, tt.want)
 			}

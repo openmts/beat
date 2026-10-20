@@ -4,10 +4,13 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"testing"
 	"time"
 
 	"golang.org/x/net/websocket"
+
+	"github.com/beat/backend/internal/deploymentaccess"
 )
 
 func okHandler() http.Handler {
@@ -256,4 +259,89 @@ type recordingObserver struct {
 
 func (o *recordingObserver) ObserveHTTP(method, route string, status int, duration time.Duration) {
 	o.onObserve(method, route, status, duration)
+}
+
+func TestCORSWithDeploymentPolicy(t *testing.T) {
+	policy, err := deploymentaccess.ParseOrigins("https://console.example.com,https://status.example.com:8443")
+	if err != nil {
+		t.Fatalf("parse origins: %v", err)
+	}
+	serve := func(t *testing.T, method, path, origin string) *httptest.ResponseRecorder {
+		t.Helper()
+		request := httptest.NewRequest(method, path, nil)
+		if origin != "" {
+			request.Header.Set("Origin", origin)
+		}
+		recorder := httptest.NewRecorder()
+		CORSWithPolicy(policy)(okHandler()).ServeHTTP(recorder, request)
+		return recorder
+	}
+
+	allowed := serve(t, http.MethodGet, "/api/v1/nodes", "https://console.example.com")
+	if allowed.Header().Get("Access-Control-Allow-Origin") != "https://console.example.com" ||
+		allowed.Header().Get("Access-Control-Allow-Credentials") != "" {
+		t.Fatalf("allowed headers = %v", allowed.Header())
+	}
+	if !slices.Contains(allowed.Header().Values("Vary"), "Origin") {
+		t.Fatalf("allowed response must vary on origin: %v", allowed.Header())
+	}
+	if normalized := serve(t, http.MethodGet, "/api/v1/nodes", "HTTPS://Console.Example.com:443/").Header().Get("Access-Control-Allow-Origin"); normalized != "https://console.example.com" {
+		t.Fatalf("origin was not normalized and echoed: %q", normalized)
+	}
+	if denied := serve(t, http.MethodGet, "/api/v1/nodes", "https://evil.example.com").Header().Get("Access-Control-Allow-Origin"); denied != "" {
+		t.Fatalf("disallowed origin received %q", denied)
+	}
+	if admin := serve(t, http.MethodGet, "/api/v1/admin/users", "https://console.example.com").Header().Get("Access-Control-Allow-Origin"); admin != "" {
+		t.Fatalf("admin routes must stay same-origin only, got %q", admin)
+	}
+	preflight := serve(t, http.MethodOptions, "/api/v1/nodes", "https://evil.example.com")
+	if preflight.Code != http.StatusNoContent || preflight.Header().Get("Access-Control-Allow-Origin") != "" {
+		t.Fatalf("preflight = %d %v", preflight.Code, preflight.Header())
+	}
+	missing := serve(t, http.MethodGet, "/api/v1/nodes", "")
+	if missing.Header().Get("Access-Control-Allow-Origin") != "" {
+		t.Fatalf("a request without Origin must not receive a wildcard header")
+	}
+	interaction := serve(t, http.MethodOptions, "/api/v1/public/interactions", "https://console.example.com")
+	if interaction.Code != http.StatusNoContent || interaction.Header().Get("Access-Control-Allow-Methods") != "POST, OPTIONS" {
+		t.Fatalf("interaction preflight = %d %v", interaction.Code, interaction.Header())
+	}
+	if interaction.Header().Get("Access-Control-Allow-Origin") != "https://console.example.com" {
+		t.Fatalf("interaction preflight origin = %q", interaction.Header().Get("Access-Control-Allow-Origin"))
+	}
+}
+
+// TestLoggingWithObserverNormalizesCanceledServerErrors 覆盖线上真实场景：浏览器
+// 取消读取时处理器仍会写 500，但请求上下文已经结束、响应没有送达任何客户端。
+// 这类请求必须记成客户端的 499，否则刷新页面与并发取消会把真实的 5xx 淹没。
+func TestLoggingWithObserverNormalizesCanceledServerErrors(t *testing.T) {
+	serverError := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	})
+	cases := []struct {
+		name     string
+		canceled bool
+		expected int
+	}{
+		{name: "canceled request reports client closed", canceled: true, expected: statusClientClosedRequest},
+		{name: "live request keeps server error", canceled: false, expected: http.StatusInternalServerError},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			var recorded int
+			observer := &recordingObserver{
+				onObserve: func(_, _ string, status int, _ time.Duration) { recorded = status },
+			}
+			request := httptest.NewRequest(http.MethodGet, "/api/v1/groups", nil)
+			if testCase.canceled {
+				ctx, cancel := context.WithCancel(request.Context())
+				cancel()
+				request = request.WithContext(ctx)
+			}
+			LoggingWithObserver(serverError, observer).ServeHTTP(httptest.NewRecorder(), request)
+			if expected, actual := testCase.expected, recorded; expected != actual {
+				t.Fatalf("expected observed status %d, actual %d", expected, actual)
+			}
+		})
+	}
 }

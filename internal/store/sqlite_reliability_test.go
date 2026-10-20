@@ -3,7 +3,9 @@ package store
 import (
 	"context"
 	"database/sql"
+	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 )
@@ -229,5 +231,40 @@ func TestGroupSortRejectsUnknownID(t *testing.T) {
 	groups := NewGroupStore(store.DB)
 	if err := groups.UpdateSortOrder(context.Background(), []string{"missing"}); err == nil {
 		t.Fatal("unknown group sort ID was accepted")
+	}
+}
+
+func TestReadyProbesDataDirectory(t *testing.T) {
+	directory := t.TempDir()
+	store, err := NewSQLiteStore(filepath.Join(directory, "probe.db"))
+	if err != nil {
+		t.Fatalf("open SQLite store: %v", err)
+	}
+	defer func() {
+		if err := store.Close(); err != nil {
+			t.Errorf("close SQLite store: %v", err)
+		}
+	}()
+	if err := store.Ready(t.Context()); err != nil {
+		t.Fatalf("healthy store ready: %v", err)
+	}
+	store.path = filepath.Join(directory, "missing", "probe.db")
+	if err := store.Ready(t.Context()); err == nil {
+		t.Fatal("ready accepted a data directory that does not exist")
+	}
+	if err := os.MkdirAll(filepath.Dir(store.path), 0o700); err != nil {
+		t.Fatalf("recreate data directory: %v", err)
+	}
+	if err := store.Ready(t.Context()); err != nil {
+		t.Fatalf("ready after recreating the directory: %v", err)
+	}
+	entries, err := os.ReadDir(filepath.Dir(store.path))
+	if err != nil {
+		t.Fatalf("read data directory: %v", err)
+	}
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), ".ready-probe-") {
+			t.Fatalf("readiness probe left %s behind", entry.Name())
+		}
 	}
 }

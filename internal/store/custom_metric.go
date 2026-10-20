@@ -28,11 +28,18 @@ func (s *CustomMetricStore) Create(ctx context.Context, metric model.CustomMetri
 	if err := validateCustomMetric(metric); err != nil {
 		return nil, err
 	}
+	ctx, cancel := context.WithTimeout(ctx, customMetricChangeTimeout)
+	defer cancel()
+	tx, err := beginWriteTx(ctx, s.db)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback() }()
 	now := model.NowUTC()
 	metric.ID = uuid.New().String()
 	metric.CreatedAt = now
 	metric.UpdatedAt = now
-	_, err := s.db.ExecContext(ctx,
+	_, err = tx.ExecContext(ctx,
 		"INSERT INTO custom_metrics (id, name, shell_command, interval_seconds, description, enabled, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
 		metric.ID, metric.Name, metric.ShellCommand, metric.IntervalSeconds,
 		metric.Description, boolInt(metric.Enabled), metric.CreatedAt, metric.UpdatedAt,
@@ -43,49 +50,27 @@ func (s *CustomMetricStore) Create(ctx context.Context, metric model.CustomMetri
 		}
 		return nil, fmt.Errorf("inserting custom metric: %w", err)
 	}
+	definition, err := customCatalogDefinition(metric.Name, metric.Description)
+	if err != nil {
+		return nil, err
+	}
+	if err := ensureMetricDefinition(ctx, tx, definition); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
 	return &metric, nil
 }
 
 func (s *CustomMetricStore) Update(ctx context.Context, id string, metric model.CustomMetric) (*model.CustomMetric, error) {
-	if err := validateCustomMetric(metric); err != nil {
-		return nil, err
-	}
-	metric.ID = id
-	metric.UpdatedAt = model.NowUTC()
-	result, err := s.db.ExecContext(ctx,
-		"UPDATE custom_metrics SET name = ?, shell_command = ?, interval_seconds = ?, description = ?, enabled = ?, updated_at = ? WHERE id = ?",
-		metric.Name, metric.ShellCommand, metric.IntervalSeconds,
-		metric.Description, boolInt(metric.Enabled), metric.UpdatedAt, id,
-	)
-	if err != nil {
-		if strings.Contains(err.Error(), "UNIQUE constraint failed") {
-			return nil, ErrCustomMetricNameTaken
-		}
-		return nil, fmt.Errorf("updating custom metric: %w", err)
-	}
-	affected, err := result.RowsAffected()
-	if err != nil {
-		return nil, fmt.Errorf("reading custom metric update count: %w", err)
-	}
-	if affected == 0 {
-		return nil, nil
-	}
-	return &metric, nil
+	change, err := s.UpdateWithRegistration(ctx, id, metric)
+	return change.Metric, err
 }
 
 func (s *CustomMetricStore) Delete(ctx context.Context, id string) error {
-	result, err := s.db.ExecContext(ctx, "DELETE FROM custom_metrics WHERE id = ?", id)
-	if err != nil {
-		return fmt.Errorf("deleting custom metric: %w", err)
-	}
-	affected, err := result.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("reading custom metric delete count: %w", err)
-	}
-	if affected == 0 {
-		return nil
-	}
-	return nil
+	_, err := s.DeleteWithRegistration(ctx, id)
+	return err
 }
 
 func (s *CustomMetricStore) Get(ctx context.Context, id string) (*model.CustomMetric, error) {
@@ -161,7 +146,12 @@ func (s *CustomMetricStore) ListEnabledForNode(ctx context.Context, nodeID strin
 
 // SetNodeBindings replaces the set of custom metrics bound to a node.
 func (s *CustomMetricStore) SetNodeBindings(ctx context.Context, nodeID string, metricIDs []string) error {
-	tx, err := s.db.BeginTx(ctx, nil)
+	if len(metricIDs) > maxCustomMetricTargets {
+		return fmt.Errorf("%w: at most 1024 metric bindings", ErrCustomMetricLimit)
+	}
+	ctx, cancel := context.WithTimeout(ctx, customMetricChangeTimeout)
+	defer cancel()
+	tx, err := beginWriteTx(ctx, s.db)
 	if err != nil {
 		return fmt.Errorf("begin custom metric bindings: %w", err)
 	}
@@ -176,6 +166,9 @@ func (s *CustomMetricStore) SetNodeBindings(ctx context.Context, nodeID string, 
 		); err != nil {
 			return fmt.Errorf("inserting custom metric binding: %w", err)
 		}
+	}
+	if _, err := queueCustomMetricRegistration(ctx, tx, nodeID); err != nil {
+		return err
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit custom metric bindings: %w", err)
@@ -232,40 +225,22 @@ func (s *CustomMetricStore) NodeIDsForMetric(ctx context.Context, metricID strin
 }
 
 // SetMetricNodes replaces the set of nodes a custom metric is bound to.
-func (s *CustomMetricStore) SetMetricNodes(ctx context.Context, metricID string, nodeIDs []string) error {
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("begin custom metric nodes: %w", err)
-	}
-	defer func() { _ = tx.Rollback() }()
-	if _, err := tx.ExecContext(ctx, "DELETE FROM custom_metric_nodes WHERE metric_id = ?", metricID); err != nil {
-		return fmt.Errorf("clearing custom metric nodes: %w", err)
-	}
-	for _, nodeID := range nodeIDs {
-		if _, err := tx.ExecContext(ctx,
-			"INSERT OR IGNORE INTO custom_metric_nodes (metric_id, node_id) VALUES (?, ?)",
-			metricID, nodeID,
-		); err != nil {
-			return fmt.Errorf("inserting custom metric node: %w", err)
-		}
-	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("commit custom metric nodes: %w", err)
-	}
-	return nil
+func (s *CustomMetricStore) SetMetricNodes(ctx context.Context, id string, nodeIDs []string) error {
+	_, err := s.SetMetricNodesWithRegistration(ctx, id, nodeIDs)
+	return err
 }
 
 func validateCustomMetric(metric model.CustomMetric) error {
 	name := strings.TrimSpace(metric.Name)
-	if name == "" || len(name) > 100 {
-		return errors.New("name must be between 1 and 100 characters")
+	if name == "" || len(name) > 100 || name != metric.Name || !validStoredCustomMetricName(name) {
+		return fmt.Errorf("%w: name must be between 1 and 100 characters", ErrCustomMetricInvalid)
 	}
 	command := strings.TrimSpace(metric.ShellCommand)
-	if command == "" || len(command) > 2048 {
-		return errors.New("shell_command must be between 1 and 2048 characters")
+	if command == "" || len(metric.ShellCommand) > 2048 || strings.ContainsRune(metric.ShellCommand, 0) {
+		return fmt.Errorf("%w: shell_command must be between 1 and 2048 characters", ErrCustomMetricInvalid)
 	}
 	if metric.IntervalSeconds < 5 || metric.IntervalSeconds > 86400 {
-		return errors.New("interval_seconds must be between 5 and 86400")
+		return fmt.Errorf("%w: interval_seconds must be between 5 and 86400", ErrCustomMetricInvalid)
 	}
 	return nil
 }
@@ -275,4 +250,18 @@ func boolInt(value bool) int {
 		return 1
 	}
 	return 0
+}
+
+func validStoredCustomMetricName(name string) bool {
+	for _, character := range name {
+		if !validStoredCustomMetricCharacter(character) {
+			return false
+		}
+	}
+	return true
+}
+
+func validStoredCustomMetricCharacter(character rune) bool {
+	return character >= 'a' && character <= 'z' || character >= 'A' && character <= 'Z' ||
+		character >= '0' && character <= '9' || character == '_' || character == '.' || character == '-'
 }

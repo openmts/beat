@@ -2,13 +2,12 @@ package trafficreport
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strings"
 	"time"
 
 	"github.com/beat/backend/internal/model"
-	"github.com/beat/backend/internal/notification"
+	"github.com/beat/backend/internal/notificationqueue"
 )
 
 func (s *Service) buildReport(
@@ -21,6 +20,9 @@ func (s *Service) buildReport(
 		return model.TrafficReport{}, fmt.Errorf("list report nodes: %w", err)
 	}
 	nodes = selectedNodes(nodes, schedule)
+	if len(nodes) > maximumReportNodes {
+		return model.TrafficReport{}, ErrReportTooLarge
+	}
 	reportNodes := make([]model.TrafficReportNode, 0, len(nodes))
 	for _, node := range nodes {
 		reportNode, err := s.buildReportNode(ctx, node, period)
@@ -66,37 +68,6 @@ func (s *Service) buildReportNode(
 	}, nil
 }
 
-func (s *Service) deliver(
-	ctx context.Context,
-	schedule model.TrafficReportSchedule,
-	report model.TrafficReport,
-) (model.TrafficReportDeliveryStatus, error) {
-	channels, err := s.channels.ListAlertChannels(ctx)
-	if err != nil {
-		return failedDeliveryStatus(s.now(), "failed to list notification channels"), err
-	}
-	channels = selectedChannels(channels, schedule)
-	if len(channels) == 0 {
-		status := failedDeliveryStatus(s.now(), "no enabled channels in schedule scope")
-		return status, errors.New(status.Message)
-	}
-	message, err := reportMessage(report)
-	if err != nil {
-		return failedDeliveryStatus(s.now(), "failed to format traffic report"), err
-	}
-	delivered := 0
-	deliveryErrors := make([]error, 0)
-	for index := range channels {
-		if _, err := s.delivery.SendMessage(ctx, &channels[index], message); err != nil {
-			deliveryErrors = append(deliveryErrors, fmt.Errorf("deliver to channel %s: %w", channels[index].ID, err))
-			continue
-		}
-		delivered++
-	}
-	status := deliveryStatus(s.now(), delivered, len(channels))
-	return status, errors.Join(deliveryErrors...)
-}
-
 func selectedNodes(nodes []model.Node, schedule model.TrafficReportSchedule) []model.Node {
 	if schedule.AllNodes {
 		return nodes
@@ -111,27 +82,6 @@ func selectedNodes(nodes []model.Node, schedule model.TrafficReportSchedule) []m
 	return result
 }
 
-func selectedChannels(
-	channels []model.AlertChannel,
-	schedule model.TrafficReportSchedule,
-) []model.AlertChannel {
-	selected := stringSet(schedule.ChannelIDs)
-	result := make([]model.AlertChannel, 0, len(channels))
-	for _, channel := range channels {
-		if !channel.Enabled {
-			continue
-		}
-		if schedule.AllChannels {
-			result = append(result, channel)
-			continue
-		}
-		if _, found := selected[channel.ID]; found {
-			result = append(result, channel)
-		}
-	}
-	return result
-}
-
 func stringSet(values []string) map[string]struct{} {
 	result := make(map[string]struct{}, len(values))
 	for _, value := range values {
@@ -140,23 +90,10 @@ func stringSet(values []string) map[string]struct{} {
 	return result
 }
 
-func deliveryStatus(now time.Time, delivered int, total int) model.TrafficReportDeliveryStatus {
-	state := model.TrafficReportDeliverySuccess
-	if delivered == 0 {
-		state = model.TrafficReportDeliveryFailed
-	} else if delivered < total {
-		state = model.TrafficReportDeliveryPartial
-	}
-	return model.TrafficReportDeliveryStatus{
-		State: state, Message: fmt.Sprintf("delivered to %d/%d channels", delivered, total),
-		Delivered: delivered, Total: total, DeliveredAt: now,
-	}
-}
-
-func reportMessage(report model.TrafficReport) (notification.Message, error) {
+func reportMessage(report model.TrafficReport) (notificationqueue.Request, error) {
 	location, err := time.LoadLocation(report.Timezone)
 	if err != nil {
-		return notification.Message{}, fmt.Errorf("load report timezone: %w", err)
+		return notificationqueue.Request{}, fmt.Errorf("load report timezone: %w", err)
 	}
 	period := fmt.Sprintf(
 		"%s - %s (%s)",
@@ -173,9 +110,14 @@ func reportMessage(report model.TrafficReport) (notification.Message, error) {
 			formatBytes(node.Sent), formatBytes(node.Received), formatBytes(node.Used), node.LimitType,
 		))
 	}
-	return notification.Message{
-		Kind: "traffic_report", Subject: "[Beat] " + cadenceLabel(report.Cadence) + " traffic report",
-		Text: strings.Join(lines, "\n"), Data: report,
+	text := strings.Join(lines, "\n")
+	if len(text) > notificationqueue.MaximumTextBytes {
+		return notificationqueue.Request{}, ErrReportTooLarge
+	}
+	return notificationqueue.Request{
+		SourceKey: reportSourceKey(report.ScheduleID, report.Period.Key), SourceKind: "traffic_report", SourceID: report.ScheduleID,
+		EventKind: "traffic.report", Subject: "[Beat] " + cadenceLabel(report.Cadence) + " traffic report",
+		Text: text, Data: map[string]string{"event.message": text, "event.occurred_at": report.GeneratedAt.Format(time.RFC3339Nano)},
 	}, nil
 }
 

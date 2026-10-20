@@ -5,15 +5,14 @@ import (
 	"context"
 	"crypto/sha256"
 	"errors"
-	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/pquerna/otp/totp"
 
 	"github.com/beat/backend/internal/model"
-	"github.com/beat/backend/internal/secretbox"
 	"github.com/beat/backend/internal/store"
+	"github.com/beat/backend/internal/testutil"
 )
 
 func TestServiceAdministratorLifecycleAndSecurityControls(t *testing.T) {
@@ -41,6 +40,9 @@ func TestServiceAdministratorLifecycleAndSecurityControls(t *testing.T) {
 	if err != nil || len(users) != 1 {
 		t.Fatalf("list users = %#v, %v", users, err)
 	}
+	if err := service.Reauthenticate(ctx, &owner.Principal, "correct horse battery staple", ""); err != nil {
+		t.Fatal(err)
+	}
 	admin, err := service.CreateUser(ctx, &owner.Principal, CreateUserRequest{Username: "operator",
 		DisplayName: "Operator", Role: model.AdminRoleAdmin, Password: "operator password long"})
 	if err != nil {
@@ -50,6 +52,7 @@ func TestServiceAdministratorLifecycleAndSecurityControls(t *testing.T) {
 		DisplayName: "Bad", Role: model.AdminRoleAdmin, Password: "short"}); err == nil {
 		t.Fatal("short administrator password accepted")
 	}
+	owner.Principal.Session.ReauthenticatedUntil = nil
 	if err := service.UpdateUser(ctx, &owner.Principal, admin.ID, UpdateUserRequest{
 		DisplayName: "Updated", Role: model.AdminRoleAdmin, Enabled: true,
 	}); !errors.Is(err, ErrRecentAuthRequired) {
@@ -78,7 +81,7 @@ func TestServiceAdministratorLifecycleAndSecurityControls(t *testing.T) {
 	if err := service.RequireOwner(nil); !errors.Is(err, ErrForbidden) {
 		t.Fatalf("nil owner check error = %v", err)
 	}
-	sessions, err := service.ListSessions(ctx, &adminLogin.Principal)
+	sessions, err := service.ListSessions(ctx, &adminLogin.Principal, model.AdminSessionPageSize)
 	if err != nil || len(sessions) != 1 || !sessions[0].Current {
 		t.Fatalf("administrator sessions = %#v, %v", sessions, err)
 	}
@@ -223,6 +226,9 @@ func TestServiceTOTPAndReauthentication(t *testing.T) {
 	if err != nil {
 		t.Fatalf("bootstrap: %v", err)
 	}
+	if err := service.Reauthenticate(t.Context(), &result.Principal, pendingTestPassword, ""); err != nil {
+		t.Fatal(err)
+	}
 	setup, err := service.BeginTOTP(t.Context(), &result.Principal)
 	if err != nil || setup.Secret == "" || setup.URI == "" {
 		t.Fatalf("TOTP setup = %#v, err = %v", setup, err)
@@ -266,10 +272,7 @@ func newTestService(t *testing.T) *Service {
 		randomBytes[index] = byte(index)
 	}
 	random := bytes.NewReader(randomBytes)
-	secrets, err := secretbox.New(filepath.Join(t.TempDir(), "admin-data.key"), random)
-	if err != nil {
-		t.Fatalf("new secret box: %v", err)
-	}
+	secrets := testutil.NewSecrets(t, sqlite.DB)
 	now := time.Date(2026, 7, 30, 4, 0, 0, 0, time.UTC)
 	service, err := NewService(ServiceConfig{
 		Store: store.NewAdminStore(sqlite.DB), Secrets: secrets, LegacyToken: "bootstrap-secret",
@@ -304,7 +307,7 @@ func TestCreateOIDCSession(t *testing.T) {
 		t.Fatalf("create user: %v", err)
 	}
 	externalID := "identity-1"
-	result, err := service.CreateOIDCSession(ctx, user.ID, externalID, "127.0.0.1", "agent")
+	result, err := service.CreateOIDCSession(ctx, oidcSessionTestRequest(t, service, user.ID, externalID))
 	if err != nil {
 		t.Fatalf("create oidc session: %v", err)
 	}
@@ -332,14 +335,14 @@ func TestCreateOIDCSessionRejectsDisabledUser(t *testing.T) {
 	if err := service.config.Store.CreateUser(ctx, user); err != nil {
 		t.Fatalf("create user: %v", err)
 	}
-	if _, err := service.CreateOIDCSession(ctx, user.ID, "id", "127.0.0.1", "agent"); !errors.Is(err, ErrInvalidCredentials) {
+	if _, err := service.CreateOIDCSession(ctx, OIDCSessionRequest{Identity: model.ExternalIdentity{UserID: user.ID}}); !errors.Is(err, ErrInvalidCredentials) {
 		t.Fatalf("disabled user error = %v", err)
 	}
 }
 
 func TestCreateOIDCSessionMissingUser(t *testing.T) {
 	service := newTestService(t)
-	if _, err := service.CreateOIDCSession(context.Background(), "missing", "id", "127.0.0.1", "agent"); !errors.Is(err, ErrInvalidCredentials) {
+	if _, err := service.CreateOIDCSession(context.Background(), OIDCSessionRequest{Identity: model.ExternalIdentity{UserID: "missing"}}); !errors.Is(err, ErrInvalidCredentials) {
 		t.Fatalf("missing user error = %v", err)
 	}
 }

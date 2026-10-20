@@ -33,6 +33,8 @@ type ThemeManifest struct {
 	ReleaseNotes       string              `json:"release_notes,omitempty"`
 	SupportedLocales   []string            `json:"supported_locales,omitempty"`
 	Files              []ThemeManifestFile `json:"files"`
+	// Configuration 是作者声明的站点配置架构；省略等于沿用历史行为（站点只能改四个显示字段）。
+	Configuration *ThemeConfigurationSchema `json:"configuration,omitempty"`
 }
 
 // ThemeManifestFile 是清单文件清单项。
@@ -70,6 +72,7 @@ type ThemePackage struct {
 	UpdatedAt          time.Time `json:"updated_at"`
 	IsActive           bool      `json:"is_active,omitempty"`
 	HealthState        string    `json:"health_state,omitempty"`
+	PreviewURL         string    `json:"preview_url,omitempty"`
 }
 
 // ThemeActivation 是 theme_activations 行。
@@ -109,6 +112,7 @@ type ThemeMarketSource struct {
 type ThemeCatalog struct {
 	SchemaVersion int                 `json:"schema_version"`
 	SourceID      string              `json:"source_id"`
+	ExpiresAt     time.Time           `json:"expires_at"`
 	Themes        []ThemeCatalogEntry `json:"themes"`
 }
 
@@ -128,6 +132,9 @@ type ThemeCatalogEntry struct {
 	MaximumBeat    string `json:"maximum_beat_version,omitempty"`
 	PreviewURL     string `json:"preview_url,omitempty"`
 	ReleaseNotes   string `json:"release_notes,omitempty"`
+	// Configuration 是目标包在清单里声明的站点可配置项（`configuration: managed` 的同一形状，由市场
+	// 随目录一起签名发布），后台在安装前只读展示这个包会放开哪些开关；缺省表示沿用历史四字段。
+	Configuration *ThemeConfigurationSchema `json:"configuration,omitempty"`
 }
 
 // ActiveThemeDescriptor 是公开的活动主题描述（无文件系统细节）。
@@ -140,8 +147,12 @@ type ActiveThemeDescriptor struct {
 	BuiltIn       bool   `json:"built_in"`
 	Protocol      int    `json:"protocol"`
 	Configuration string `json:"configuration,omitempty"`
+	// ConfigurationSchema 是主题自声明的配置架构（类型与取值由服务端推导），省略等于历史四字段。
+	ConfigurationSchema *ThemeConfigurationSchema `json:"configuration_schema,omitempty"`
 	// SandboxEntry 是沙箱包入口 HTML 的包相对文件名（公开安全值）。
 	SandboxEntry string `json:"sandbox_entry,omitempty"`
 	// ArchiveDigest 是内容寻址摘要，用于构造沙箱资产 URL。
-	ArchiveDigest string `json:"archive_digest,omitempty"`
+	ArchiveDigest string           `json:"archive_digest,omitempty"`
+	PreviewURL    string           `json:"preview_url,omitempty"`
+	Declarative   *ThemeDefinition `json:"declarative,omitempty"`
 }

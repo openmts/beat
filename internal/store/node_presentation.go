@@ -20,6 +20,10 @@ func (s *NodeStore) UpdateNodeSort(ctx context.Context, ids []string) error {
 		return fmt.Errorf("begin node sort update: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
+	mutation, err := beginMetadataMutation(ctx, tx, false)
+	if err != nil {
+		return err
+	}
 
 	groupID, err := validateNodeSortGroup(ctx, tx, ids)
 	if err != nil {
@@ -39,6 +43,12 @@ func (s *NodeStore) UpdateNodeSort(ctx context.Context, ids []string) error {
 		if err := requireOneUpdatedNode(result); err != nil {
 			return err
 		}
+	}
+	if err := mutation.finish(metadataEvidence{Action: "node.sort", Type: "node_group", ID: groupID, Fields: []string{"sort_order"}, Count: len(ids)}); err != nil {
+		return err
+	}
+	if err := verifyMetadataOrder(ctx, tx, metadataOrder{table: "nodes", ids: ids}); err != nil {
+		return err
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit node sort update: %w", err)

@@ -12,6 +12,7 @@ import (
 	"github.com/beat/backend/internal/model"
 	"github.com/beat/backend/internal/sshclient"
 	"github.com/beat/backend/internal/store"
+	"github.com/beat/backend/internal/testutil"
 )
 
 type fakeTerminalConnector struct {
@@ -81,11 +82,12 @@ func setupTerminalServiceWithConnector(
 
 	nodes := store.NewNodeStore(sqliteStore.DB)
 	keys := store.NewSSHKeyStore(sqliteStore.DB)
+	keys.SetSecrets(testutil.NewSecrets(t, sqliteStore.DB))
 	node, err := nodes.UpsertNode(context.Background(), "node-one", "127.0.0.1", 22)
 	if err != nil {
 		t.Fatalf("create node: %v", err)
 	}
-	key, err := keys.CreateSSHKey(context.Background(), "key-one", "ed25519", "ssh-ed25519 public", privateKey, "fp")
+	key, err := keys.CreateSSHKey(context.Background(), store.SSHKeyInput{Name: "key-one", KeyType: "ed25519", PublicKey: "ssh-ed25519 public", PrivateKey: privateKey, Fingerprint: "fp"})
 	if err != nil {
 		t.Fatalf("create key: %v", err)
 	}

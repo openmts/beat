@@ -1,7 +1,7 @@
 import { useState } from "react"
 import { ActivityIcon, GlobeIcon, NetworkIcon, RadioTowerIcon } from "lucide-react"
 
-import { NetworkHistoryDialog } from "@/components/network-history-dialog"
+import { PublicNetworkHistory } from "@/components/public-network-history"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -59,14 +59,14 @@ export function NetworkQualityBand() {
           ))}
         </div>
       )}
-      <NetworkHistoryDialog
+      {historyView && <PublicNetworkHistory
         open={historyView !== null}
         view={historyView}
         initialNodeId={historyNodeId}
         onOpenChange={(open) => {
           if (!open) setHistoryView(null)
         }}
-      />
+      />}
     </section>
   )
 }

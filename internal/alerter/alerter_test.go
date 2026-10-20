@@ -4,8 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net/http"
-	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -169,7 +167,7 @@ func (m *mockNodeStore) MarkStaleNodesOffline(_ context.Context, cutoff time.Tim
 }
 
 func TestNew(t *testing.T) {
-	a := New(
+	a := newTestAlerter(
 		&mockAlertRuleStore{},
 		&mockAlertEventStore{},
 		&mockAlertChannelStore{},
@@ -183,9 +181,6 @@ func TestNew(t *testing.T) {
 	if a.alertEventStore == nil {
 		t.Error("expected alertEventStore to be set")
 	}
-	if a.alertChannelStore == nil {
-		t.Error("expected alertChannelStore to be set")
-	}
 	if a.mtsStore == nil {
 		t.Error("expected mtsStore to be set")
 	}
@@ -195,8 +190,8 @@ func TestNew(t *testing.T) {
 	if a.states == nil {
 		t.Error("expected states map to be initialized")
 	}
-	if a.delivery == nil {
-		t.Error("expected delivery service to be initialized")
+	if a.notifications == nil {
+		t.Error("expected notification queue to be initialized")
 	}
 	if a.stopCh == nil {
 		t.Error("expected stopCh to be initialized")
@@ -204,7 +199,7 @@ func TestNew(t *testing.T) {
 }
 
 func TestStop(t *testing.T) {
-	a := New(
+	a := newTestAlerter(
 		&mockAlertRuleStore{},
 		&mockAlertEventStore{},
 		&mockAlertChannelStore{},
@@ -233,7 +228,7 @@ func TestStop(t *testing.T) {
 }
 
 func TestStopIdempotent(t *testing.T) {
-	a := New(
+	a := newTestAlerter(
 		&mockAlertRuleStore{},
 		&mockAlertEventStore{},
 		&mockAlertChannelStore{},
@@ -246,7 +241,7 @@ func TestStopIdempotent(t *testing.T) {
 }
 
 func TestEvaluateRulesNoRules(t *testing.T) {
-	a := New(
+	a := newTestAlerter(
 		&mockAlertRuleStore{rules: []model.AlertRule{}},
 		&mockAlertEventStore{},
 		&mockAlertChannelStore{},
@@ -261,7 +256,7 @@ func TestEvaluateRulesNoRules(t *testing.T) {
 }
 
 func TestEvaluateRulesNoNodes(t *testing.T) {
-	a := New(
+	a := newTestAlerter(
 		&mockAlertRuleStore{
 			rules: []model.AlertRule{
 				{ID: "rule-1", Metric: "cpu", Operator: "gt", Threshold: 80, Duration: 0},
@@ -280,7 +275,7 @@ func TestEvaluateRulesNoNodes(t *testing.T) {
 }
 
 func TestEvaluateRulesListRulesError(t *testing.T) {
-	a := New(
+	a := newTestAlerter(
 		&mockAlertRuleStore{err: fmt.Errorf("db error")},
 		&mockAlertEventStore{},
 		&mockAlertChannelStore{},
@@ -295,7 +290,7 @@ func TestEvaluateRulesListRulesError(t *testing.T) {
 }
 
 func TestEvaluateRulesListNodesError(t *testing.T) {
-	a := New(
+	a := newTestAlerter(
 		&mockAlertRuleStore{
 			rules: []model.AlertRule{
 				{ID: "rule-1", Metric: "cpu", Operator: "gt", Threshold: 80, Duration: 0},
@@ -323,7 +318,7 @@ func TestEvaluateRulesThresholdCrossed(t *testing.T) {
 	eventStore := &mockAlertEventStore{}
 	channelStore := &mockAlertChannelStore{}
 
-	a := New(
+	a := newTestAlerter(
 		&mockAlertRuleStore{rules: []model.AlertRule{rule}},
 		eventStore,
 		channelStore,
@@ -355,7 +350,7 @@ func TestEvaluateRulesThresholdNotCrossed(t *testing.T) {
 	}
 	eventStore := &mockAlertEventStore{}
 
-	a := New(
+	a := newTestAlerter(
 		&mockAlertRuleStore{rules: []model.AlertRule{rule}},
 		eventStore,
 		&mockAlertChannelStore{},
@@ -383,7 +378,7 @@ func TestEvaluateRulesDurationElapsed(t *testing.T) {
 	}
 	eventStore := &mockAlertEventStore{}
 
-	a := New(
+	a := newTestAlerter(
 		&mockAlertRuleStore{rules: []model.AlertRule{rule}},
 		eventStore,
 		&mockAlertChannelStore{},
@@ -419,7 +414,7 @@ func TestEvaluateRulesDurationNotMet(t *testing.T) {
 	}
 	eventStore := &mockAlertEventStore{}
 
-	a := New(
+	a := newTestAlerter(
 		&mockAlertRuleStore{rules: []model.AlertRule{rule}},
 		eventStore,
 		&mockAlertChannelStore{},
@@ -455,7 +450,7 @@ func TestEvaluateRulesResolve(t *testing.T) {
 	}
 	eventStore := &mockAlertEventStore{}
 
-	a := New(
+	a := newTestAlerter(
 		&mockAlertRuleStore{rules: []model.AlertRule{rule}},
 		eventStore,
 		&mockAlertChannelStore{},
@@ -498,7 +493,7 @@ func TestEvaluateRulesExistingActiveEvent(t *testing.T) {
 		Status: model.AlertStatusTriggered, TriggeredAt: time.Now(),
 	})
 
-	a := New(
+	a := newTestAlerter(
 		&mockAlertRuleStore{rules: []model.AlertRule{rule}},
 		eventStore,
 		&mockAlertChannelStore{},
@@ -536,7 +531,7 @@ func TestEvaluateRulesMetricNotFound(t *testing.T) {
 	}
 	eventStore := &mockAlertEventStore{}
 
-	a := New(
+	a := newTestAlerter(
 		&mockAlertRuleStore{rules: []model.AlertRule{rule}},
 		eventStore,
 		&mockAlertChannelStore{},
@@ -564,7 +559,7 @@ func TestEvaluateRulesMTSQueryError(t *testing.T) {
 		Severity: model.AlertSeverityWarning,
 	}
 
-	a := New(
+	a := newTestAlerter(
 		&mockAlertRuleStore{rules: []model.AlertRule{rule}},
 		&mockAlertEventStore{},
 		&mockAlertChannelStore{},
@@ -591,7 +586,7 @@ func TestEvaluateRulesTrafficQuotaUsage(t *testing.T) {
 	mtsStore := &mockMTSStore{traffic: map[string]model.TrafficTotals{
 		node.ID: {Sent: 400, Received: 500, TrackedSince: &trackedSince},
 	}}
-	a := New(
+	a := newTestAlerter(
 		&mockAlertRuleStore{rules: []model.AlertRule{rule}}, eventStore,
 		&mockAlertChannelStore{}, mtsStore, &mockNodeStore{nodes: []model.Node{node}},
 	)
@@ -636,9 +631,7 @@ func TestEvaluateRulesTrafficQuotaUsesMTSAggregation(t *testing.T) {
 		},
 	}
 	for _, sample := range samples {
-		if err := mtsStore.WriteNodeMetrics(ctx, sample); err != nil {
-			t.Fatalf("write MTS sample: %v", err)
-		}
+		writeFreshAgentSample(t, mtsStore, agentAlertSample{sample: sample, interval: time.Minute})
 	}
 	if err := mtsStore.Flush(ctx); err != nil {
 		t.Fatalf("flush MTS samples: %v", err)
@@ -653,7 +646,7 @@ func TestEvaluateRulesTrafficQuotaUsesMTSAggregation(t *testing.T) {
 		Operator: "gt", Threshold: 70, Duration: 0, Severity: model.AlertSeverityWarning,
 	}
 	eventStore := &mockAlertEventStore{}
-	a := New(
+	a := newTestAlerter(
 		&mockAlertRuleStore{rules: []model.AlertRule{rule}}, eventStore,
 		&mockAlertChannelStore{}, mtsStore, &mockNodeStore{nodes: []model.Node{node}},
 	)
@@ -700,7 +693,7 @@ func TestEvaluateRulesTrafficQuotaSkipsUnavailableUsage(t *testing.T) {
 			}
 			eventStore := &mockAlertEventStore{}
 			mtsStore := &mockMTSStore{traffic: map[string]model.TrafficTotals{test.node.ID: test.totals}}
-			a := New(
+			a := newTestAlerter(
 				&mockAlertRuleStore{rules: []model.AlertRule{rule}}, eventStore,
 				&mockAlertChannelStore{}, mtsStore, &mockNodeStore{nodes: []model.Node{test.node}},
 			)
@@ -728,7 +721,7 @@ func TestEvaluateRulesTrafficQuotaQueryErrorFailsIteration(t *testing.T) {
 		ID: "rule", Metric: model.MetricTrafficUsagePercent,
 		Operator: "gt", Threshold: 80, Duration: 0,
 	}
-	a := New(
+	a := newTestAlerter(
 		&mockAlertRuleStore{rules: []model.AlertRule{rule}}, &mockAlertEventStore{},
 		&mockAlertChannelStore{}, &mockMTSStore{trafficErr: want},
 		&mockNodeStore{nodes: []model.Node{node}},
@@ -755,7 +748,7 @@ func TestEvaluateRulesMTSQueryErrorDoesNotResolveActiveEvent(t *testing.T) {
 		t.Fatalf("seed event: %v", err)
 	}
 
-	a := New(
+	a := newTestAlerter(
 		&mockAlertRuleStore{rules: []model.AlertRule{rule}}, eventStore,
 		&mockAlertChannelStore{}, &mockMTSStore{err: want},
 		&mockNodeStore{nodes: []model.Node{node}},
@@ -795,7 +788,7 @@ func TestEvaluateRulesMTSQueryErrorContinuesAvailabilityRules(t *testing.T) {
 		Severity: model.AlertSeverityCritical,
 	}
 	eventStore := &mockAlertEventStore{}
-	a := New(
+	a := newTestAlerter(
 		&mockAlertRuleStore{rules: []model.AlertRule{resourceRule, availabilityRule}}, eventStore,
 		&mockAlertChannelStore{}, &mockMTSStore{err: want},
 		&mockNodeStore{nodes: []model.Node{onlineNode, offlineNode}},
@@ -830,7 +823,7 @@ func TestEvaluateRulesLTThreshold(t *testing.T) {
 	}
 	eventStore := &mockAlertEventStore{}
 
-	a := New(
+	a := newTestAlerter(
 		&mockAlertRuleStore{rules: []model.AlertRule{rule}},
 		eventStore,
 		&mockAlertChannelStore{},
@@ -911,101 +904,13 @@ func TestFormatAlertMessage(t *testing.T) {
 	}
 }
 
-func TestPushToChannelsWebhook(t *testing.T) {
-	serverReceived := false
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		serverReceived = true
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer server.Close()
-
-	channelStore := &mockAlertChannelStore{
-		channels: []model.AlertChannel{
-			{ID: "ch-1", Name: "Webhook", ChannelType: "webhook", Config: server.URL, Enabled: true},
-		},
-	}
-
-	a := New(
-		&mockAlertRuleStore{},
-		&mockAlertEventStore{},
-		channelStore,
-		&mockMTSStore{},
-		&mockNodeStore{},
-	)
-
-	event := &model.AlertEvent{
-		ID: "ev-1", RuleID: "rule-1", NodeID: "node-1",
-		Message: "test", Value: 95, Status: model.AlertStatusTriggered,
-		TriggeredAt: time.Now(),
-	}
-
-	err := a.pushToChannels(context.Background(), event)
-	if err != nil {
-		t.Fatalf("expected no error, got %v", err)
-	}
-
-	if !serverReceived {
-		t.Error("expected webhook server to receive request")
-	}
-}
-
-func TestPushToChannelsListError(t *testing.T) {
-	channelStore := &mockAlertChannelStore{err: fmt.Errorf("db error")}
-
-	a := New(
-		&mockAlertRuleStore{},
-		&mockAlertEventStore{},
-		channelStore,
-		&mockMTSStore{},
-		&mockNodeStore{},
-	)
-
-	event := &model.AlertEvent{
-		ID: "ev-1", RuleID: "rule-1", NodeID: "node-1",
-		Message: "test", Value: 95, Status: model.AlertStatusTriggered,
-		TriggeredAt: time.Now(),
-	}
-
-	err := a.pushToChannels(context.Background(), event)
-	if err == nil {
-		t.Error("expected error, got nil")
-	}
-}
-
-func TestPushToChannelsUnknownType(t *testing.T) {
-	channelStore := &mockAlertChannelStore{
-		channels: []model.AlertChannel{
-			{ID: "ch-1", Name: "Unknown", ChannelType: "sms", Config: "{}", Enabled: true},
-		},
-	}
-
-	a := New(
-		&mockAlertRuleStore{},
-		&mockAlertEventStore{},
-		channelStore,
-		&mockMTSStore{},
-		&mockNodeStore{},
-	)
-
-	event := &model.AlertEvent{
-		ID: "ev-1", RuleID: "rule-1", NodeID: "node-1",
-		Message: "test", Value: 95, Status: model.AlertStatusTriggered,
-		TriggeredAt: time.Now(),
-	}
-
-	err := a.pushToChannels(context.Background(), event)
-	if err != nil {
-		t.Fatalf("expected no error for unknown channel type, got %v", err)
-	}
-}
-
 func TestTriggerAlertGetActiveEventError(t *testing.T) {
 	rule := &model.AlertRule{ID: "rule-1", Name: "test", Metric: "cpu", Severity: model.AlertSeverityWarning}
 	node := &model.Node{ID: "node-1", Name: "test"}
 
 	eventStore := &mockAlertEventStore{getActiveErr: fmt.Errorf("db error")}
 
-	a := New(
+	a := newTestAlerter(
 		&mockAlertRuleStore{},
 		eventStore,
 		&mockAlertChannelStore{},
@@ -1013,7 +918,7 @@ func TestTriggerAlertGetActiveEventError(t *testing.T) {
 		&mockNodeStore{},
 	)
 
-	err := a.triggerAlert(context.Background(), rule, node, 90)
+	err := a.triggerAlert(context.Background(), alertEvaluation{rule: rule, node: node, value: 90})
 	if err == nil {
 		t.Error("expected error, got nil")
 	}
@@ -1025,7 +930,7 @@ func TestTriggerAlertCreateEventError(t *testing.T) {
 
 	eventStore := &mockAlertEventStore{createErr: fmt.Errorf("db error")}
 
-	a := New(
+	a := newTestAlerter(
 		&mockAlertRuleStore{},
 		eventStore,
 		&mockAlertChannelStore{},
@@ -1033,7 +938,7 @@ func TestTriggerAlertCreateEventError(t *testing.T) {
 		&mockNodeStore{},
 	)
 
-	err := a.triggerAlert(context.Background(), rule, node, 90)
+	err := a.triggerAlert(context.Background(), alertEvaluation{rule: rule, node: node, value: 90})
 	if err == nil {
 		t.Error("expected error, got nil")
 	}
@@ -1045,7 +950,7 @@ func TestResolveAlertGetActiveEventError(t *testing.T) {
 
 	eventStore := &mockAlertEventStore{getActiveErr: fmt.Errorf("db error")}
 
-	a := New(
+	a := newTestAlerter(
 		&mockAlertRuleStore{},
 		eventStore,
 		&mockAlertChannelStore{},
@@ -1053,7 +958,7 @@ func TestResolveAlertGetActiveEventError(t *testing.T) {
 		&mockNodeStore{},
 	)
 
-	err := a.resolveAlert(context.Background(), rule, node, 50)
+	err := a.resolveAlert(context.Background(), alertEvaluation{rule: rule, node: node, value: 50})
 	if err == nil {
 		t.Error("expected error, got nil")
 	}
@@ -1065,7 +970,7 @@ func TestResolveAlertNoActiveEvent(t *testing.T) {
 
 	eventStore := &mockAlertEventStore{}
 
-	a := New(
+	a := newTestAlerter(
 		&mockAlertRuleStore{},
 		eventStore,
 		&mockAlertChannelStore{},
@@ -1073,7 +978,7 @@ func TestResolveAlertNoActiveEvent(t *testing.T) {
 		&mockNodeStore{},
 	)
 
-	err := a.resolveAlert(context.Background(), rule, node, 50)
+	err := a.resolveAlert(context.Background(), alertEvaluation{rule: rule, node: node, value: 50})
 	if err != nil {
 		t.Errorf("expected no error when no active event, got %v", err)
 	}
@@ -1089,7 +994,7 @@ func TestResolveAlertUpdateEventError(t *testing.T) {
 		Status: model.AlertStatusTriggered, TriggeredAt: time.Now(),
 	})
 
-	a := New(
+	a := newTestAlerter(
 		&mockAlertRuleStore{},
 		eventStore,
 		&mockAlertChannelStore{},
@@ -1097,14 +1002,14 @@ func TestResolveAlertUpdateEventError(t *testing.T) {
 		&mockNodeStore{},
 	)
 
-	err := a.resolveAlert(context.Background(), rule, node, 50)
+	err := a.resolveAlert(context.Background(), alertEvaluation{rule: rule, node: node, value: 50})
 	if err == nil {
 		t.Error("expected error, got nil")
 	}
 }
 
 func TestStartContextCancellation(t *testing.T) {
-	a := New(
+	a := newTestAlerter(
 		&mockAlertRuleStore{},
 		&mockAlertEventStore{},
 		&mockAlertChannelStore{},
@@ -1137,7 +1042,7 @@ func TestEvaluateCustomMetricRule(t *testing.T) {
 	}
 	eventStore := &mockAlertEventStore{}
 
-	a := New(
+	a := newTestAlerter(
 		&mockAlertRuleStore{rules: []model.AlertRule{rule}},
 		eventStore,
 		&mockAlertChannelStore{},
@@ -1171,7 +1076,7 @@ func TestEvaluateCustomMetricRuleNoData(t *testing.T) {
 		Severity: model.AlertSeverityWarning,
 	}
 	eventStore := &mockAlertEventStore{}
-	a := New(
+	a := newTestAlerter(
 		&mockAlertRuleStore{rules: []model.AlertRule{rule}},
 		eventStore,
 		&mockAlertChannelStore{},
@@ -1202,7 +1107,7 @@ func TestEvaluateRulesDoesNotAutoResolveAcknowledged(t *testing.T) {
 		AcknowledgedAt: &now,
 	})
 
-	a := New(
+	a := newTestAlerter(
 		&mockAlertRuleStore{rules: []model.AlertRule{rule}},
 		eventStore,
 		&mockAlertChannelStore{},
@@ -1245,7 +1150,7 @@ func TestEvaluateRulesDoesNotRetriggerAcknowledged(t *testing.T) {
 	})
 
 	// Metric still above threshold; engine must not create a duplicate event.
-	a := New(
+	a := newTestAlerter(
 		&mockAlertRuleStore{rules: []model.AlertRule{rule}},
 		eventStore,
 		&mockAlertChannelStore{},
@@ -1267,7 +1172,7 @@ func TestEvaluateRulesDoesNotRetriggerAcknowledged(t *testing.T) {
 }
 
 func TestAlerterObserverHooks(t *testing.T) {
-	alerter := New(nil, nil, nil, nil, nil)
+	alerter := newTestAlerter(nil, nil, nil, nil, nil)
 	var observed error
 	alerter.SetObserver(func(err error) { observed = err })
 	if alerter.EvaluationInterval() <= 0 {

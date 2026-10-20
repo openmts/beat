@@ -12,7 +12,7 @@ import (
 
 func setupTestDB(t *testing.T) *store.SQLiteStore {
 	t.Helper()
-	s, err := store.NewSQLiteStore("file::memory:?cache=shared")
+	s, err := store.NewSQLiteStore(handlerFixturePath(t))
 	if err != nil {
 		t.Fatalf("failed to create test database: %v", err)
 	}

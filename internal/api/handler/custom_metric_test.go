@@ -20,10 +20,12 @@ type fakeCustomMetricDispatcher struct {
 	err       error
 }
 
-func (f *fakeCustomMetricDispatcher) RegisterNodeCustomMetrics(_ context.Context, nodeID string) error {
+func (f *fakeCustomMetricDispatcher) DispatchCustomMetricTasks(_ context.Context, tasks []model.AgentTask) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.registers = append(f.registers, nodeID)
+	for _, task := range tasks {
+		f.registers = append(f.registers, task.NodeID)
+	}
 	return f.err
 }
 

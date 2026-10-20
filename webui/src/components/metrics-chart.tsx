@@ -7,12 +7,12 @@ import {
   Tooltip,
   ResponsiveContainer,
 } from "recharts"
-import type { MetricDataPoint } from "@/types"
 import { useLocale } from "@/context/locale"
 import { formatMetricValue, type MetricValueFormat } from "@/lib/metric-format"
+import { dateTimeFormatter } from "@/lib/intl-format"
 
 interface MetricsChartProps {
-  data?: MetricDataPoint[]
+  data?: { timestamp: number; value: number | null }[]
   title: string
   color: string
   valueFormat: MetricValueFormat
@@ -26,29 +26,25 @@ function toDate(value: number | string): Date | null {
   return Number.isNaN(ts) ? null : new Date(ts * 1000)
 }
 
-function formatAxisTimestamp(value: number | string, rangeHours: number): string {
+function formatAxisTimestamp(value: number | string, rangeHours: number, locale?: string): string {
   const date = toDate(value)
   if (!date) return ""
   if (rangeHours >= 168) {
-    return date.toLocaleString(undefined, {
-      month: "numeric",
-      day: "numeric",
-      hour: "2-digit",
-    })
+    return dateTimeFormatter(locale, { month: "numeric", day: "numeric", hour: "2-digit" }).format(date)
   }
-  return date.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })
+  return dateTimeFormatter(locale, { hour: "2-digit", minute: "2-digit" }).format(date)
 }
 
-function formatTooltipTimestamp(value: number | string): string {
+function formatTooltipTimestamp(value: number | string, locale?: string): string {
   const date = toDate(value)
   if (!date) return ""
-  return date.toLocaleString(undefined, {
+  return dateTimeFormatter(locale, {
     month: "numeric",
     day: "numeric",
     hour: "2-digit",
     minute: "2-digit",
     second: "2-digit",
-  })
+  }).format(date)
 }
 
 export function MetricsChart({
@@ -60,8 +56,8 @@ export function MetricsChart({
   to,
   rangeHours,
 }: MetricsChartProps) {
-  const { t } = useLocale()
-  if (!data || data.length === 0) {
+  const { locale, t } = useLocale()
+  if (!data || data.length === 0 || data.every((point) => point.value === null)) {
     return (
       <div className="flex h-56 flex-col gap-2">
         <h3 className="text-sm font-medium">{title}</h3>
@@ -84,7 +80,7 @@ export function MetricsChart({
             scale="linear"
             domain={[from, to]}
             allowDataOverflow
-            tickFormatter={(value) => formatAxisTimestamp(value, rangeHours)}
+            tickFormatter={(value) => formatAxisTimestamp(value, rangeHours, locale)}
             fontSize={11}
             tickLine={false}
             axisLine={false}
@@ -99,8 +95,8 @@ export function MetricsChart({
             tickFormatter={(value) => formatMetricValue(value, valueFormat)}
           />
           <Tooltip
-            labelFormatter={(label) => formatTooltipTimestamp(label as number)}
-            formatter={(value) => [formatMetricValue(Number(value), valueFormat), title]}
+            labelFormatter={(label) => formatTooltipTimestamp(label as number, locale)}
+            formatter={(value) => [value === null || value === undefined ? "--" : formatMetricValue(Number(value), valueFormat), title]}
             contentStyle={{
               fontSize: "12px",
               borderRadius: "8px",
@@ -113,6 +109,7 @@ export function MetricsChart({
             stroke={color}
             strokeWidth={2}
             dot={false}
+            connectNulls={false}
             activeDot={{ r: 4 }}
           />
         </LineChart>

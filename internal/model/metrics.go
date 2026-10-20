@@ -7,6 +7,7 @@ import (
 )
 
 type NodeMetrics struct {
+	CapturedAt     time.Time  `json:"-"`
 	SystemInfo     SystemInfo `json:"-"`
 	CPU            float64    `json:"cpu"`
 	CPUUsed        float64    `json:"cpu_used"`

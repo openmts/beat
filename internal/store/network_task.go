@@ -98,7 +98,7 @@ func (s *NetworkTaskStore) UpdateTask(
 
 func (s *NetworkTaskStore) GetTask(ctx context.Context, id string) (*model.NetworkTask, error) {
 	task, err := scanNetworkTask(s.db.QueryRowContext(ctx,
-		"SELECT "+networkTaskColumns+" FROM network_tasks WHERE id = ?", id,
+		"SELECT "+networkTaskColumns+" FROM network_tasks WHERE id = ? AND lifecycle_state = 'active'", id,
 	))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
@@ -114,9 +114,9 @@ func (s *NetworkTaskStore) GetTask(ctx context.Context, id string) (*model.Netwo
 }
 
 func (s *NetworkTaskStore) ListTasks(ctx context.Context, publicOnly bool) ([]model.NetworkTask, error) {
-	query := "SELECT " + networkTaskColumns + " FROM network_tasks"
+	query := "SELECT " + networkTaskColumns + " FROM network_tasks WHERE lifecycle_state = 'active'"
 	if publicOnly {
-		query += " WHERE enabled = 1 AND is_public = 1"
+		query += " AND enabled = 1 AND is_public = 1"
 	}
 	query += " ORDER BY sort_order ASC, name ASC"
 	rows, err := s.db.QueryContext(ctx, query)

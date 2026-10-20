@@ -1,5 +1,6 @@
 import axios from "axios"
 import { emitAuthInvalidated } from "@/lib/auth"
+import { APIError } from "@/lib/api-error"
 
 export const api = axios.create({
   baseURL: "/api/v1",
@@ -21,6 +22,6 @@ api.interceptors.response.use(
       error.response?.data?.message ||
       error.message ||
       "Unknown error"
-    return Promise.reject(new Error(message))
+    return Promise.reject(new APIError(message, error.response?.status, error.response?.headers?.["retry-after"] ?? null))
   },
 )

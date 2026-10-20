@@ -14,6 +14,7 @@ import {
 import {
   FolderTreeIcon,
   ServerIcon,
+  PlugZapIcon,
   KeyIcon,
   TerminalIcon,
   BellIcon,
@@ -22,57 +23,39 @@ import {
   Settings2Icon,
   ShieldCheckIcon,
   GaugeIcon,
+  ChartLineIcon,
+  UserRoundPlusIcon,
 } from "lucide-react"
 import { useLocale } from "@/context/locale"
 import { useSiteSettings } from "@/context/site-settings"
 import { cn } from "@/lib/utils"
 
-const navItems = [
-  {
-    labelKey: "security.title",
-    icon: ShieldCheckIcon,
-    to: "/admin/security",
-  },
-  {
-    labelKey: "group.manage",
-    icon: FolderTreeIcon,
-    to: "/admin/groups",
-  },
-  {
-    labelKey: "app.nodes",
-    icon: ServerIcon,
-    to: "/admin/nodes",
-  },
-  {
-    labelKey: "ssh.keys",
-    icon: KeyIcon,
-    to: "/admin/ssh-keys",
-  },
-  {
-    labelKey: "terminal.title",
-    icon: TerminalIcon,
-    to: "/admin/terminal",
-  },
-  {
-    labelKey: "custom_metric.title",
-    icon: GaugeIcon,
-    to: "/admin/custom-metrics",
-  },
-  {
-    labelKey: "alert.manage",
-    icon: BellIcon,
-    to: "/admin/alerts",
-  },
-  {
-    labelKey: "network.manage",
-    icon: ActivityIcon,
-    to: "/admin/network",
-  },
-  {
-    labelKey: "settings.site",
-    icon: Settings2Icon,
-    to: "/admin/settings",
-  },
+const accessNavItems = [
+  { labelKey: "setup.title", icon: PlugZapIcon, to: "/admin/agent-setup" },
+  { labelKey: "setup.enrollment", icon: UserRoundPlusIcon, to: "/admin/enrollment" },
+  { labelKey: "app.nodes", icon: ServerIcon, to: "/admin/nodes" },
+  { labelKey: "group.manage", icon: FolderTreeIcon, to: "/admin/groups" },
+  { labelKey: "ssh.keys", icon: KeyIcon, to: "/admin/ssh-keys" },
+]
+const managementNavItems = [
+  { labelKey: "accelerator.title", icon: GaugeIcon, to: "/admin/accelerators" },
+  { labelKey: "lifecycle.title", icon: ServerIcon, to: "/admin/lifecycle" },
+  { labelKey: "custom_metric.title", icon: GaugeIcon, to: "/admin/custom-metrics" },
+  { labelKey: "workspace.title", icon: ChartLineIcon, to: "/admin/metrics" },
+  { labelKey: "alert.manage", icon: BellIcon, to: "/admin/alerts" },
+  { labelKey: "network.manage", icon: ActivityIcon, to: "/admin/network" },
+  { labelKey: "settings.site", icon: Settings2Icon, to: "/admin/settings" },
+]
+const advancedNavItems = [
+  { labelKey: "agent.releases", icon: PlugZapIcon, to: "/admin/agent-releases" },
+  { labelKey: "operations.title", icon: TerminalIcon, to: "/admin/operations" },
+  { labelKey: "terminal.title", icon: TerminalIcon, to: "/admin/terminal" },
+  { labelKey: "security.title", icon: ShieldCheckIcon, to: "/admin/security" },
+]
+const navGroups = [
+  { labelKey: "nav.access_and_nodes", items: accessNavItems },
+  { labelKey: "nav.platform_management", items: managementNavItems },
+  { labelKey: "nav.advanced_operations", items: advancedNavItems },
 ]
 
 function AdminSidebar() {
@@ -96,28 +79,15 @@ function AdminSidebar() {
         </span>
       </SidebarHeader>
       <SidebarContent>
-        <SidebarGroup>
-          <SidebarGroupLabel>{t("app.admin")}</SidebarGroupLabel>
+        {navGroups.map(group => <SidebarGroup key={group.labelKey}>
+          <SidebarGroupLabel>{t(group.labelKey)}</SidebarGroupLabel>
           <SidebarGroupContent>
-            {navItems.map((item) => {
-              const isActive =
-                location.pathname === item.to ||
-                (item.to !== "/admin/settings" && location.pathname.startsWith(item.to))
-              return (
-                <SidebarMenuItem key={item.to}>
-                  <SidebarMenuButton
-                    render={<Link to={item.to} />}
-                    isActive={isActive}
-                    tooltip={t(item.labelKey)}
-                  >
-                    <item.icon data-icon="inline-start" />
-                    <span className={cn(isActive && "font-medium")}>{t(item.labelKey)}</span>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-              )
+            {group.items.map(item => {
+              const isActive = location.pathname === item.to || (item.to !== "/admin/settings" && location.pathname.startsWith(item.to))
+              return <SidebarMenuItem key={item.to}><SidebarMenuButton render={<Link to={item.to} />} isActive={isActive} tooltip={t(item.labelKey)}><item.icon data-icon="inline-start" /><span className={cn(isActive && "font-medium")}>{t(item.labelKey)}</span></SidebarMenuButton></SidebarMenuItem>
             })}
           </SidebarGroupContent>
-        </SidebarGroup>
+        </SidebarGroup>)}
       </SidebarContent>
       <SidebarSeparator />
       <SidebarFooter>

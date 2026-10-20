@@ -1,0 +1,7 @@
+import { workspaceNode } from "./metric-workspace-fixtures"
+import type { OperationPolicyRecord, OperationTask, OperationSnippet, OperationTransfer } from "@/types/operations"
+export const operationNode = () => workspaceNode("node-one")
+export const operationPolicy = (): OperationPolicyRecord => ({ id:"policy-one", name:"Production policy", version:1, node_ids:["node-one"],group_ids:[],policy:{enabled:true,kinds:["shell","snippet","deploy","collect"],maximum_targets:10,maximum_active_tasks:20,concurrency:1,timeout_seconds:120,output_bytes:65536,allow_root:true,require_scan:false,roots:[{id:"files",name:"Shared files",read:true,write:true,maximum_bytes:1048576,overwrite:true,executable:true}]}})
+export const operationTask = (): OperationTask => ({ id:"task-one",kind:"shell",actor_id:"owner",created_at:Date.now(),expires_at:Date.now()+60000,cancel_requested:false,state:"unknown",target_count:1,succeeded_count:0,failed_count:0,pending_count:0,running_count:0,targets:[{id:"target-one",node_id:"node-one",node_name:"Production host",state:"unknown",attempt_id:"attempt-one"}] })
+export const operationSnippet = (): OperationSnippet => ({owner_id:"owner",id:"snippet-one",name:"Inspect host",description:"Collect host information",visibility:"shared",version:2,shell_family:"sh",fingerprint:"fingerprint",approved:true})
+export const operationTransfer = (): OperationTransfer => ({id:"transfer-one",direction:"deploy",state:"uploading",size:3,digest:"digest",expires_at:Date.now()+60000,missing_chunks:[0],targets:[]})

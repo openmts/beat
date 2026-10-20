@@ -67,6 +67,7 @@ func TestSPARouterPreservesAPI(t *testing.T) {
 func TestSPACacheHeaders(t *testing.T) {
 	staticDir := t.TempDir()
 	writeStaticFile(t, staticDir, "index.html", "app-shell")
+	writeStaticFile(t, staticDir, "sw.js", "service-worker")
 	writeStaticFile(t, staticDir, "assets/app.js", "code")
 	handler := newSPAHandler(staticDir)
 
@@ -81,8 +82,32 @@ func TestSPACacheHeaders(t *testing.T) {
 	indexRequest.Header.Set("Accept", "text/html")
 	indexResponse := httptest.NewRecorder()
 	handler.ServeHTTP(indexResponse, indexRequest)
-	if got := indexResponse.Header().Get("Cache-Control"); got != "no-cache" {
+	if got := indexResponse.Header().Get("Cache-Control"); got != "no-store" {
 		t.Fatalf("index Cache-Control = %q", got)
+	}
+
+	shellRequest := httptest.NewRequest(http.MethodGet, "/node/node-one", nil)
+	shellRequest.Header.Set("Accept", "text/html")
+	shellRequest.Header.Set("If-Modified-Since", "Fri, 16 Oct 2026 00:00:00 GMT")
+	shellRequest.Header.Set("If-None-Match", `W/"stale"`)
+	shellResponse := httptest.NewRecorder()
+	handler.ServeHTTP(shellResponse, shellRequest)
+	if shellResponse.Code != http.StatusOK || shellResponse.Body.String() != "app-shell" {
+		t.Fatalf("conditional shell response = %d %q", shellResponse.Code, shellResponse.Body.String())
+	}
+	if got := shellResponse.Header().Get("Cache-Control"); got != "no-store" {
+		t.Fatalf("conditional shell Cache-Control = %q", got)
+	}
+
+	workerRequest := httptest.NewRequest(http.MethodGet, "/sw.js", nil)
+	workerRequest.Header.Set("If-Modified-Since", "Fri, 16 Oct 2026 00:00:00 GMT")
+	workerResponse := httptest.NewRecorder()
+	handler.ServeHTTP(workerResponse, workerRequest)
+	if workerResponse.Code != http.StatusOK || workerResponse.Body.String() != "service-worker" {
+		t.Fatalf("conditional worker response = %d %q", workerResponse.Code, workerResponse.Body.String())
+	}
+	if got := workerResponse.Header().Get("Cache-Control"); got != "no-store" {
+		t.Fatalf("worker Cache-Control = %q", got)
 	}
 }
 

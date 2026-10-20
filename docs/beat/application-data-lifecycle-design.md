@@ -2,7 +2,7 @@
 
 Updated: 2026-07-30
 
-Status: reviewed design; implementation requires explicit approval
+Status: reviewed design; owner approved implementation on 2026-10-15 (blanket approval of all pending items)
 
 ## Goal and current evidence
 
@@ -61,7 +61,7 @@ contract below as a commercial durability and operability baseline.
 
 ## Canonical migration
 
-Canonical SQLite migration `v19 application-data-lifecycle` follows `v18`
+Canonical SQLite migration `v24 application-data-lifecycle` follows `v23`
 Fleet status summaries and adds:
 
 - one `application_retention_settings` row containing alert-event, audit-event,
@@ -202,7 +202,7 @@ ready when the worker exits or cannot acquire its required store ownership.
 
 Tests cover:
 
-- fresh `v19`, sequential `v1-v19` upgrade equivalence, future-version
+- fresh `v24`, sequential `v1-v24` upgrade equivalence, future-version
   rejection, backup `v4` creation/restore, and pre-migration rollback;
 - proof that SQLite contains no Agent/probe/traffic/chart time-series rows;
 - cursor order, duplicate timestamps, filter binding, maximum limits, malformed
@@ -226,13 +226,132 @@ cannot modify live data.
 
 ## Approval and rollback
 
-Implementation requires explicit approval for migration `v19`, application
+Implementation requires explicit approval for migration `v24`, application
 retention settings, alert display snapshots and indexes, cursor API response
 changes, the active-session cap, the independent cleanup worker, new backup
 states, startup filesystem/SQLite reconciliation, restore generation checks,
 and delete/stage ordering changes.
 
-Before the first `v19` write, rollback may restore the pre-migration backup.
+Before the first `v24` write, rollback may restore the pre-migration backup.
 After migration, old binaries must not open the newer schema; rollback restores
-the matching pre-`v19` SQLite, MTS, backup directory, journal, Server, Agent,
+the matching pre-`v24` SQLite, MTS, backup directory, journal, Server, Agent,
 and frontend artifacts.
+
+## Implementation status, 2026-10-15
+
+Batch 1 (retention policy, cleanup worker, alert display snapshots, indexes),
+batch 2 (cursor queries and the session cap), and batch 3 (backup lifecycle,
+reconciliation, and restore generations) are implemented on this date.
+
+Shipped:
+
+- migration `v24` (`MigrateApplicationDataLifecycle`) creates the single-row
+  `application_retention_settings` table with the 180/180/03:00-enabled defaults,
+  adds the alert-event cursor indexes, and adds `rule_name_snapshot` /
+  `node_name_snapshot` to `alert_events` with an idempotent backfill that never
+  falls back to an ID. The last reserved no-op migration helper is gone, so the
+  `v1`-`v25` ledger is consecutive real DDL;
+- `internal/store/application_retention.go` owns bounded batch deletes: resolved
+  alert events older than policy (triggered incidents are never touched), audit
+  events older than policy, and sessions whose absolute expiry or revocation is
+  older than the fixed 30-day window;
+- `internal/applicationgc.Service` supervises the `application_gc` worker. It
+  starts at most once per UTC day at the configured hour, deletes in 500-row
+  batches with a short yield between batches, caps a run at 10 minutes, records
+  `success`/`failed` with a fixed `timeout`/`cancelled`/`storage` code, and
+  recovers an interrupted `running` row before HTTP serves;
+- `GET`/`PUT /api/v1/settings/application-retention` and
+  `POST /api/v1/settings/application-retention/run` are admin-only, and a manual
+  run while one is in flight returns `409`;
+- Data and storage gained an "Application history" tab beside MTS retention and
+  exceptional erasure, showing policy, the fixed session window, the last run
+  with its trigger and deleted counts, and the sanitized failure category;
+- `GET /api/v1/alerts/events` is cursor-paginated
+  (`internal/store/alert_event_list.go`): default page 50, hard maximum 200,
+  opaque `(triggered_at, id)` cursors, `status` / `rule_id` / `node_id` /
+  `from` / `to` filters, and a `next_cursor`. Cursors are versioned and bound to
+  the normalized filter, so reuse across filters returns `400`. The response is
+  `{items, next_cursor}` and the browser no longer filters or loads the full
+  history;
+- the alert-event response carries the immutable `rule_name_snapshot` /
+  `node_name_snapshot` values written when the incident is created
+  (`CreateActiveEventTx`). The admin table renders the snapshot and, when an
+  entity was already gone, the explicit "Deleted node" / "Deleted rule" label
+  instead of an ID;
+- `GET /api/v1/admin/sessions` is now an explicit bounded page: it returns only
+  sessions that are still active or were revoked within the last 24 hours,
+  orders active sessions first, honours `limit` (1-200, default 50), and keeps
+  the current-session marker. Invalid limits return `400`;
+- successful login enforces the 32-active-session cap inside the same
+  immediate transaction (`enforceActiveSessionCap`): the oldest excess active
+  sessions are revoked, and one `session.cap_revoke` audit event carrying the
+  revoked count and the cap is committed through the existing login envelope;
+- `GET /api/v1/admin/audit-events` replaced offset traversal with the same
+  opaque `(created_at, id)` cursor contract (`internal/store/audit_event.go`):
+  `action` and `actor_id` filters are retained and bound into the cursor,
+  `limit` is 1-200 with a default of 50, and the response is
+  `{events, next_cursor}` with no total or offset. A non-numeric or out-of-range
+  `limit`, a malformed or oversized cursor, and a cursor reused under different
+  filters all return `400`. The admin audit panel pages forward with "Load
+  more".
+
+Batch 3 shipped the backup contracts in the same `v24` migration:
+
+- `MigrateBackupLifecycle` rebuilds `admin_backups` inside the migration
+  transaction with the `staging`, `staged`, `interrupted`, `missing`, and
+  `deleting` states, plus `restore_generation`, `previous_state`, `updated_at`,
+  and `reconciled_at`; existing rows keep their data and start at
+  `updated_at = created_at`. `admin_backup_quarantine` records quarantined
+  orphan archives;
+- `GET /api/v1/admin/backups` is bounded: default page 50, hard maximum 200,
+  opaque `(created_at, id)` cursors with nanosecond timestamps, an optional
+  `state` filter bound into the cursor, and an `{items, next_cursor}` response.
+  Malformed cursors, out-of-range limits, and unknown states return `400`;
+- `backup.Service.Reconcile` runs after the data directory is locked and before
+  HTTP serves: a `running` row becomes `interrupted` unless its archive passes
+  complete validation (then `ready`); a `ready`/`validated` row whose regular
+  archive is gone becomes `missing`; `deleting` rows finish idempotently;
+  `staging` rows and `staged` rows without a matching generation roll back to
+  their previous state; a `pending` online journal is discarded unless a
+  `staged` row with the same generation confirms it; orphan archives move to
+  the private quarantine inventory; generated `*.partial` paths and stale
+  journal temporaries are removed. Only regular files inside the backup
+  directory are touched, so symlinks and directories are never followed,
+  renamed, or deleted, and unrecoverable deletions stay visible as `deleting`
+  instead of failing startup;
+- terminal `failed`/`interrupted`/`missing` rows expire after a fixed 90-day
+  window, and every transition commits its audit event in the same transaction
+  as the state change (system actor for reconciliation, administrator plus
+  request ID for browser actions);
+- restore staging commits `staging` with a random generation, then writes the
+  private journal, then commits `staged`; a failure at any step rolls back to
+  the pre-staging state. Startup applies a pending restore only when the live
+  SQLite row is `staged` with the journal's generation, so an uncommitted
+  journal can never replace live data. Deleting a backup commits `deleting`,
+  removes the archive, then deletes the row;
+- Data and storage renders the reconciled states with "Load more" paging and a
+  retryable delete for `deleting` rows.
+
+Not shipped in these batches:
+
+- backups have no dedicated retention setting: the terminal window is a fixed
+  90-day constant rather than a configurable policy, so the overview still does
+  not echo a backup retention value.
+
+Recorded deviations:
+
+- `session_retention_days` is echoed as a fixed read-only value, because session
+  hygiene is security policy rather than operator data retention;
+- the alert-event, audit-event, and backup cursors are versioned and bound to
+  the normalized filter but are not cryptographically signed. They carry only
+  the sort key, the row ID, and filter values the caller already sent, and the
+  routes are admin/service-token only, so a forged cursor cannot widen access;
+  signing was left out rather than plumbing a second server key into the store;
+- restore staging has no idempotency-key table. A retry after a lost response
+  sees the committed `staged` state through `GET /api/v1/admin/backups` and is
+  rejected with `409` instead of creating a second restore request, which is
+  the resolution the invariants above require;
+- `StageOffline` journals carry `origin: "offline"` and are applied without a
+  SQLite record, because the local operator recovery command exists precisely
+  for the case where the live database is missing. Online staging always
+  requires the `staged` row and its generation.

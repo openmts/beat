@@ -8,7 +8,7 @@ import (
 func TestSiteSettingsDefaultsAndNormalization(t *testing.T) {
 	settings := DefaultSiteSettings()
 	if settings.SiteTitle != "Beat Monitor" || settings.DefaultTheme != ThemeSystem ||
-		!settings.ShowIPAddresses || !settings.ShowNetworkQuality {
+		settings.PublicAddressMode != PublicAddressHidden || !settings.ShowNetworkQuality {
 		t.Fatalf("defaults = %#v", settings)
 	}
 	settings.SiteTitle = "  Status  "
@@ -32,6 +32,8 @@ func TestSiteSettingsValidation(t *testing.T) {
 		{name: "long title", mutate: func(value *SiteSettings) { value.SiteTitle = strings.Repeat("x", 81) }},
 		{name: "long description", mutate: func(value *SiteSettings) { value.SiteDescription = strings.Repeat("x", 241) }},
 		{name: "invalid theme", mutate: func(value *SiteSettings) { value.DefaultTheme = "purple" }},
+		{name: "invalid address mode", mutate: func(value *SiteSettings) { value.PublicAddressMode = "public" }},
+		{name: "boolean address mode", mutate: func(value *SiteSettings) { value.PublicAddressMode = "true" }},
 		{name: "script URL", mutate: func(value *SiteSettings) { value.LogoURL = "javascript:alert(1)" }},
 		{name: "protocol relative URL", mutate: func(value *SiteSettings) { value.LogoURL = "//example.com/a.svg" }},
 		{name: "URL credentials", mutate: func(value *SiteSettings) { value.LogoURL = "https://user@example.com/a.svg" }},

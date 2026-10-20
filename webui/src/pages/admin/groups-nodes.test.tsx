@@ -4,11 +4,30 @@ import { beforeEach, describe, expect, it, vi } from "vitest"
 import { LocaleProvider } from "@/context/locale"
 import Groups from "@/pages/admin/groups"
 import Nodes from "@/pages/admin/nodes"
+import * as backupApi from "@/lib/backup-api"
 import * as hooks from "@/hooks/use-api"
 import * as api from "@/lib/api"
+import { APIError } from "@/lib/api-error"
+import { reauthenticateAdmin } from "@/lib/security-api"
 
+vi.mock("@/context/auth", () => ({ useAuth: () => ({ principal: { user: { id: "owner", role: "owner" }, session: { id: "session", reauthenticated_until: "2099-01-01T00:00:00Z" } } }) }))
 vi.mock("@/hooks/use-api")
 vi.mock("@/lib/api")
+vi.mock("@/lib/security-api", () => ({ reauthenticateAdmin: vi.fn() }))
+vi.mock("@/lib/backup-api", () => ({ listBackups: vi.fn(), listBackupQuarantine: vi.fn(), createBackup: vi.fn() }))
+vi.mock("@/components/ui/alert-dialog", async () => {
+  const mocks = await vi.importActual<typeof import("@/test/admin-ui-mocks")>("@/test/admin-ui-mocks")
+  return {
+    AlertDialog: mocks.MockDialog,
+    AlertDialogContent: mocks.PassThrough,
+    AlertDialogHeader: mocks.PassThrough,
+    AlertDialogTitle: mocks.PassThrough,
+    AlertDialogDescription: mocks.PassThrough,
+    AlertDialogFooter: mocks.PassThrough,
+    AlertDialogCancel: mocks.PassThrough,
+    AlertDialogAction: ({ children, ...rest }: { children: React.ReactNode }) => <button {...rest}>{children}</button>,
+  }
+})
 vi.mock("@/components/ui/dialog", async () => {
   const mocks = await vi.importActual<typeof import("@/test/admin-ui-mocks")>("@/test/admin-ui-mocks")
   return {
@@ -122,6 +141,8 @@ describe("admin groups", () => {
 describe("admin nodes", () => {
   beforeEach(() => {
     vi.resetAllMocks()
+    vi.mocked(backupApi.listBackups).mockResolvedValue({ items: [] })
+
     vi.mocked(hooks.useManagedNodes).mockReturnValue(state([node]) as never)
     vi.mocked(hooks.useGroups).mockReturnValue(state([group("g1", "Default")]) as never)
     vi.mocked(hooks.useSSHKeys).mockReturnValue(state([{
@@ -201,6 +222,8 @@ describe("admin nodes", () => {
     fireEvent.change(screen.getByLabelText("Display order"), { target: { value: "3" } })
     fireEvent.click(screen.getByRole("switch", { name: "Public visibility" }))
     fireEvent.click(screen.getByRole("button", { name: "Save" }))
+    expect(api.updateNode).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole("button", { name: "Confirm" }))
     await waitFor(() => expect(api.updateNode).toHaveBeenCalledWith("n1", {
       alias: "Changed", group_id: "g1", ssh_public_key: "",
       traffic_limit: 200 * 1024 ** 3, traffic_limit_type: "sum", traffic_reset_day: 15,
@@ -209,8 +232,11 @@ describe("admin nodes", () => {
     }))
     fireEvent.click(within(card).getByRole("button", { name: "Actions" }))
     fireEvent.click(await screen.findByRole("menuitem", { name: "Delete" }))
-    fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Delete" }))
-    await waitFor(() => expect(api.deleteNode).toHaveBeenCalledWith("n1"))
+    const deleteDialog = await screen.findByRole("dialog")
+    fireEvent.change(within(deleteDialog).getByLabelText("Entity display name"), { target: { value: "server-one" } })
+    fireEvent.click(within(deleteDialog).getByRole("checkbox"))
+    fireEvent.click(within(deleteDialog).getByRole("button", { name: "Delete" }))
+    await waitFor(() => expect(api.deleteNode).toHaveBeenCalledWith("n1", "server-one", expect.any(String)))
   })
 
   it("shows presentation state and reorders nodes within a group", async () => {
@@ -249,7 +275,10 @@ describe("admin nodes", () => {
     expect(screen.getByText("keys failed")).toBeInTheDocument()
     fireEvent.click(within(screen.getByTestId("node-card-n1")).getByRole("button", { name: "Actions" }))
     fireEvent.click(await screen.findByRole("menuitem", { name: "Delete" }))
-    fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Delete" }))
+    const deleteDialog = await screen.findByRole("dialog")
+    fireEvent.change(within(deleteDialog).getByLabelText("Entity display name"), { target: { value: "server-one" } })
+    fireEvent.click(within(deleteDialog).getByRole("checkbox"))
+    fireEvent.click(within(deleteDialog).getByRole("button", { name: "Delete" }))
     expect(await screen.findByText("delete failed")).toBeInTheDocument()
   })
 
@@ -278,6 +307,8 @@ describe("admin nodes", () => {
     fireEvent.change(screen.getByLabelText("Name"), { target: { value: " new-node " } })
     fireEvent.change(screen.getByLabelText("Host"), { target: { value: "2001:db8::1" } })
     fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Create" }))
+    expect(api.createManagedNode).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole("button", { name: "Confirm" }))
     await waitFor(() => expect(api.createManagedNode).toHaveBeenCalledWith({
       name: "new-node",
       alias: "",
@@ -309,13 +340,39 @@ describe("admin nodes", () => {
     const actions = within(screen.getByTestId("node-card-n1")).getByRole("button", { name: "Actions" })
     fireEvent.click(actions)
     fireEvent.click(await screen.findByRole("menuitem", { name: "Rotate token" }))
-    fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Rotate token" }))
+    fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Confirm" }))
     await waitFor(() => expect(api.rotateAgentToken).toHaveBeenCalledWith("n1", window.location.origin))
     fireEvent.click(screen.getByRole("button", { name: "Confirm" }))
 
     fireEvent.click(actions)
     fireEvent.click(await screen.findByRole("menuitem", { name: "Revoke token" }))
-    fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Revoke token" }))
+    fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Confirm" }))
     await waitFor(() => expect(api.revokeAgentToken).toHaveBeenCalledWith("n1"))
   })
+  it("offers immediate identity proof for an ordinary edit rejected with 428", async () => {
+    vi.mocked(api.updateNode).mockRejectedValueOnce(new APIError("Proof expired", 428)).mockResolvedValueOnce(node as never)
+    vi.mocked(reauthenticateAdmin).mockResolvedValue({ reauthenticated_until: "2099-01-01T00:00:00Z" } as never)
+    view(<Nodes />)
+    fireEvent.click(within(screen.getByTestId("node-card-n1")).getByRole("button", { name: "Edit" }))
+    fireEvent.change(screen.getByDisplayValue("Primary"), { target: { value: "Changed" } })
+    fireEvent.click(screen.getByRole("button", { name: "Save" }))
+    expect(await screen.findByLabelText("Current password")).toHaveValue("")
+    expect(api.updateNode).toHaveBeenCalledTimes(1)
+    fireEvent.change(screen.getByLabelText("Current password"), { target: { value: "current password" } })
+    fireEvent.click(screen.getByRole("button", { name: "Confirm" }))
+    await waitFor(() => expect(api.updateNode).toHaveBeenCalledTimes(2))
+    expect(reauthenticateAdmin).toHaveBeenCalledWith("current password", "")
+  })
+
+  it("does not repeat a saved mutation when only refreshing the list fails", async () => {
+    vi.mocked(hooks.useManagedNodes).mockReturnValue(state([node], { refresh: vi.fn().mockRejectedValue(new Error("unavailable")) }) as never)
+    view(<Nodes />)
+    fireEvent.click(within(screen.getByTestId("node-card-n1")).getByRole("button", { name: "Edit" }))
+    fireEvent.change(screen.getByDisplayValue("Primary"), { target: { value: "Changed" } })
+    fireEvent.click(screen.getByRole("button", { name: "Save" }))
+    expect(await screen.findByText("The change was saved, but the list could not refresh. Reload the page.")).toBeInTheDocument()
+    expect(api.updateNode).toHaveBeenCalledTimes(1)
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument()
+  })
+
 })

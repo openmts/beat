@@ -6,6 +6,8 @@ import (
 	"net/http"
 
 	"github.com/beat/backend/internal/model"
+	"github.com/beat/backend/internal/notificationqueue"
+	"github.com/beat/backend/internal/store"
 	"github.com/beat/backend/internal/trafficreport"
 )
 
@@ -86,12 +88,16 @@ func (h *TrafficReportHandler) HandleDelete(w http.ResponseWriter, r *http.Reque
 }
 
 func (h *TrafficReportHandler) HandleTestRun(w http.ResponseWriter, r *http.Request) {
-	result, err := h.service.TestRun(r.Context(), r.PathValue("id"))
-	if err != nil && result.Delivery.State == "" {
+	actor, ok := alertEventActor(w, r)
+	if !ok {
+		return
+	}
+	result, err := h.service.TestRun(trafficreport.WithActor(r.Context(), actor), r.PathValue("id"))
+	if err != nil {
 		writeTrafficReportError(w, err, "failed to test traffic report schedule")
 		return
 	}
-	JSONResponse(w, http.StatusOK, result)
+	JSONResponse(w, http.StatusAccepted, result)
 }
 
 func parseTrafficReportRequest(
@@ -99,8 +105,8 @@ func parseTrafficReportRequest(
 	r *http.Request,
 ) (trafficReportRequest, bool) {
 	var body trafficReportRequest
-	if err := ParseJSON(r, &body); err != nil {
-		JSONError(w, http.StatusBadRequest, "invalid request body")
+	if err := ParseJSONStrict(r, &body); err != nil {
+		WriteBodyError(w, err)
 		return body, false
 	}
 	return body, true
@@ -123,6 +129,15 @@ func writeTrafficReportError(w http.ResponseWriter, err error, internalMessage s
 		JSONError(w, http.StatusBadRequest, err.Error())
 	case errors.Is(err, trafficreport.ErrScheduleNotFound):
 		JSONError(w, http.StatusNotFound, trafficreport.ErrScheduleNotFound.Error())
+	case errors.Is(err, trafficreport.ErrReportTooLarge):
+		JSONError(w, http.StatusUnprocessableEntity, trafficreport.ErrReportTooLarge.Error())
+	case errors.Is(err, notificationqueue.ErrRateLimited):
+		w.Header().Set("Retry-After", "60")
+		JSONError(w, http.StatusTooManyRequests, "wait before testing this report again")
+	case errors.Is(err, notificationqueue.ErrForbidden), errors.Is(err, store.ErrAdminSessionNotFound):
+		JSONError(w, http.StatusUnauthorized, "administrator session is no longer active")
+	case errors.Is(err, notificationqueue.ErrQueueUnavailable), errors.Is(err, notificationqueue.ErrQueueCapacity):
+		JSONError(w, http.StatusServiceUnavailable, "notification queue unavailable; retry later")
 	default:
 		JSONError(w, http.StatusInternalServerError, internalMessage)
 	}

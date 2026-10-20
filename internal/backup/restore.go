@@ -55,6 +55,14 @@ func (applier *Applier) ApplyPending(
 	if journal.State != "pending" {
 		return nil
 	}
+	authorized, err := restoreAuthorized(ctx, dbPath, journal)
+	if err != nil {
+		return err
+	}
+	if !authorized {
+		// 未被 staged 记录与随机代次确认的 journal 一律不替换活动库。
+		return nil
+	}
 	if err := validateJournalArchive(dataDir, journal.ArchivePath); err != nil {
 		return err
 	}
@@ -63,24 +71,9 @@ func (applier *Applier) ApplyPending(
 		return fmt.Errorf("revalidate pending restore: %w", err)
 	}
 	defer func() { _ = os.RemoveAll(validated.root) }()
-	token := strings.ReplaceAll(journalTimestamp(applier.now()), ":", "")
-	prepared, err := prepareRestore(validated, dbPath, mtsPath, dataDir, token)
-	if err != nil {
-		return err
-	}
-	defer prepared.cleanup()
-	rollbacks, err := applier.activate(ctx, prepared, token)
-	if err != nil {
-		return err
-	}
-	if err := validateApplied(ctx, dbPath, mtsPath); err != nil {
-		return errors.Join(err, applier.rollbackApplied(prepared, rollbacks))
-	}
-	if err := applier.completeJournal(journalPath, &journal, rollbacks, dbPath, mtsPath); err != nil {
-		return errors.Join(err, applier.rollbackApplied(prepared, rollbacks))
-	}
-	prepared.committed = true
-	return nil
+	return applier.applyValidated(ctx, validated, restoreApplication{
+		dataDir: dataDir, dbPath: dbPath, mtsPath: mtsPath, journalPath: journalPath, journal: journal,
+	})
 }
 
 func (applier *Applier) completeJournal(

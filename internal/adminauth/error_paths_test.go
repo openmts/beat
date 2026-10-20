@@ -10,6 +10,7 @@ import (
 	"github.com/beat/backend/internal/model"
 	"github.com/beat/backend/internal/secretbox"
 	"github.com/beat/backend/internal/store"
+	"github.com/beat/backend/internal/testutil"
 )
 
 func TestNewServiceDefaultsAndErrors(t *testing.T) {
@@ -55,8 +56,8 @@ func TestServiceClosedStoreErrors(t *testing.T) {
 	if _, err := service.Login(ctx, LoginRequest{Username: "owner"}); err == nil {
 		t.Fatal("login ignored closed store")
 	}
-	if _, err := service.Authenticate(ctx, "token"); !errors.Is(err, ErrSessionInvalid) {
-		t.Fatalf("authenticate error = %v", err)
+	if _, err := service.Authenticate(ctx, "token"); !errors.Is(err, ErrSessionStore) {
+		t.Fatalf("authenticate error = %v, want %v", err, ErrSessionStore)
 	}
 	assertClosedAccountErrors(t, service, &principal)
 	assertClosedTOTPAndSessionErrors(t, service, &principal)
@@ -140,7 +141,7 @@ func assertClosedTOTPAndSessionErrors(t *testing.T, service *Service, principal 
 	if err := service.DisableTOTP(ctx, principal); err == nil {
 		t.Fatal("disable TOTP ignored closed store")
 	}
-	if _, err := service.ListSessions(ctx, principal); err == nil {
+	if _, err := service.ListSessions(ctx, principal, model.AdminSessionPageSize); err == nil {
 		t.Fatal("list sessions ignored closed store")
 	}
 	if err := service.RevokeSession(ctx, principal, "session"); err == nil {
@@ -176,18 +177,14 @@ func newClosedAuthService(t *testing.T) *Service {
 	return service
 }
 
-func authDependencies(t *testing.T) (*store.SQLiteStore, *secretbox.Manager) {
+func authDependencies(t *testing.T) (*store.SQLiteStore, secretbox.ResourceService) {
 	t.Helper()
 	sqliteStore, err := store.NewSQLiteStore(filepath.Join(t.TempDir(), "auth.db"))
 	if err != nil {
 		t.Fatalf("new authentication store: %v", err)
 	}
 	t.Cleanup(func() { _ = sqliteStore.Close() })
-	secrets, err := secretbox.New(filepath.Join(t.TempDir(), "admin-data.key"),
-		bytes.NewReader(bytes.Repeat([]byte{4}, 64)))
-	if err != nil {
-		t.Fatalf("new authentication secrets: %v", err)
-	}
+	secrets := testutil.NewSecrets(t, sqliteStore.DB)
 	return sqliteStore, secrets
 }
 

@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/beat/backend/internal/model"
-	"github.com/beat/backend/internal/notification"
+	"github.com/beat/backend/internal/notificationqueue"
 	"github.com/beat/backend/internal/store"
 )
 
@@ -23,21 +23,12 @@ type alertRuleStore interface {
 }
 
 type alertEventStore interface {
-	CreateEvent(ctx context.Context, event *model.AlertEvent) error
 	GetActiveEvent(ctx context.Context, ruleID, nodeID string) (*model.AlertEvent, error)
-	UpdateEvent(ctx context.Context, event *model.AlertEvent) error
 }
 
-type alertChannelStore interface {
-	ListEnabledChannels(ctx context.Context) ([]model.AlertChannel, error)
-}
-
-type deliveryService interface {
-	Send(
-		ctx context.Context,
-		channel *model.AlertChannel,
-		event *model.AlertEvent,
-	) (model.AlertDeliveryStatus, error)
+type Notifications interface {
+	Trigger(context.Context, *model.AlertEvent) (notificationqueue.Receipt, error)
+	Transition(context.Context, store.AlertEventTransition) (notificationqueue.Receipt, error)
 }
 
 type mtsStore interface {
@@ -68,12 +59,12 @@ type ruleState struct {
 }
 
 type Alerter struct {
-	alertRuleStore    alertRuleStore
-	alertEventStore   alertEventStore
-	alertChannelStore alertChannelStore
-	delivery          deliveryService
-	mtsStore          mtsStore
-	nodeStore         nodeStore
+	alertRuleStore  alertRuleStore
+	alertEventStore alertEventStore
+	notifications   Notifications
+	mtsStore        mtsStore
+	nodeStore       nodeStore
+	trafficCycle    CycleTotalsSource
 
 	mu                 sync.Mutex
 	stopOnce           sync.Once
@@ -85,25 +76,28 @@ type Alerter struct {
 	observer           func(error)
 }
 
-func New(
-	alertRuleStore alertRuleStore,
-	alertEventStore alertEventStore,
-	alertChannelStore alertChannelStore,
-	mtsStore mtsStore,
-	nodeStore nodeStore,
-	deliveryServices ...deliveryService,
-) *Alerter {
-	delivery := deliveryService(notification.NewService())
-	if len(deliveryServices) > 0 && deliveryServices[0] != nil {
-		delivery = deliveryServices[0]
-	}
+// CycleTotalsSource 提供校准感知的当前周期流量；未注入时告警退回原始聚合。
+type CycleTotalsSource interface {
+	CycleTotals(ctx context.Context, node model.Node, now time.Time) (model.TrafficTotals, model.TrafficAccounting, error)
+}
+
+type Config struct {
+	Rules         alertRuleStore
+	Events        alertEventStore
+	Metrics       mtsStore
+	Nodes         nodeStore
+	Notifications Notifications
+	TrafficCycle  CycleTotalsSource
+}
+
+func New(config Config) *Alerter {
 	return &Alerter{
-		alertRuleStore:     alertRuleStore,
-		alertEventStore:    alertEventStore,
-		alertChannelStore:  alertChannelStore,
-		delivery:           delivery,
-		mtsStore:           mtsStore,
-		nodeStore:          nodeStore,
+		alertRuleStore:     config.Rules,
+		alertEventStore:    config.Events,
+		notifications:      config.Notifications,
+		mtsStore:           config.Metrics,
+		nodeStore:          config.Nodes,
+		trafficCycle:       config.TrafficCycle,
 		states:             make(map[string]*ruleState),
 		stopCh:             make(chan struct{}),
 		now:                model.NowUTC,
@@ -123,10 +117,11 @@ func (a *Alerter) EvaluationInterval() time.Duration {
 }
 
 func (a *Alerter) Start(ctx context.Context) {
-	if err := a.evaluateRules(ctx); err != nil {
+	err := a.evaluateRules(ctx)
+	if err != nil {
 		slog.ErrorContext(ctx, "alert evaluation failed", "error", err)
 	}
-	a.notify(ctx, nil)
+	a.notify(ctx, err)
 	ticker := time.NewTicker(a.evaluationInterval)
 	defer ticker.Stop()
 
@@ -157,7 +152,7 @@ func (a *Alerter) Stop() {
 }
 
 func (a *Alerter) evaluateRules(ctx context.Context) error {
-	if _, err := a.nodeStore.MarkStaleNodesOffline(ctx, a.now().Add(-a.offlineAfter)); err != nil {
+	if err := a.markStaleAgentNodes(ctx); err != nil {
 		return fmt.Errorf("mark stale nodes offline: %w", err)
 	}
 	rules, err := a.alertRuleStore.ListEnabledRules(ctx)
@@ -186,6 +181,10 @@ func (a *Alerter) evaluateRule(ctx context.Context, rule *model.AlertRule, node 
 	if rule.Metric != model.MetricHeartbeatAgeSeconds && node.Status == model.NodeStatusOffline {
 		return nil
 	}
+	rule, err := a.freshAlertRule(ctx, rule, node)
+	if err != nil {
+		return err
+	}
 	value, found, err := a.metricValue(ctx, rule.Metric, node)
 	if err != nil {
 		return err
@@ -196,14 +195,10 @@ func (a *Alerter) evaluateRule(ctx context.Context, rule *model.AlertRule, node 
 
 	trigger, conditionActive := a.updateRuleState(rule, node, value)
 	if trigger {
-		if err := a.triggerAlert(ctx, rule, node, value); err != nil {
-			slog.ErrorContext(ctx, "alert trigger failed", "rule_id", rule.ID, "node_id", node.ID, "error", err)
-		}
+		return a.triggerAlert(ctx, alertEvaluation{rule: rule, node: node, value: value})
 	}
 	if !conditionActive {
-		if err := a.resolveAlert(ctx, rule, node, value); err != nil {
-			slog.ErrorContext(ctx, "alert resolution failed", "rule_id", rule.ID, "node_id", node.ID, "error", err)
-		}
+		return a.resolveAlert(ctx, alertEvaluation{rule: rule, node: node, value: value})
 	}
 	return nil
 }

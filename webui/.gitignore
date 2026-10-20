@@ -13,6 +13,9 @@ dist-ssr
 *.local
 coverage
 
+# 生成的示例主题分发资产（scripts/build-themes.sh / npm run build 产出）
+public/themes
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

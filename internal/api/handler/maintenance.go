@@ -34,8 +34,8 @@ func (handler *MaintenanceHandler) HandleGet(w http.ResponseWriter, r *http.Requ
 
 func (handler *MaintenanceHandler) HandleUpdate(w http.ResponseWriter, r *http.Request) {
 	var settings model.MaintenanceSettings
-	if err := ParseJSON(r, &settings); err != nil {
-		JSONError(w, http.StatusBadRequest, "invalid request body")
+	if err := ParseJSONStrict(r, &settings); err != nil {
+		WriteBodyError(w, err)
 		return
 	}
 	if err := settings.Validate(); err != nil {

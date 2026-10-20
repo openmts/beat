@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/beat/backend/internal/api/middleware"
 	"github.com/beat/backend/internal/model"
 	"github.com/beat/backend/internal/store"
 )
@@ -60,26 +61,20 @@ func (s *AgentChannelService) RefreshCustomMetrics(ctx context.Context, nodeID s
 	if s.customs == nil {
 		return nil, nil
 	}
-	metrics, err := s.customs.ListEnabledForNode(ctx, nodeID)
-	if err != nil {
-		return nil, fmt.Errorf("list enabled custom metrics: %w", err)
-	}
-	payload, err := model.EncodeCustomMetricRegisterPayload(metrics)
-	if err != nil {
-		return nil, fmt.Errorf("encode custom metric register task: %w", err)
-	}
-	return s.tasks.CreateTask(ctx, nodeID, model.AgentTaskCustomMetricRegister, payload)
+	return s.customs.QueueNodeCustomMetrics(ctx, nodeID)
 }
 
-// CompleteAgentTask records a task result.
-func (s *AgentChannelService) CompleteAgentTask(
-	ctx context.Context,
-	taskID string,
-	status string,
-	message string,
-) error {
-	if message != "" {
-		return s.tasks.CompleteTask(ctx, taskID, status, message)
+// CompleteAgentTask 记录一次任务终态。成功与否由 result 决定，诊断字段一并落库。
+func (s *AgentChannelService) CompleteAgentTask(ctx context.Context, result model.AgentTaskResult) error {
+	status := model.AgentTaskStatusFailed
+	if result.Success {
+		status = model.AgentTaskStatusDone
 	}
-	return s.tasks.CompleteTask(ctx, taskID, status, "")
+	if identity, ok := middleware.AgentIdentity(ctx); ok {
+		return s.tasks.CompleteTaskForNode(ctx, store.AgentTaskCompletion{
+			NodeID: identity.NodeID, TaskID: result.TaskID, Status: status,
+			Output: result.Output, Failure: result.Error,
+		})
+	}
+	return s.tasks.CompleteTask(ctx, result.TaskID, status, result.Error, result.Output)
 }

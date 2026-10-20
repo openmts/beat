@@ -12,6 +12,12 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/beat/backend/internal/acceleratorcollect"
+	"github.com/beat/backend/internal/agentdiagnostics"
+	"github.com/beat/backend/internal/agentoperations"
+	"github.com/beat/backend/internal/agentupdate"
+	"github.com/beat/backend/internal/model"
 )
 
 const minReportInterval = time.Second
@@ -21,21 +27,29 @@ const defaultSSHPort = 22
 const systemSSHConfigPath = "/etc/ssh/sshd_config"
 
 type Config struct {
-	ServerURL      string        `json:"server_url"`
-	AgentToken     string        `json:"agent_token"`
-	NodeName       string        `json:"node_name"`
-	AdvertisedHost string        `json:"advertised_host"`
-	SSHPort        int           `json:"ssh_port"`
-	ReportInterval time.Duration `json:"-"`
+	Updates        *agentupdate.Settings      `json:"updates,omitempty"`
+	Accelerators   *acceleratorcollect.Config `json:"accelerators,omitempty"`
+	Operations     *agentoperations.Config    `json:"operations,omitempty"`
+	Diagnostics    *agentdiagnostics.Config   `json:"diagnostics,omitempty"`
+	ServerURL      string                     `json:"server_url"`
+	AgentToken     string                     `json:"agent_token"`
+	NodeName       string                     `json:"node_name"`
+	AdvertisedHost string                     `json:"advertised_host"`
+	SSHPort        int                        `json:"ssh_port"`
+	ReportInterval time.Duration              `json:"-"`
 }
 
 type configFile struct {
-	ServerURL      string `json:"server_url"`
-	AgentToken     string `json:"agent_token"`
-	NodeName       string `json:"node_name"`
-	AdvertisedHost string `json:"advertised_host"`
-	SSHPort        *int   `json:"ssh_port"`
-	ReportInterval string `json:"report_interval"`
+	Updates        *agentupdate.Settings      `json:"updates,omitempty"`
+	Accelerators   *acceleratorcollect.Config `json:"accelerators,omitempty"`
+	Operations     *agentoperations.Config    `json:"operations,omitempty"`
+	Diagnostics    *agentdiagnostics.Config   `json:"diagnostics,omitempty"`
+	ServerURL      string                     `json:"server_url"`
+	AgentToken     string                     `json:"agent_token"`
+	NodeName       string                     `json:"node_name"`
+	AdvertisedHost string                     `json:"advertised_host"`
+	SSHPort        *int                       `json:"ssh_port"`
+	ReportInterval string                     `json:"report_interval"`
 }
 
 var readSSHPort = func() (int, error) {
@@ -49,12 +63,8 @@ func LoadConfig(path string) (Config, error) {
 	}
 	defer func() { _ = file.Close() }()
 
-	info, err := file.Stat()
-	if err != nil {
-		return Config{}, fmt.Errorf("stat config: %w", err)
-	}
-	if info.Mode().Perm()&0o077 != 0 {
-		return Config{}, errors.New("config permissions must not allow group or other access")
+	if err := agentoperations.CheckPrivateConfigFile(path); err != nil {
+		return Config{}, errors.New("config permissions require a private regular file owned by the Agent account")
 	}
 
 	var raw configFile
@@ -66,7 +76,14 @@ func LoadConfig(path string) (Config, error) {
 	if err := ensureConfigEOF(decoder); err != nil {
 		return Config{}, err
 	}
-	return raw.parse()
+	config, err := raw.parse()
+	if err != nil {
+		return Config{}, err
+	}
+	if err := config.validateOptionalFeatures(path); err != nil {
+		return Config{}, err
+	}
+	return config, nil
 }
 
 func ensureConfigEOF(decoder *json.Decoder) error {
@@ -82,8 +99,8 @@ func ensureConfigEOF(decoder *json.Decoder) error {
 
 func (raw configFile) parse() (Config, error) {
 	interval, err := time.ParseDuration(raw.ReportInterval)
-	if err != nil || interval < minReportInterval {
-		return Config{}, errors.New("report_interval must be a duration of at least 1s")
+	if err != nil || interval < minReportInterval || interval > model.MaximumAgentReportInterval {
+		return Config{}, errors.New("report_interval must be a duration between 1s and 24h")
 	}
 	sshPort := raw.SSHPort
 	if sshPort == nil {
@@ -94,7 +111,8 @@ func (raw configFile) parse() (Config, error) {
 		sshPort = &resolved
 	}
 	config := Config{
-		ServerURL: raw.ServerURL, AgentToken: raw.AgentToken, NodeName: raw.NodeName,
+		ServerURL: raw.ServerURL, AgentToken: raw.AgentToken, NodeName: raw.NodeName, Operations: raw.Operations,
+		Accelerators: raw.Accelerators, Updates: raw.Updates, Diagnostics: raw.Diagnostics,
 		AdvertisedHost: raw.AdvertisedHost, SSHPort: *sshPort, ReportInterval: interval,
 	}
 	if err := config.validate(); err != nil {
@@ -196,4 +214,28 @@ func stripSSHConfigComment(line string) string {
 		return line[:index]
 	}
 	return line
+}
+
+func (config Config) validateOptionalFeatures(path string) error {
+	if config.Accelerators != nil {
+		if _, err := config.Accelerators.Policy(); err != nil {
+			return err
+		}
+	}
+	if config.Operations != nil {
+		if err := agentoperations.ValidateConfig(*config.Operations, path); err != nil {
+			return err
+		}
+	}
+	if config.Diagnostics != nil {
+		if err := agentdiagnostics.ValidateConfig(*config.Diagnostics); err != nil {
+			return err
+		}
+	}
+	if config.Updates != nil {
+		if err := agentupdate.ValidateSettings(*config.Updates, config.ServerURL); err != nil {
+			return err
+		}
+	}
+	return nil
 }

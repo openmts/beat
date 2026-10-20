@@ -1,6 +1,6 @@
 # Commercial notification delivery
 
-Status: Reviewed design; implementation requires explicit approval
+Status: Approved v10 implementation in progress; local stub verification only
 
 ## Goal
 
@@ -8,7 +8,7 @@ Beat must match the useful notification-integration surface of current Komari
 and DStatus while improving the security and reliability boundary expected of a
 commercial monitoring service.
 
-The proposed implementation, once explicitly approved, adds:
+The approved core implementation adds:
 
 - Bark, ServerChan Turbo, and ServerChan 3 senders;
 - event-category routing and safe per-channel message presentation;
@@ -46,7 +46,7 @@ The current files establishing that boundary are:
 - `internal/notification/service.go`;
 - `internal/alerter/notification.go`;
 - `internal/store/alert_channel.go`;
-- `frontend/src/pages/admin/alert-channel-dialog.tsx`.
+- `webui/src/pages/admin/alert-channel-dialog.tsx`.
 
 ## Competitor audit
 
@@ -134,7 +134,7 @@ and scheduled reports can continue selecting explicit channel sets.
 
 Each channel owns an explicit subscription set. The initial vocabulary is:
 
-- `alert.triggered` and `alert.resolved`;
+- `alert.triggered`, `alert.acknowledged`, and `alert.resolved`;
 - `availability.offline` and `availability.recovered`;
 - `fleet.status_summary`;
 - `traffic.quota` and `traffic.report`;
@@ -150,8 +150,9 @@ owning feature migration is installed. Existing enabled channels migrate with
 all currently deployed event categories selected, preserving current routing.
 The schedule, scope, fixed payload, catch-up, and restart semantics for
 `fleet.status_summary` are owned by
-[`fleet-status-summary-design.md`](./fleet-status-summary-design.md) and become
-available only after migration `v18`.
+[`fleet-status-summary-design.md`](./fleet-status-summary-design.md); migration
+`v23` is implemented and the category is enabled for channels and delivery
+history.
 
 `notification.delivery_failed` never routes back to the failed channel. It is
 deduplicated per failed channel and error class for 15 minutes. When every
@@ -316,7 +317,7 @@ use `custom_http`.
 
 ## Persistence and migration
 
-This batch uses canonical SQLite migration `v6` after remote operations `v5`,
+This batch uses canonical SQLite migration `v10` after shared application secrets `v9`,
 whose shared application-secret lifecycle it reuses. The authoritative
 envelope, AAD, wrapped-key rotation, readiness, and backup contract is
 [`application-secret-lifecycle-design.md`](./application-secret-lifecycle-design.md).
@@ -327,7 +328,7 @@ envelope from
 [`administrative-mutation-consistency-design.md`](./administrative-mutation-consistency-design.md)
 rather than implementing handler-local credential authorization.
 
-Migration v6 rebuilds the channel model around immutable configuration
+Migration v10 rebuilds the channel model around immutable configuration
 revisions and adds durable delivery state:
 
 ### `alert_channels`
@@ -346,7 +347,7 @@ revisions and adds durable delivery state:
 - `created_by`, `created_at`, and a sanitized change reason.
 
 All secret documents and credential-bearing endpoints use AES-GCM through the
-`v5` versioned envelope and active wrapped data key. Associated data binds
+`v9` wrapped-data-key envelope and active wrapped data key. Associated data binds
 channel ID, revision, channel type, field, and schema version. Updates create a
 new revision; blank secret inputs preserve the previous value, while explicit
 owner-only clear actions remove it. Deleting a channel does not erase revisions
@@ -372,7 +373,7 @@ secret.
 - state: `pending`, `leased`, `succeeded`, `dead`, or `cancelled`;
 - attempt count, next attempt time, lease token hash, lease expiry, and worker;
 - sanitized error code/stage, HTTP or SMTP status class, and completion time;
-- created/updated timestamps and uniqueness on `(message_id, channel_id)`.
+- created/updated timestamps and uniqueness on `(message_id, channel_id)` for original fanout rows. Manual retries carry a unique `retry_of` link and a new ID with the current reviewed channel revision.
 
 ### `notification_delivery_attempts`
 
@@ -401,14 +402,14 @@ counter without erasing retained delivery attempts.
 - the reviewed outbound allowlist and redirect policy.
 
 Schema migration creates the tables and marks notification secret backfill as
-pending. Before the HTTP listener starts, Server startup initializes the `v5`
+pending. Before the HTTP listener starts, Server startup initializes the `v9`
 root/wrapped-key registry, parses every legacy typed config, writes revision 1,
 encrypts its complete secret subset, clears the legacy plaintext value in one
 immediate transaction, and marks backfill complete. Startup and readiness fail
 if any credential cannot be parsed, encrypted, or proven removed from the
 legacy column. The migration never silently discards a channel.
 
-The backup format needs no new payload beyond the reviewed format v2: SQLite
+The backup format needs no new payload beyond the reviewed format v3: SQLite
 contains ciphertext plus wrapped data keys and `secrets/admin-data.key` contains
 the matching root key. Archive validation must unwrap every referenced data key
 and authenticate every channel/message ciphertext with reconstructed AAD before
@@ -417,7 +418,7 @@ and records a restore reconciliation audit event. A delivery accepted externally
 after the snapshot cutoff may be repeated after restore; the UI and runbook
 state this unavoidable at-least-once recovery property.
 
-Migration v6 is forward-only. Rollback to an older binary requires restoring
+Migration v10 is forward-only. Rollback to an older binary requires restoring
 the pre-migration backup because older binaries reject a newer schema version.
 
 ## Durable delivery semantics

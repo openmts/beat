@@ -11,34 +11,75 @@ import (
 	"time"
 
 	"github.com/beat/backend/internal/model"
+	"github.com/beat/backend/internal/store"
 )
 
 type fakeRecordStore struct {
-	record    *model.BackupRecord
-	createErr error
-	updateErr error
-	getErr    error
-	listErr   error
-	deleteErr error
+	record        *model.BackupRecord
+	page          model.BackupPage
+	createErr     error
+	updateErr     error
+	transitionErr error
+	getErr        error
+	listErr       error
+	deleteErr     error
+	auditErr      error
+	expireErr     error
+	quarantineErr error
 }
 
-func (store *fakeRecordStore) Create(context.Context, *model.BackupRecord) error {
-	return store.createErr
+func (records *fakeRecordStore) Create(context.Context, *model.BackupRecord) error {
+	return records.createErr
 }
 
-func (store *fakeRecordStore) Update(context.Context, *model.BackupRecord) error {
-	return store.updateErr
+func (records *fakeRecordStore) Update(context.Context, *model.BackupRecord) error {
+	return records.updateErr
 }
 
-func (store *fakeRecordStore) Get(context.Context, string) (*model.BackupRecord, error) {
-	return store.record, store.getErr
+func (records *fakeRecordStore) Get(context.Context, string) (*model.BackupRecord, error) {
+	return records.record, records.getErr
 }
 
-func (store *fakeRecordStore) List(context.Context) ([]model.BackupRecord, error) {
-	return nil, store.listErr
+func (records *fakeRecordStore) ListBackupsPage(
+	context.Context,
+	store.BackupQuery,
+) (model.BackupPage, error) {
+	return records.page, records.listErr
 }
 
-func (store *fakeRecordStore) Delete(context.Context, string) error { return store.deleteErr }
+func (records *fakeRecordStore) Delete(context.Context, string) error { return records.deleteErr }
+
+func (records *fakeRecordStore) Transition(context.Context, store.BackupTransition) error {
+	return records.transitionErr
+}
+
+func (records *fakeRecordStore) Audit(context.Context, *model.AdminAuditEvent) error {
+	return records.auditErr
+}
+
+func (records *fakeRecordStore) ExpireTerminal(
+	context.Context,
+	[]string,
+	time.Time,
+) (int64, error) {
+	return 0, records.expireErr
+}
+
+func (records *fakeRecordStore) RecordQuarantine(
+	context.Context,
+	*model.BackupQuarantineRecord,
+) error {
+	return records.quarantineErr
+}
+
+func (records *fakeRecordStore) CountQuarantine(context.Context) (int, error) { return 0, nil }
+
+func (records *fakeRecordStore) ListQuarantine(
+	context.Context,
+	int,
+) ([]model.BackupQuarantineRecord, error) {
+	return nil, records.quarantineErr
+}
 
 func TestBackupServiceRecordAndFileErrors(t *testing.T) {
 	root := t.TempDir()
@@ -49,7 +90,7 @@ func TestBackupServiceRecordAndFileErrors(t *testing.T) {
 		t.Fatal("backup started after record creation failed")
 	}
 	records.listErr = errors.New("list failed")
-	if _, err := service.List(t.Context()); err == nil {
+	if _, err := listBackups(t, service); err == nil {
 		t.Fatal("backup list error was ignored")
 	}
 	records.getErr = errors.New("get failed")
@@ -78,22 +119,48 @@ func TestBackupServiceDeletePaths(t *testing.T) {
 		ID: "backup", Filename: "backup.zip", State: model.BackupStateReady,
 	}}
 	service := &Service{records: records, root: root, now: time.Now}
-	if err := service.Delete(t.Context(), "backup"); err == nil {
-		t.Fatal("missing backup archive deleted")
+	// 归档缺失属于幂等成功：删除仍然推进状态并移除记录。
+	if err := service.Delete(t.Context(), "backup", SystemActor()); err != nil {
+		t.Fatalf("delete backup without archive: %v", err)
 	}
 	archivePath := filepath.Join(root, records.record.Filename)
 	writeTestFile(t, archivePath, "archive")
-	if err := service.Delete(t.Context(), "backup"); err != nil {
+	if err := service.Delete(t.Context(), "backup", SystemActor()); err != nil {
 		t.Fatalf("delete backup: %v", err)
 	}
+	if _, err := os.Lstat(archivePath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("archive survived deletion")
+	}
 	writeTestFile(t, archivePath, "archive")
+	records.transitionErr = errors.New("transition failed")
+	if err := service.Delete(t.Context(), "backup", SystemActor()); err == nil {
+		t.Fatal("delete ignored state transition failure")
+	}
+	records.transitionErr = nil
 	records.deleteErr = errors.New("delete record failed")
-	if err := service.Delete(t.Context(), "backup"); err == nil {
+	if err := service.Delete(t.Context(), "backup", SystemActor()); err == nil {
 		t.Fatal("backup record deletion error was ignored")
 	}
+	records.deleteErr = nil
+	records.auditErr = errors.New("audit failed")
+	if err := service.Delete(t.Context(), "backup", SystemActor()); err == nil {
+		t.Fatal("delete ignored audit failure")
+	}
+	records.auditErr = nil
 	records.record.Filename = "../outside.zip"
-	if err := service.Delete(t.Context(), "backup"); err == nil {
+	if err := service.Delete(t.Context(), "backup", SystemActor()); err == nil {
 		t.Fatal("unsafe backup filename deleted")
+	}
+	records.record.Filename = "squatter.zip"
+	if err := os.Symlink(filepath.Join(root, "target.zip"), filepath.Join(root, records.record.Filename)); err != nil {
+		t.Fatalf("create symlink archive: %v", err)
+	}
+	if err := service.Delete(t.Context(), "backup", SystemActor()); err == nil {
+		t.Fatal("symlinked backup archive was removed")
+	}
+	records.record.State = model.BackupStateStaged
+	if err := service.Delete(t.Context(), "backup", SystemActor()); err == nil {
+		t.Fatal("staged backup deleted")
 	}
 }
 
@@ -141,7 +208,7 @@ func TestBackupServiceExecutionAndConstructorFailures(t *testing.T) {
 		t.Fatalf("failing backup state = %s, running = %v", record.State, service.running)
 	}
 	records.getErr = errors.New("get failed")
-	if err := service.Delete(t.Context(), "backup"); err == nil {
+	if err := service.Delete(t.Context(), "backup", SystemActor()); err == nil {
 		t.Fatal("delete ignored record lookup failure")
 	}
 }
@@ -161,20 +228,23 @@ func TestUploadAndStageRecordFailures(t *testing.T) {
 
 	records.createErr = nil
 	records.record = &model.BackupRecord{ID: "backup", Filename: "backup.zip", State: model.BackupStateRunning}
-	if _, err := service.StageRestore(t.Context(), "backup", RestoreConfirmation); err == nil {
+	if _, err := service.StageRestore(t.Context(), StageRequest{BackupID: "backup",
+		Confirmation: RestoreConfirmation}); err == nil {
 		t.Fatal("running backup staged for restore")
 	}
 	records.record.State = model.BackupStateReady
 	records.record.Filename = "../backup.zip"
-	if _, err := service.StageRestore(t.Context(), "backup", RestoreConfirmation); err == nil {
+	if _, err := service.StageRestore(t.Context(), StageRequest{BackupID: "backup",
+		Confirmation: RestoreConfirmation}); err == nil {
 		t.Fatal("unsafe restore archive staged")
 	}
 	records.record.Filename = generated.Filename
 	if err := os.WriteFile(filepath.Join(root, generated.Filename), archive, 0o600); err != nil {
 		t.Fatalf("write staged archive: %v", err)
 	}
-	records.updateErr = errors.New("update record failed")
-	if _, err := service.StageRestore(t.Context(), "backup", RestoreConfirmation); err == nil {
+	records.transitionErr = errors.New("update record failed")
+	if _, err := service.StageRestore(t.Context(), StageRequest{BackupID: "backup",
+		Confirmation: RestoreConfirmation}); err == nil {
 		t.Fatal("restore stage ignored record update error")
 	}
 }

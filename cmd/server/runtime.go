@@ -3,30 +3,42 @@ package main
 import (
 	"context"
 	"fmt"
-	"log/slog"
-	"net/http"
+	"log"
 	"os"
 	"path/filepath"
 	"sync"
-	"time"
 
+	"github.com/beat/backend/internal/accelerators"
 	"github.com/beat/backend/internal/adminauth"
+	"github.com/beat/backend/internal/agentrollout"
 	"github.com/beat/backend/internal/alerter"
-	"github.com/beat/backend/internal/api"
 	"github.com/beat/backend/internal/api/middleware"
+	"github.com/beat/backend/internal/applicationgc"
+	"github.com/beat/backend/internal/applicationsecrets"
 	"github.com/beat/backend/internal/backup"
 	"github.com/beat/backend/internal/buildinfo"
+	"github.com/beat/backend/internal/deploymentaccess"
+	"github.com/beat/backend/internal/diagnostics"
+	"github.com/beat/backend/internal/fleetsummary"
+	"github.com/beat/backend/internal/geoip"
 	"github.com/beat/backend/internal/maintenance"
-	"github.com/beat/backend/internal/notification"
-	"github.com/beat/backend/internal/observability"
+	"github.com/beat/backend/internal/metriccatalog"
+	"github.com/beat/backend/internal/metricserasure"
+	"github.com/beat/backend/internal/metricsfanout"
+	"github.com/beat/backend/internal/migrationstatus"
+	"github.com/beat/backend/internal/model"
+	"github.com/beat/backend/internal/nodelifecycle"
+	"github.com/beat/backend/internal/notificationqueue"
 	"github.com/beat/backend/internal/oidc"
-	"github.com/beat/backend/internal/secretbox"
+	"github.com/beat/backend/internal/remoteoperations"
+	"github.com/beat/backend/internal/retentionadmin"
+	"github.com/beat/backend/internal/runtimediag"
 	"github.com/beat/backend/internal/service"
-	"github.com/beat/backend/internal/sshclient"
+	"github.com/beat/backend/internal/serviceprincipal"
+	"github.com/beat/backend/internal/serviceprincipalhttp"
 	"github.com/beat/backend/internal/store"
 	"github.com/beat/backend/internal/theme"
 	"github.com/beat/backend/internal/trafficreport"
-	"github.com/beat/backend/internal/websocket"
 )
 
 type serverStores struct {
@@ -39,8 +51,13 @@ type serverStores struct {
 	alertChannels      *store.AlertChannelStore
 	alertEvents        *store.AlertEventStore
 	trafficReports     *store.TrafficReportScheduleStore
+	fleetSummaries     *store.FleetSummaryStore
+	applicationGc      *store.ApplicationRetentionStore
 	networkTasks       *store.NetworkTaskStore
 	siteSettings       *store.SiteSettingsStore
+	publicTelemetry    *store.PublicTelemetryStore
+	trafficCalibration *store.TrafficCalibrationStore
+	metricErasure      *store.MetricErasureStore
 	maintenanceSetting *store.MaintenanceSettingsStore
 	admins             *store.AdminStore
 	backups            *store.BackupStore
@@ -48,31 +65,64 @@ type serverStores struct {
 	customMetrics      *store.CustomMetricStore
 	oidc               *store.OIDCStore
 	themes             *store.ThemeStore
-	secrets            *secretbox.Manager
+	secrets            *applicationsecrets.Service
 }
 
 type serverServices struct {
-	security       *adminauth.Service
-	maintenance    *maintenance.Service
-	backups        *backup.Service
-	terminal       *service.TerminalService
-	delivery       *notification.Service
-	trafficReports *trafficreport.Service
-	oidc           *oidc.Service
-	themes         *theme.Service
-	themeMarkets   *theme.MarketService
+	agentRollouts              *agentrollout.Service
+	agentRetention             agentrollout.RetentionPolicy
+	agentRetentionAdmin        *retentionadmin.Service
+	servicePrincipals          *serviceprincipalhttp.Handler
+	serviceTokenAuthenticator  *serviceprincipal.Authenticator
+	serviceTokenLimiter        *serviceprincipal.Limiter
+	serviceTokenFailureLimiter *serviceprincipal.Limiter
+	servicePrincipalStore      *store.ServicePrincipalStore
+	accelerators               *accelerators.Service
+	geoIP                      *geoip.Service
+	nodeLifecycle              *nodelifecycle.Service
+	operations                 *remoteoperations.Service
+	diagnostics                *diagnostics.Service
+	operationSpool             *remoteoperations.Spool
+	operationClose             sync.Once
+	evaluation                 *service.AlertEvaluator
+	evaluationRules            *store.AlertEvaluationRuleStore
+	evaluationStates           *store.AlertEvaluationStore
+	security                   *adminauth.Service
+	maintenance                *maintenance.Service
+	metricRetention            *metriccatalog.RetentionRunner
+	metricErasure              *metricserasure.Service
+	backups                    *backup.Service
+	terminal                   *service.TerminalService
+	delivery                   *notificationqueue.Service
+	alertNotifications         *service.AlertNotificationService
+	trafficReports             *trafficreport.Service
+	fleetSummaries             *fleetsummary.Service
+	applicationGc              *applicationgc.Service
+	oidc                       *oidc.Service
+	themes                     *theme.Service
+	themeMarkets               *theme.MarketService
+	runtimeDiagnostics         *runtimediag.Service
+	reconciliation             backup.ReconcileOutcome
 }
 
 type backgroundTasks struct {
 	cancel  context.CancelFunc
 	alerts  *alerter.Alerter
 	runtime *runtimeState
-	hub     *websocket.MetricsHub
+	fanout  *metricsfanout.Service
 	wait    sync.WaitGroup
 	once    sync.Once
 }
 
-func run(ctx context.Context, dbPath, mtsPath, listenAddr, staticDir string) error {
+type serverRunConfig struct{ dbPath, mtsPath, listenAddr, staticDir string }
+
+func run(ctx context.Context, config serverRunConfig) error {
+	dbPath, mtsPath := config.dbPath, config.mtsPath
+	lease, err := acquireServerLease(dbPath)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = lease.Close() }()
 	runCtx, cancelRun := context.WithCancel(ctx)
 	defer cancelRun()
 	dataDir, err := prepareDataDirectory(runCtx, dbPath, mtsPath)
@@ -83,36 +133,74 @@ func run(ctx context.Context, dbPath, mtsPath, listenAddr, staticDir string) err
 	if err != nil {
 		return fmt.Errorf("configure trusted proxies: %w", err)
 	}
+	// 部署访问策略在启动时解析一次；非法配置必须让进程启动失败，而不是降级放行。
+	deploymentAccess, err := deploymentaccess.Load(os.Getenv)
+	if err != nil {
+		return fmt.Errorf("configure deployment access: %w", err)
+	}
 	stores, err := openServerStores(runCtx, dbPath, mtsPath)
 	if err != nil {
 		return err
 	}
+	defer stores.closeIgnoringErrors()
 	services, err := newServerServices(runCtx, dataDir, stores)
 	if err != nil {
 		stores.closeIgnoringErrors()
 		return err
 	}
+	// 启动对账必须在 HTTP 之前完成：它把记录、归档与恢复 journal 对齐后再对外服务。
+	reconciliation, err := services.backups.Reconcile(runCtx)
+	if err != nil {
+		return fmt.Errorf("reconcile backups: %w", err)
+	}
+	services.reconciliation = reconciliation
 	defer func() {
 		cancelRun()
 		services.wait()
 	}()
+	return serveRuntime(runCtx, cancelRun, runtimeServingConfig{dataDir: dataDir, staticDir: config.staticDir, listenAddr: config.listenAddr,
+		stores: stores, services: services, trustedProxies: trustedProxies, deploymentAccess: deploymentAccess})
+}
+
+type runtimeServingConfig struct {
+	dataDir, staticDir, listenAddr string
+	stores                         *serverStores
+	services                       *serverServices
+	trustedProxies                 middleware.TrustedProxies
+	deploymentAccess               deploymentaccess.Config
+}
+
+func serveRuntime(runCtx context.Context, cancelRun context.CancelFunc, config runtimeServingConfig) error {
 	runtime := newRuntimeState()
-	handler, alerts, hub := buildHTTPHandler(httpHandlerConfig{
-		dataDir: dataDir, staticDir: staticDir, stores: stores, services: services,
-		trustedProxies: trustedProxies, runtime: runtime,
+	handler, alerts, fanout, err := buildHTTPHandler(httpHandlerConfig{
+		dataDir: config.dataDir, staticDir: config.staticDir, stores: config.stores, services: config.services,
+		trustedProxies: config.trustedProxies, runtime: runtime, deploymentAccess: deploymentAccessOrDefault(config.deploymentAccess),
 	})
-	background := startBackgroundTasks(backgroundConfig{
-		ctx: runCtx, cancel: cancelRun, alerts: alerts, services: services, runtime: runtime, hub: hub,
-	})
-	defer background.stop()
-	if err := serveHTTP(ctx, listenAddr, handler, func() {
-		services.terminal.CloseAll()
-		background.stop()
-		services.maintenance.Wait()
-	}); err != nil {
+	if err != nil {
 		return err
 	}
-	return stores.close()
+	workerCtx, cancelWorkers := context.WithCancel(context.WithoutCancel(runCtx))
+	defer cancelWorkers()
+	runtime.workers.bind(workerCtx, cancelRun)
+	background := startBackgroundTasks(backgroundConfig{
+		ctx: workerCtx, cancel: cancelWorkers, alerts: alerts, services: config.services, stores: config.stores,
+		runtime: runtime, fanout: fanout,
+	})
+	defer background.stop()
+	if err := serveHTTP(runCtx, httpServerConfig{address: config.listenAddr, handler: handler, beforeShutdown: func() {
+		runtime.beginShutdown()
+		_ = fanout.Close()
+		config.services.terminal.CloseAll()
+	}}); err != nil {
+		return err
+	}
+	background.stop()
+	cancelRun()
+	config.services.wait()
+	if runtime.workers.terminal.Load() {
+		return fmt.Errorf("required background worker terminated")
+	}
+	return config.stores.close()
 }
 
 func prepareDataDirectory(ctx context.Context, dbPath, mtsPath string) (string, error) {
@@ -123,6 +211,9 @@ func prepareDataDirectory(ctx context.Context, dbPath, mtsPath string) (string, 
 	if err := os.Chmod(dataDir, 0o700); err != nil {
 		return "", fmt.Errorf("secure data directory: %w", err)
 	}
+	if err := applicationsecrets.RecoverRootFiles(ctx, dataDir, dbPath); err != nil {
+		return "", fmt.Errorf("recover application root key: %w", err)
+	}
 	if err := backup.ApplyPending(ctx, dataDir, dbPath, mtsPath); err != nil {
 		return "", fmt.Errorf("apply pending restore: %w", err)
 	}
@@ -130,7 +221,11 @@ func prepareDataDirectory(ctx context.Context, dbPath, mtsPath string) (string, 
 }
 
 func openServerStores(ctx context.Context, dbPath, mtsPath string) (*serverStores, error) {
-	sqliteStore, err := store.NewSQLiteStoreContext(ctx, dbPath)
+	marker := migrationstatus.NewWriter(filepath.Dir(dbPath), buildinfo.Version, buildinfo.Commit)
+	if err := marker.Reset(); err != nil {
+		log.Printf("migration status marker reset failed: %v", err)
+	}
+	sqliteStore, err := store.NewSQLiteStoreObserved(ctx, dbPath, migrationstatus.NewObserver(marker))
 	if err != nil {
 		return nil, fmt.Errorf("initialize sqlite store: %w", err)
 	}
@@ -144,217 +239,35 @@ func openServerStores(ctx context.Context, dbPath, mtsPath string) (*serverStore
 		return nil, fmt.Errorf("initialize mts store: %w", err)
 	}
 	database := sqliteStore.DB
+	nodeStore := store.NewNodeStore(database)
+	mtsStore.WithTrafficCycleSource(func(ctx context.Context) ([]model.Node, error) {
+		return nodeStore.ListNodes(ctx, "")
+	})
 	return &serverStores{sqlite: sqliteStore, mts: mtsStore,
-		nodes: store.NewNodeStore(database), groups: store.NewGroupStore(database),
+		nodes: nodeStore, groups: store.NewGroupStore(database),
 		sshKeys: store.NewSSHKeyStore(database), alertRules: store.NewAlertRuleStore(database),
 		alertChannels: store.NewAlertChannelStore(database), alertEvents: store.NewAlertEventStore(database),
 		trafficReports: store.NewTrafficReportScheduleStore(database),
+		fleetSummaries: store.NewFleetSummaryStore(database),
+		applicationGc:  store.NewApplicationRetentionStore(database),
 		networkTasks:   store.NewNetworkTaskStore(database), siteSettings: store.NewSiteSettingsStore(database),
+		publicTelemetry:    store.NewPublicTelemetryStore(database),
+		trafficCalibration: store.NewTrafficCalibrationStore(database),
+		metricErasure:      store.NewMetricErasureStore(database),
 		maintenanceSetting: store.NewMaintenanceSettingsStore(database), admins: store.NewAdminStore(database),
 		backups: store.NewBackupStore(database), agentTasks: store.NewAgentTaskStore(database),
 		customMetrics: store.NewCustomMetricStore(database), oidc: store.NewOIDCStore(database),
 		themes: store.NewThemeStore(database)}, nil
 }
 
-func newServerServices(
-	ctx context.Context, dataDir string, stores *serverStores,
-) (*serverServices, error) {
-	security, maintenanceService, backupService, err := newAdministrationServices(ctx, dataDir, stores)
+// deploymentAccessOrDefault 让未显式注入策略的调用方（含测试）保留历史行为。
+func deploymentAccessOrDefault(access deploymentaccess.Config) deploymentaccess.Config {
+	if access.APIOrigins().Mode() != deploymentaccess.OriginModeSameOrigin || access.PublicBaseURL() != "" {
+		return access
+	}
+	fallback, err := deploymentaccess.Load(func(string) string { return "" })
 	if err != nil {
-		return nil, err
+		return access
 	}
-	sshConnector, err := sshclient.New(filepath.Join(dataDir, "ssh", "known_hosts"))
-	if err != nil {
-		return nil, fmt.Errorf("initialize ssh client: %w", err)
-	}
-	delivery := notification.NewService()
-	oidcService := newOIDCService(ctx, stores, security, dataDir)
-	themeService, themeMarkets, err := newThemeServices(ctx, stores, dataDir)
-	if err != nil {
-		return nil, err
-	}
-	return &serverServices{security: security, maintenance: maintenanceService, backups: backupService,
-		terminal: service.NewTerminalService(stores.nodes, stores.sshKeys, sshConnector), delivery: delivery,
-		trafficReports: trafficreport.NewService(stores.trafficReports, stores.nodes,
-			stores.alertChannels, stores.mts, delivery),
-		oidc: oidcService, themes: themeService, themeMarkets: themeMarkets}, nil
-}
-
-// newThemeServices 构造主题与市场服务。
-func newThemeServices(
-	ctx context.Context, stores *serverStores, dataDir string,
-) (*theme.Service, *theme.MarketService, error) {
-	themeService, err := theme.NewService(stores.themes, stores.admins,
-		filepath.Join(dataDir, "themes"), buildinfo.Version, time.Now)
-	if err != nil {
-		return nil, nil, fmt.Errorf("initialize theme service: %w", err)
-	}
-	marketClient := theme.NewMarketClient(false, time.Now)
-	marketService := theme.NewMarketService(stores.themes, marketClient, themeService, time.Now)
-	return themeService, marketService, nil
-}
-
-// newOIDCService 构造带生产 SSRF 策略的 OIDC 服务。
-func newOIDCService(ctx context.Context, stores *serverStores, security *adminauth.Service, dataDir string) *oidc.Service {
-	policy := oidc.EndpointPolicy{}
-	client := oidc.NewProviderClient(policy, 15*time.Minute, time.Now)
-	return oidc.NewService(stores.oidc, stores.admins, stores.secrets, security, client, time.Now, nil)
-}
-
-func newAdministrationServices(
-	ctx context.Context, dataDir string, stores *serverStores,
-) (*adminauth.Service, *maintenance.Service, *backup.Service, error) {
-	keyPath := filepath.Join(dataDir, "admin-data.key")
-	secrets, err := secretbox.New(keyPath, nil)
-	if err != nil {
-		return nil, nil, nil, fmt.Errorf("initialize administrator data encryption: %w", err)
-	}
-	stores.secrets = secrets
-	security, err := adminauth.NewService(adminauth.ServiceConfig{
-		Store: stores.admins, Secrets: secrets, LegacyToken: os.Getenv("BEAT_ADMIN_TOKEN"),
-	})
-	if err != nil {
-		return nil, nil, nil, fmt.Errorf("initialize administrator authentication: %w", err)
-	}
-	maintenanceService, err := maintenance.NewService(ctx, stores.maintenanceSetting,
-		stores.sqlite, stores.mts, maintenance.WithAuditStore(stores.admins))
-	if err != nil {
-		return nil, nil, nil, fmt.Errorf("initialize maintenance service: %w", err)
-	}
-	backupService, err := backup.NewService(ctx, stores.backups, stores.sqlite, stores.mts,
-		filepath.Join(dataDir, "backups"), keyPath, buildinfo.Version)
-	if err != nil {
-		return nil, nil, nil, fmt.Errorf("initialize backup service: %w", err)
-	}
-	backupService.SetThemesDir(filepath.Join(dataDir, "themes"))
-	return security, maintenanceService, backupService, nil
-}
-
-type httpHandlerConfig struct {
-	dataDir        string
-	staticDir      string
-	stores         *serverStores
-	services       *serverServices
-	trustedProxies middleware.TrustedProxies
-	runtime        *runtimeState
-}
-
-func buildHTTPHandler(config httpHandlerConfig) (http.Handler, *alerter.Alerter, *websocket.MetricsHub) {
-	metrics := observability.NewRegistry()
-	hub := websocket.NewMetricsHub()
-	go hub.Run()
-	router := api.NewRouter(config.stores.nodes, config.stores.groups, config.stores.sshKeys, config.stores.alertRules,
-		config.stores.alertChannels, config.stores.alertEvents, config.stores.mts,
-		api.WithAdminToken(os.Getenv("BEAT_ADMIN_TOKEN")),
-		api.WithAgentAuthentication(os.Getenv("BEAT_AGENT_TOKEN")),
-		api.WithTerminalOperations(config.services.terminal), api.WithNetworkTaskStore(config.stores.networkTasks),
-		api.WithSiteSettingsStore(config.stores.siteSettings), api.WithNotificationService(config.services.delivery),
-		api.WithTrafficReportService(config.services.trafficReports), api.WithMaintenanceService(config.services.maintenance),
-		api.WithAdminSecurity(config.services.security), api.WithBackupService(config.services.backups),
-		api.WithAgentTaskStore(config.stores.agentTasks),
-		api.WithCustomMetricStore(config.stores.customMetrics),
-		api.WithOIDC(config.services.oidc),
-		api.WithThemes(config.services.themes, config.services.themeMarkets))
-	mux := http.NewServeMux()
-	mux.Handle("/api/v1/", router.ServeHandler())
-	mux.Handle("/ws", websocket.NewHandler(hub))
-	mux.Handle("/metrics/ws", websocket.NewMetricsHandler(hub))
-	mux.Handle("/", newSPAHandler(config.staticDir))
-	newOperability(config, metrics).register(mux)
-	alerts := alerter.New(config.stores.alertRules, config.stores.alertEvents, config.stores.alertChannels,
-		config.stores.mts, config.stores.nodes, config.services.delivery)
-	handler := middleware.SecurityHeaders(mux)
-	handler = middleware.Recovery(handler)
-	handler = middleware.LoggingWithObserver(handler, metrics)
-	handler = middleware.RequestContext(config.trustedProxies)(handler)
-	return handler, alerts, hub
-}
-
-type backgroundConfig struct {
-	ctx      context.Context
-	cancel   context.CancelFunc
-	alerts   *alerter.Alerter
-	services *serverServices
-	runtime  *runtimeState
-	hub      *websocket.MetricsHub
-}
-
-func startBackgroundTasks(config backgroundConfig) *backgroundTasks {
-	tasks := &backgroundTasks{cancel: config.cancel, alerts: config.alerts, runtime: config.runtime,
-		hub: config.hub}
-	supervisor := config.runtime.workers
-	alertsWorker := supervisor.register("alerts", config.alerts.EvaluationInterval())
-	config.alerts.SetObserver(alertsWorker.observe())
-
-	reportScheduler := trafficreport.NewScheduler(config.services.trafficReports)
-	reportWorker := supervisor.register("traffic_reports", reportScheduler.Interval())
-	reportScheduler.SetObserver(reportWorker.observe())
-
-	maintenanceScheduler := maintenance.NewScheduler(config.services.maintenance)
-	maintenanceWorker := supervisor.register("maintenance", maintenanceScheduler.Interval())
-	maintenanceScheduler.SetObserver(maintenanceWorker.observe())
-
-	supervisor.start(&tasks.wait, config.ctx, alertsWorker, config.alerts.Start)
-	supervisor.start(&tasks.wait, config.ctx, reportWorker, reportScheduler.Run)
-	supervisor.start(&tasks.wait, config.ctx, maintenanceWorker, maintenanceScheduler.Run)
-	return tasks
-}
-
-// stop 先取消调度上下文，再关闭 WebSocket Hub 使全部被劫持连接在存储关闭前
-// 终止，避免连接读取已关闭的 MTS/SQLite。
-func (tasks *backgroundTasks) stop() {
-	tasks.once.Do(func() {
-		tasks.cancel()
-		tasks.alerts.Stop()
-		if tasks.hub != nil {
-			tasks.hub.Close()
-		}
-		tasks.wait.Wait()
-	})
-}
-
-func serveHTTP(ctx context.Context, address string, handler http.Handler, beforeShutdown func()) error {
-	server := &http.Server{Addr: address, Handler: handler,
-		ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 30 * time.Second,
-		WriteTimeout: 30 * time.Second, IdleTimeout: 120 * time.Second}
-	errorsCh := make(chan error, 1)
-	go func() {
-		slog.InfoContext(ctx, "server listening", "address", address, "version", buildinfo.Version)
-		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			errorsCh <- fmt.Errorf("http server: %w", err)
-		}
-	}()
-	select {
-	case <-ctx.Done():
-		slog.InfoContext(ctx, "shutdown requested", "reason", ctx.Err())
-	case err := <-errorsCh:
-		return err
-	}
-	beforeShutdown()
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	if err := server.Shutdown(shutdownCtx); err != nil {
-		return fmt.Errorf("http shutdown: %w", err)
-	}
-	return nil
-}
-
-func (services *serverServices) wait() {
-	services.maintenance.Wait()
-	services.backups.Wait()
-}
-
-func (stores *serverStores) close() error {
-	if err := stores.sqlite.Close(); err != nil {
-		return fmt.Errorf("close sqlite store: %w", err)
-	}
-	if err := stores.mts.Close(); err != nil {
-		return fmt.Errorf("close mts store: %w", err)
-	}
-	return nil
-}
-
-func (stores *serverStores) closeIgnoringErrors() {
-	_ = stores.mts.Close()
-	_ = stores.sqlite.Close()
+	return fallback
 }

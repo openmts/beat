@@ -11,13 +11,14 @@ import (
 )
 
 type fakeSettingsStore struct {
-	mu         sync.Mutex
-	settings   model.MaintenanceSettings
-	status     model.MaintenanceRunStatus
-	recovered  bool
-	getErr     error
-	recoverErr error
-	startErr   error
+	mu          sync.Mutex
+	settings    model.MaintenanceSettings
+	status      model.MaintenanceRunStatus
+	recovered   bool
+	getErr      error
+	recoverErr  error
+	startErr    error
+	completeErr error
 }
 
 func (store *fakeSettingsStore) Get(
@@ -66,6 +67,9 @@ func (store *fakeSettingsStore) MarkCompleted(
 ) error {
 	store.mu.Lock()
 	defer store.mu.Unlock()
+	if store.completeErr != nil {
+		return store.completeErr
+	}
 	store.status.Running = false
 	store.status.LastCompletedAt = &completedAt
 	store.status.LastDurationMS = duration.Milliseconds()
@@ -85,6 +89,10 @@ type fakeMTS struct {
 	release chan struct{}
 	err     error
 	diskErr error
+	// repair* 只被按需整理用例使用，随用例单 goroutine 读写。
+	repairErr      error
+	repairReported bool
+	repairCalls    int
 }
 
 func (mts *fakeMTS) CleanupBefore(context.Context, time.Time) error {
@@ -100,6 +108,11 @@ func (mts *fakeMTS) CleanupBefore(context.Context, time.Time) error {
 func (mts *fakeMTS) DiskUsage() (int64, error) { return 10, mts.diskErr }
 
 func (*fakeMTS) Health() (bool, []string) { return true, nil }
+
+func (mts *fakeMTS) RepairCompactionIfDegraded(context.Context) (bool, error) {
+	mts.repairCalls++
+	return mts.repairReported, mts.repairErr
+}
 
 type fakeSQLite struct {
 	err     error
@@ -181,6 +194,50 @@ func TestServicePreventsOverlappingRuns(t *testing.T) {
 	}
 }
 
+func TestServiceRepairsDegradedCompaction(t *testing.T) {
+	mts := &fakeMTS{repairReported: true}
+	service, settings := newTestService(t, mts, &fakeSQLite{})
+	repaired, err := service.RepairCompactionIfDegraded(t.Context())
+	if err != nil || !repaired || mts.repairCalls != 1 {
+		t.Fatalf("repair = %v, err = %v, calls = %d", repaired, err, mts.repairCalls)
+	}
+	if service.Running() {
+		t.Fatal("按需整理结束后服务仍标记为运行中")
+	}
+	if _, status, getErr := settings.Get(t.Context()); getErr != nil || status.LastTrigger != "" {
+		t.Fatalf("按需整理写入了维护状态行: %+v, err = %v", status, getErr)
+	}
+}
+
+func TestServiceRepairSkipsWhileMaintenanceRuns(t *testing.T) {
+	mts := &fakeMTS{started: make(chan struct{}), release: make(chan struct{}), repairReported: true}
+	service, _ := newTestService(t, mts, &fakeSQLite{})
+	if err := service.StartManual(); err != nil {
+		t.Fatalf("start manual maintenance: %v", err)
+	}
+	<-mts.started
+	if _, err := service.RepairCompactionIfDegraded(t.Context()); !errors.Is(err, ErrAlreadyRunning) {
+		t.Fatalf("repair during maintenance error = %v, want already running", err)
+	}
+	close(mts.release)
+	service.Wait()
+	if mts.repairCalls != 0 {
+		t.Fatalf("repair calls during maintenance = %d, want 0", mts.repairCalls)
+	}
+}
+
+func TestServiceRepairPropagatesFailure(t *testing.T) {
+	mts := &fakeMTS{repairErr: errors.New("repair failed")}
+	service, _ := newTestService(t, mts, &fakeSQLite{})
+	repaired, err := service.RepairCompactionIfDegraded(t.Context())
+	if repaired || !errors.Is(err, mts.repairErr) {
+		t.Fatalf("repair = %v, err = %v, want %v", repaired, err, mts.repairErr)
+	}
+	if service.Running() {
+		t.Fatal("失败的按需整理没有释放运行标记")
+	}
+}
+
 func TestServiceRecordsMaintenanceFailure(t *testing.T) {
 	service, settings := newTestService(t, &fakeMTS{err: errors.New("mts failed")},
 		&fakeSQLite{err: errors.New("sqlite failed")})
@@ -256,5 +313,36 @@ func TestServiceStartErrors(t *testing.T) {
 	settings.startErr = errors.New("start failed")
 	if err := service.StartManual(); err == nil {
 		t.Fatal("start with persistence error = nil")
+	}
+}
+
+func TestServiceOverviewSurfacesSettingsFailure(t *testing.T) {
+	settings := &fakeSettingsStore{
+		settings: model.DefaultMaintenanceSettings(), getErr: errors.New("get failed"),
+	}
+	service, err := NewService(t.Context(), settings, &fakeSQLite{}, &fakeMTS{})
+	if err != nil {
+		t.Fatalf("new service: %v", err)
+	}
+	if _, err := service.Overview(t.Context()); err == nil {
+		t.Fatal("Overview with settings error = nil")
+	}
+}
+
+func TestServiceKeepsServingWhenCompletionCannotPersist(t *testing.T) {
+	settings := &fakeSettingsStore{settings: model.DefaultMaintenanceSettings()}
+	service, err := NewService(t.Context(), settings, &fakeSQLite{}, &fakeMTS{})
+	if err != nil {
+		t.Fatalf("new service: %v", err)
+	}
+	settings.completeErr = errors.New("completion failed")
+	for attempt := range 2 {
+		if err := service.StartManual(); err != nil {
+			t.Fatalf("start manual maintenance %d: %v", attempt, err)
+		}
+		service.Wait()
+		if service.Running() {
+			t.Fatalf("run %d left the service marked running", attempt)
+		}
 	}
 }

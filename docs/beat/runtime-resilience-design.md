@@ -2,7 +2,7 @@
 
 Updated: 2026-07-30
 
-Status: reviewed design; implementation requires explicit approval
+Status: reviewed design; owner approved implementation on 2026-10-15 (blanket approval of all pending items)
 
 ## Goal and current evidence
 
@@ -308,11 +308,11 @@ browser WebSocket smoke tests, and deployed IPv4/IPv6 public/admin isolation.
 
 This is the schema-free `runtime-resilience` batch in
 [`commercial-parity-implementation-sequence.md`](./commercial-parity-implementation-sequence.md).
-It consumes no SQLite migration, leaves the next migration at `v20`, and keeps
+It consumes no SQLite migration, leaves the next migration at `v25`, and keeps
 backup archive format `v4`.
 
 It depends on the deployed operability foundation and public metrics stream.
-The external public WebSocket origin policy from `v15` composes with, but is not
+The external public WebSocket origin policy from `v20` composes with, but is not
 required to implement, connection lifecycle and fanout limits. Metric catalog
 `v8` may optimize latest-value retrieval without changing this ownership model.
 HTTP recovery for privileged mutations also composes with

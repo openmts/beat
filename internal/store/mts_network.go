@@ -88,12 +88,10 @@ func (s *MTSStore) QueryNetworkLatest(
 		return nil, err
 	}
 
-	query, err := networkProbeQuery(taskID, nodeID, time.Unix(0, 0), time.Now().UTC().Add(time.Minute)).
-		OrderByTimeDesc().Limit(1).Build()
-	if err != nil {
-		return nil, fmt.Errorf("build latest network probe query: %w", err)
-	}
-	rows, err := s.engine.QueryRows(ctx, query)
+	end := time.Now().UTC().Add(time.Minute)
+	rows, err := scanLatestRows(ctx, latestScanPlan(time.Unix(0, 0), end, end), func(ctx context.Context, from, to time.Time) ([]mts.Row, error) {
+		return s.queryNetworkProbeRows(ctx, taskID, nodeID, from, to)
+	})
 	if err != nil {
 		return nil, fmt.Errorf("query latest network probe: %w", err)
 	}
@@ -270,4 +268,13 @@ func networkPointsFromColumns(columns []mts.ColumnSeries) []NetworkProbePoint {
 		points = append(points, pointsByTime[timestamp])
 	}
 	return points
+}
+
+// queryNetworkProbeRows 在给定范围内按时间倒序取一条网络探测记录。
+func (s *MTSStore) queryNetworkProbeRows(ctx context.Context, taskID, nodeID string, from, to time.Time) ([]mts.Row, error) {
+	query, err := networkProbeQuery(taskID, nodeID, from, to).OrderByTimeDesc().Limit(1).Build()
+	if err != nil {
+		return nil, fmt.Errorf("build latest network probe query: %w", err)
+	}
+	return s.engine.QueryRows(ctx, query)
 }

@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Skeleton } from "@/components/ui/skeleton"
 import { useLocale } from "@/context/locale"
+import { formatDateTime } from "@/lib/intl-format"
 import {
   beginOIDCLink,
   listMyExternalIdentities,
@@ -15,7 +16,7 @@ import {
 import type { ExternalIdentity, OIDCProviderPublic } from "@/types/security"
 
 export function SecurityOIDCIdentitiesPanel() {
-  const { t } = useLocale()
+  const { locale, t } = useLocale()
   const [identities, setIdentities] = useState<ExternalIdentity[] | null>(null)
   const [providers, setProviders] = useState<OIDCProviderPublic[]>([])
   const [error, setError] = useState("")
@@ -88,7 +89,7 @@ export function SecurityOIDCIdentitiesPanel() {
                     {identity.display_name || identity.preferred_username || identity.email}
                   </p>
                   <p className="text-xs text-muted-foreground">
-                    {t("security.oidc_last_login")} {new Date(identity.last_login_at).toLocaleString()}
+                    {t("security.oidc_last_login")} {formatDateTime(locale, identity.last_login_at)}
                   </p>
                 </div>
                 <Button variant="outline" size="sm" disabled={busyId === identity.id}

@@ -25,7 +25,7 @@ type networkHandlerFixture struct {
 
 func setupNetworkHandler(t *testing.T) networkHandlerFixture {
 	t.Helper()
-	sqliteStore, err := store.NewSQLiteStore("file:" + t.Name() + "?mode=memory&cache=shared")
+	sqliteStore, err := store.NewSQLiteStore(handlerFixturePath(t))
 	if err != nil {
 		t.Fatalf("create SQLite store: %v", err)
 	}
@@ -41,7 +41,8 @@ func setupNetworkHandler(t *testing.T) networkHandlerFixture {
 		t.Fatalf("create node: %v", err)
 	}
 	tasks := store.NewNetworkTaskStore(sqliteStore.DB)
-	handler := NewNetworkHandler(tasks, nodes, mtsStore)
+	handler := NewNetworkHandler(tasks, nodes, mtsStore).
+		WithErasureStore(store.NewMetricErasureStore(sqliteStore.DB))
 	now := time.Date(2026, 7, 29, 12, 0, 0, 0, time.UTC)
 	handler.now = func() time.Time { return now }
 	return networkHandlerFixture{
@@ -74,9 +75,9 @@ func TestNetworkHandlerWorkflow(t *testing.T) {
 	adminHistory := historyRequest(created.ID, fixture.node.ID, "")
 	assertHandlerStatus(t, fixture.handler.HandleAdminNetworkHistory, adminHistory, http.StatusOK)
 
-	deleteRequest := networkHandlerRequest(http.MethodDelete, "/api/v1/network/tasks/"+created.ID, "")
-	deleteRequest.SetPathValue("task_id", created.ID)
-	assertHandlerStatus(t, fixture.handler.HandleDeleteNetworkTask, deleteRequest, http.StatusNoContent)
+	// 任务删除是 v22 异步擦除任务：返回 202 与耐久任务视图，而不是同步 204。
+	deleteRequest := requestWithTaskID(http.MethodDelete, created.ID, asyncDeletionBody(created.Name))
+	assertHandlerStatus(t, fixture.handler.HandleDeleteNetworkTask, deleteRequest, http.StatusAccepted)
 }
 
 func TestPublicNetworkViewsExcludeHiddenNodes(t *testing.T) {
@@ -121,7 +122,7 @@ func TestNetworkHandlerRejectsInvalidRequests(t *testing.T) {
 		{name: "create body", handle: fixture.handler.HandleCreateNetworkTask, request: networkHandlerRequest(http.MethodPost, "/tasks", "{}"), status: http.StatusBadRequest},
 		{name: "update body", handle: fixture.handler.HandleUpdateNetworkTask, request: requestWithTaskID(http.MethodPut, "missing", "{"), status: http.StatusBadRequest},
 		{name: "update missing", handle: fixture.handler.HandleUpdateNetworkTask, request: requestWithTaskID(http.MethodPut, "missing", validTaskBody(true, true, true, "")), status: http.StatusNotFound},
-		{name: "delete missing", handle: fixture.handler.HandleDeleteNetworkTask, request: requestWithTaskID(http.MethodDelete, "missing", ""), status: http.StatusNotFound},
+		{name: "delete missing", handle: fixture.handler.HandleDeleteNetworkTask, request: requestWithTaskID(http.MethodDelete, "missing", asyncDeletionBody("missing")), status: http.StatusNotFound},
 		{name: "sort empty", handle: fixture.handler.HandleSortNetworkTasks, request: networkHandlerRequest(http.MethodPut, "/sort", "{}"), status: http.StatusBadRequest},
 		{name: "sort missing", handle: fixture.handler.HandleSortNetworkTasks, request: networkHandlerRequest(http.MethodPut, "/sort", `{"ids":["missing"]}`), status: http.StatusBadRequest},
 		{name: "assignment identity", handle: fixture.handler.HandleNetworkAssignments, request: networkHandlerRequest(http.MethodGet, "/assignments", ""), status: http.StatusUnauthorized},
@@ -159,7 +160,8 @@ func TestNetworkHandlerStoreFailures(t *testing.T) {
 		assertHandlerStatus(t, fixture.handler.HandleNetworkAssignments,
 			networkAgentRequest(fixture, http.MethodGet, "/assignments", ""), http.StatusInternalServerError)
 		assertHandlerStatus(t, fixture.handler.HandleDeleteNetworkTask,
-			requestWithTaskID(http.MethodDelete, created.ID, ""), http.StatusInternalServerError)
+			requestWithTaskID(http.MethodDelete, created.ID, asyncDeletionBody(created.Name)),
+			http.StatusInternalServerError)
 		assertHandlerStatus(t, fixture.handler.HandleAdminNetworkHistory,
 			historyRequest(created.ID, fixture.node.ID, ""), http.StatusInternalServerError)
 		postInvalidNetworkResult(t, fixture, created.ID, fixture.now, http.StatusInternalServerError)
@@ -176,8 +178,10 @@ func TestNetworkHandlerStoreFailures(t *testing.T) {
 		postInvalidNetworkResult(t, fixture, created.ID, fixture.now, http.StatusInternalServerError)
 		assertHandlerStatus(t, fixture.handler.HandleAdminNetworkHistory,
 			historyRequest(created.ID, fixture.node.ID, ""), http.StatusInternalServerError)
+		// 任务删除不再触碰 MTS；账本落在仍可写的 SQLite 上，因此这里期望 202。
 		assertHandlerStatus(t, fixture.handler.HandleDeleteNetworkTask,
-			requestWithTaskID(http.MethodDelete, created.ID, ""), http.StatusInternalServerError)
+			requestWithTaskID(http.MethodDelete, created.ID, asyncDeletionBody(created.Name)),
+			http.StatusAccepted)
 	})
 }
 
@@ -261,7 +265,10 @@ func requestWithTaskID(method, taskID, body string) *http.Request {
 }
 
 func networkHandlerRequest(method, path, body string) *http.Request {
-	return httptest.NewRequest(method, path, strings.NewReader(body))
+	request := httptest.NewRequest(method, path, strings.NewReader(body))
+	// 有界 JSON 解码契约要求非空载荷声明媒体类型，测试请求与真实客户端保持一致。
+	request.Header.Set("Content-Type", "application/json")
+	return request
 }
 
 func networkAgentRequest(

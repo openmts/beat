@@ -47,7 +47,7 @@ describe("network API", () => {
     mock.onGet("/network/tasks").reply(200, [])
     mock.onPost("/network/tasks", payload).reply(201, { id: "created" })
     mock.onPut("/network/tasks/task", payload).reply(200, { id: "updated" })
-    mock.onDelete("/network/tasks/task").reply(204)
+    mock.onDelete("/network/tasks/task").reply(202, { code: 202, data: { job: { id: "job" }, replayed: false } })
     mock.onPut("/network/tasks/sort", { ids: ["two", "one"] }).reply(200, {})
     mock.onGet("/network/tasks/task/history").reply((config) => {
       expect(config.params).toEqual({ node_id: "node", from: "from", to: "to" })
@@ -57,7 +57,8 @@ describe("network API", () => {
     expect(await networkApi.listNetworkTasks()).toEqual([])
     expect((await networkApi.createNetworkTask(payload)).id).toBe("created")
     expect((await networkApi.updateNetworkTask("task", payload)).id).toBe("updated")
-    await expect(networkApi.deleteNetworkTask("task")).resolves.toBeUndefined()
+    await expect(networkApi.deleteNetworkTask("task", "Probe", "11111111-1111-4111-8111-111111111111"))
+      .resolves.toMatchObject({ id: "job" })
     await expect(networkApi.sortNetworkTasks(["two", "one"])).resolves.toBeUndefined()
     expect(await networkApi.getAdminNetworkHistory("task", { nodeId: "node", from: "from", to: "to" }))
       .toMatchObject({ task_id: "task", node_id: "node" })

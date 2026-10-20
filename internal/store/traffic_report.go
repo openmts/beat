@@ -218,10 +218,13 @@ func scanTrafficReportSchedule(scan trafficReportScanner) (model.TrafficReportSc
 	if lastRun.Valid {
 		schedule.LastRunAt = &lastRun.Time
 	}
-	if state != "" && lastDelivery.Valid {
+	if state != "" && (lastDelivery.Valid || state == model.TrafficReportDeliveryQueued) {
 		schedule.LastDelivery = &model.TrafficReportDeliveryStatus{
 			State: state, Message: message, Delivered: delivered, Total: total,
 			DeliveredAt: lastDelivery.Time,
+		}
+		if state == model.TrafficReportDeliveryQueued && lastRun.Valid {
+			schedule.LastDelivery.QueuedAt = &lastRun.Time
 		}
 	}
 	return schedule, err

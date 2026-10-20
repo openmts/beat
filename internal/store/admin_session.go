@@ -40,9 +40,23 @@ func (store *AdminStore) GetSessionByID(ctx context.Context, id string) (*model.
 	return scanAdminSession(row)
 }
 
-func (store *AdminStore) ListSessions(ctx context.Context, userID string) ([]model.AdminSession, error) {
+// ListSessions 只返回活跃会话与最近吊销的会话，并有界返回，避免把整张会话表交给浏览器。
+func (store *AdminStore) ListSessions(
+	ctx context.Context,
+	userID string,
+	now time.Time,
+	limit int,
+) ([]model.AdminSession, error) {
+	if limit <= 0 || limit > model.AdminSessionMaximumPage {
+		limit = model.AdminSessionPageSize
+	}
+	revokedAfter := now.Add(-model.AdminSessionRecentRevokedWindow)
 	rows, err := store.db.QueryContext(ctx, "SELECT "+adminSessionColumns+
-		" FROM admin_sessions WHERE user_id = ? ORDER BY created_at DESC", userID)
+		` FROM admin_sessions WHERE user_id = ? AND (
+			(revoked_at IS NULL AND idle_expires_at > ? AND absolute_expires_at > ?)
+			OR (revoked_at IS NOT NULL AND revoked_at >= ?))
+		ORDER BY CASE WHEN revoked_at IS NULL THEN 0 ELSE 1 END, last_activity_at DESC, id DESC
+		LIMIT ?`, userID, now, now, revokedAfter, limit)
 	if err != nil {
 		return nil, fmt.Errorf("list administrator sessions: %w", err)
 	}

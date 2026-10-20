@@ -18,17 +18,29 @@ import (
 // 生命周期错误，而不是空结果。
 var ErrMTSStoreClosed = errors.New("MTS store is closed")
 
+const mtsCompactionConcurrency = 1
+
 type TimePoint struct {
 	Timestamp time.Time
 	Value     float64
 }
 
 type MTSStore struct {
-	engine      *mts.Engine
-	path        string
-	nodeLocks   sync.Map
-	operationMu sync.RWMutex
-	closed      bool
+	engine          *trackedMTSEngine
+	owner           *mtsOwnerLease
+	path            string
+	nodeLocks       sync.Map
+	operationMu     sync.RWMutex
+	closed          bool
+	catalog         *MetricCatalogStore
+	trafficCycles   TrafficCycleSource
+	agentPreparedMu sync.Mutex
+	agentPrepared   map[string]*preparedAgentReport
+	agentStats      agentIngestCounters
+	// exportBudgetOverride 只供测试注入更小的导出预算，0 表示使用归档契约上限。
+	exportBudgetOverride int64
+	// queryEdgeCache 缓存 available_from 的边缘探测结论，带 60s TTL，见 mts_metric_query_edge_cache.go。
+	queryEdgeCache metricQueryEdgeCache
 }
 
 type NodeMetricSample struct {
@@ -38,20 +50,43 @@ type NodeMetricSample struct {
 }
 
 func NewMTSStore(path string) (*MTSStore, error) {
+	owner, err := acquireMTSOwnerLease(path)
+	if err != nil {
+		return nil, err
+	}
+	engine, err := openMTSEngine(path)
+	if err != nil {
+		_ = owner.Close()
+		return nil, err
+	}
+	return &MTSStore{engine: &trackedMTSEngine{Engine: engine}, owner: owner, path: path}, nil
+}
+
+func openMTSEngine(path string) (*mts.Engine, error) {
 	opts := mts.DefaultOptions(path)
 	opts.DefaultDatabase = "beat"
+	// 上游默认禁用整理；重叠分片会使健康检查持续失败，即使仍能读写。
+	opts.Compaction.Enabled = true
+	opts.Compaction.MaxConcurrent = mtsCompactionConcurrency
 
 	engine, err := mts.Open(context.Background(), opts)
 	if err != nil {
 		return nil, fmt.Errorf("opening mts engine: %w", err)
 	}
-
-	return &MTSStore{engine: engine, path: path}, nil
+	// 恢复时可能读到上次未确认的完整 WAL 帧；在任何重复 ACK 前建立耐久边界。
+	if err := engine.Flush(context.Background()); err != nil {
+		closeErr := engine.Close(context.Background())
+		return nil, fmt.Errorf("stabilizing recovered MTS: %w", errors.Join(err, closeErr))
+	}
+	return engine, nil
 }
 
 var knownMetrics = model.MetricNames()
 
 func (s *MTSStore) WriteMetric(ctx context.Context, nodeID string, metric string, value float64, timestamp time.Time) error {
+	if model.ValidAcceleratorMetric(metric) || metric == model.AcceleratorSampleMeasurement {
+		return ErrMetricIngestion
+	}
 	return s.writeMetricValues(
 		ctx,
 		nodeID,
@@ -66,8 +101,11 @@ func (s *MTSStore) WriteNodeMetrics(ctx context.Context, sample NodeMetricSample
 
 // ensureOpen 必须在持有 operationMu（读锁或写锁）时调用，保证与 Close 互斥。
 func (s *MTSStore) ensureOpen() error {
-	if s.closed {
+	if s.closed || s.engine.closed.Load() {
 		return ErrMTSStoreClosed
+	}
+	if s.engine.poisoned.Load() {
+		return ErrMTSRecoveryRequired
 	}
 	return nil
 }
@@ -113,99 +151,40 @@ func (s *MTSStore) writeMetricValuesLocked(
 	return nil
 }
 
-func (s *MTSStore) QueryMetrics(
-	ctx context.Context,
-	metrics []string,
-	start time.Time,
-	end time.Time,
-	nodeID string,
-) (map[string][]TimePoint, error) {
-	s.operationMu.RLock()
-	defer s.operationMu.RUnlock()
-	if err := s.ensureOpen(); err != nil {
-		return nil, err
-	}
-
-	result := map[string][]TimePoint{}
-	startUnix := start.Unix()
-	endUnix := end.Unix()
-
-	for _, metric := range metrics {
-		query, err := mts.NewQuery().
-			From("beat", "", metric).
-			Select("value").
-			TimeRange(startUnix, endUnix).
-			Where(mts.TagEq("node", nodeID)).
-			Precision(mts.PrecisionSecond).
-			OrderByTimeAsc().
-			Build()
-		if err != nil {
-			return nil, fmt.Errorf("building query for metric %s: %w", metric, err)
-		}
-
-		rows, err := s.engine.QueryRows(ctx, query)
-		if err != nil {
-			return nil, fmt.Errorf("querying metric %s: %w", metric, err)
-		}
-
-		points := []TimePoint{}
-		for _, row := range rows {
-			fv, ok := row.Fields["value"]
-			if !ok {
-				continue
-			}
-			points = append(points, TimePoint{
-				Timestamp: time.Unix(row.Timestamp, 0),
-				Value:     fv.Float64,
-			})
-		}
-		result[metric] = points
-	}
-
-	return result, nil
+func (s *MTSStore) QueryLatest(ctx context.Context, nodeID string) (map[string]float64, error) {
+	return s.QueryLatestFiltered(ctx, nodeID, nil)
 }
 
-func (s *MTSStore) QueryLatest(ctx context.Context, nodeID string) (map[string]float64, error) {
-	s.operationMu.RLock()
-	defer s.operationMu.RUnlock()
+func (s *MTSStore) QueryLatestFiltered(ctx context.Context, nodeID string, allowed map[string]bool) (map[string]float64, error) {
+	unlock, err := s.lockMetricOperation(ctx, false)
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
+	return s.queryLatestFilteredLocked(ctx, nodeID, allowed)
+}
+
+func (s *MTSStore) queryLatestFilteredLocked(ctx context.Context, nodeID string, allowed map[string]bool) (map[string]float64, error) {
 	if err := s.ensureOpen(); err != nil {
 		return nil, err
 	}
-
-	now := time.Now().UTC()
-	start := now.Add(-1 * time.Hour)
-	startUnix := start.Unix()
-	endUnix := now.Unix()
-
-	result := map[string]float64{}
-
+	result := make(map[string]float64)
+	until := time.Now().UTC().Add(model.MaximumAgentClockSkew)
 	for _, metric := range knownMetrics {
-		query, err := mts.NewQuery().
-			From("beat", "", metric).
-			Select("value").
-			TimeRange(startUnix, endUnix).
-			Where(mts.TagEq("node", nodeID)).
-			Precision(mts.PrecisionSecond).
-			OrderByTimeDesc().
-			Limit(1).
-			Build()
-		if err != nil {
-			return nil, fmt.Errorf("building latest query for metric %s: %w", metric, err)
+		if allowed != nil && !allowed[metric] {
+			continue
 		}
-
-		rows, err := s.engine.QueryRows(ctx, query)
+		value, found, err := s.queryLatestScalar(ctx, latestScalarQuery{nodeID: nodeID, metric: metric, end: until})
 		if err != nil {
-			return nil, fmt.Errorf("querying latest metric %s: %w", metric, err)
+			return nil, err
 		}
-
-		if len(rows) > 0 {
-			fv, ok := rows[0].Fields["value"]
-			if ok {
-				result[metric] = fv.Float64
-			}
+		if found {
+			result[metric] = value
 		}
 	}
-
+	if err := s.ensureOpen(); err != nil {
+		return nil, err
+	}
 	return result, nil
 }
 
@@ -216,7 +195,16 @@ func (s *MTSStore) Close() error {
 		return nil
 	}
 	s.closed = true
-	return s.engine.Close(context.Background())
+	return errors.Join(s.engine.Close(context.Background()), s.releaseOwner())
+}
+
+func (s *MTSStore) releaseOwner() error {
+	owner := s.owner
+	s.owner = nil
+	if owner == nil {
+		return nil
+	}
+	return owner.Close()
 }
 
 func (s *MTSStore) Flush(ctx context.Context) error {
@@ -232,8 +220,11 @@ func (s *MTSStore) CleanupBefore(ctx context.Context, cutoff time.Time) error {
 	if cutoff.IsZero() || cutoff.Unix() <= 0 {
 		return fmt.Errorf("cleanup cutoff must be after the Unix epoch")
 	}
-	s.operationMu.Lock()
-	defer s.operationMu.Unlock()
+	unlock, err := s.lockMetricOperation(ctx, true)
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	if err := s.ensureOpen(); err != nil {
 		return err
 	}
@@ -241,8 +232,21 @@ func (s *MTSStore) CleanupBefore(ctx context.Context, cutoff time.Time) error {
 	if err := s.engine.Flush(ctx); err != nil {
 		return fmt.Errorf("flush MTS before cleanup: %w", err)
 	}
-	for _, measurement := range managedMeasurements() {
-		if err := s.deleteMeasurementBefore(ctx, measurement, cutoff); err != nil {
+	plans, err := s.metricRetentionPlan(ctx, cutoff)
+	if err != nil {
+		return err
+	}
+	now := model.NowUTC()
+	for _, plan := range plans {
+		cutoff := plan.cutoff
+		if isTrafficDeltaMeasurement(plan.measurement) {
+			protected, guardErr := s.protectedTrafficCutoff(ctx, cutoff, now)
+			if guardErr != nil {
+				return guardErr
+			}
+			cutoff = protected
+		}
+		if err := s.deleteMeasurementBefore(ctx, plan.measurement, cutoff); err != nil {
 			return err
 		}
 	}
@@ -269,7 +273,10 @@ func (s *MTSStore) deleteMeasurementBefore(
 
 func managedMeasurements() []string {
 	measurements := append([]string(nil), model.MetricNames()...)
-	return append(measurements, trafficReceivedDelta, trafficSentDelta, networkProbeMeasurement)
+	measurements = append(measurements, model.AcceleratorMetricKeys...)
+	measurements = append(measurements, trafficReceivedDelta, trafficSentDelta, networkProbeMeasurement,
+		model.AgentReceiptMeasurement, model.AcceleratorSampleMeasurement)
+	return append(measurements, model.PublicInteractionMetrics()...)
 }
 
 func (s *MTSStore) DiskUsage() (int64, error) {
@@ -302,8 +309,11 @@ func (s *MTSStore) DiskUsage() (int64, error) {
 func (s *MTSStore) Health() (bool, []string) {
 	s.operationMu.RLock()
 	defer s.operationMu.RUnlock()
-	if s.closed {
-		return false, []string{ErrMTSStoreClosed.Error()}
+	if err := s.ensureOpen(); err != nil {
+		return false, []string{err.Error()}
+	}
+	if err := s.owner.Verify(); err != nil {
+		return false, []string{err.Error()}
 	}
 	health := s.engine.HealthSnapshot()
 	return health.Healthy && health.Ready, append([]string(nil), health.Reasons...)

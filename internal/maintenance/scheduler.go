@@ -12,6 +12,7 @@ import (
 type schedulerService interface {
 	Overview(context.Context) (model.MaintenanceOverview, error)
 	StartAutomatic() error
+	RepairCompactionIfDegraded(context.Context) (bool, error)
 }
 
 type Scheduler struct {
@@ -59,6 +60,11 @@ func (scheduler *Scheduler) runOnce(ctx context.Context) {
 		scheduler.observe(err)
 		return
 	}
+	if err := scheduler.repairDegradedCompaction(ctx, overview); err != nil {
+		slog.ErrorContext(ctx, "maintenance compaction repair failed", "error", err)
+		scheduler.observe(err)
+		return
+	}
 	if !automaticMaintenanceDue(overview, scheduler.now()) {
 		scheduler.observe(nil)
 		return
@@ -69,6 +75,27 @@ func (scheduler *Scheduler) runOnce(ctx context.Context) {
 		return
 	}
 	scheduler.observe(nil)
+}
+
+// repairDegradedCompaction 在存储健康原因报出分片压缩退化时立即整理一次，
+// 免得就绪探针一直等到下一次每日维护或重启；已有一轮维护在跑时不动。
+func (scheduler *Scheduler) repairDegradedCompaction(
+	ctx context.Context,
+	overview model.MaintenanceOverview,
+) error {
+	if overview.Storage.MTSHealthy {
+		return nil
+	}
+	repaired, err := scheduler.service.RepairCompactionIfDegraded(ctx)
+	switch {
+	case errors.Is(err, ErrAlreadyRunning):
+		return nil
+	case err != nil:
+		return err
+	case repaired:
+		slog.WarnContext(ctx, "repaired degraded MTS compaction", "reasons", overview.Storage.MTSHealthReasons)
+	}
+	return nil
 }
 
 func (scheduler *Scheduler) observe(err error) {

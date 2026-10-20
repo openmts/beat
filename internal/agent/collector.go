@@ -62,6 +62,7 @@ func (c *Collector) Collect(ctx context.Context) (model.NodeMetrics, error) {
 	defer c.mu.Unlock()
 
 	metrics := model.NodeMetrics{
+		CapturedAt:   now.UTC(),
 		SystemInfo:   sample.SystemInfo,
 		CPU:          sample.CPU,
 		CPUUsed:      sample.CPUUsed,

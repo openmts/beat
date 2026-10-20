@@ -1,8 +1,18 @@
 # Scoped automation access
 
-Updated: 2026-07-30
+Updated: 2026-10-14
 
-Status: reviewed design; implementation requires explicit approval
+Status: backend core, the owner-only console surface, the Bearer data plane,
+data-plane audit and the external `beat-cli` client are implemented. SQLite v16
+persistence, token issuance/verification, policy validation, atomic audit, the
+management API, server wiring, the `/admin/security` service-token tab (list,
+create, rotate, revoke, one-time plaintext, recent-identity guard), the scoped
+data endpoints
+with per-token and per-source rate limits, and `service`-actor audit rows for
+denials and privileged operations, failed-authentication admission control, and
+lifecycle/latency metrics are done. Still open: optional security notifications,
+restore/rollback revocation drills, and external CLI acceptance over
+IPv4/IPv6 execution on a deployed instance.
 
 ## Goal and scope
 
@@ -78,7 +88,7 @@ token is revoked transactionally. Immediate revoke takes effect on the next
 request and invalidates any pending long poll; already committed operations are
 not undone.
 
-This feature uses canonical SQLite migration `v11` after Agent rollout `v10`,
+This feature uses canonical SQLite migration `v16` after Agent rollout `v15`,
 when the central authorization surface is stable. It retains backup archive
 format `v4`. The assignment is maintained in
 [`commercial-parity-implementation-sequence.md`](./commercial-parity-implementation-sequence.md).
@@ -129,6 +139,45 @@ after request completion, but a later download still requires an active token
 with matching scope. Revocation stops future polling/downloads without
 corrupting an already-created backup.
 
+## Implemented data plane
+
+The Bearer middleware runs on the first-revision endpoints below. Requests
+without a service token fall back to the previous browser guard, and public
+read routes stay anonymous.
+
+| Endpoint | Scope | Resource constraint |
+| --- | --- | --- |
+| `GET /api/v1/nodes/manage` | `nodes:read` | none |
+| `PUT /api/v1/nodes/{id}` | `nodes:write-presentation` | node |
+| `GET /api/v1/nodes/{id}/metrics` | `metrics:read` | node |
+| `GET /api/v1/network/tasks`, `GET /api/v1/network/tasks/{task_id}/history` | `network-tasks:read` | none |
+| `GET /api/v1/alerts/events`, `GET /api/v1/alerts/rules` | `alerts:read` | none |
+| `POST /api/v1/alerts/channels/{id}/test` | `notification-test:send` | channel |
+| `GET /api/v1/alerts/traffic-reports` | `traffic-reports:read` | none |
+| `POST /api/v1/alerts/traffic-reports/{id}/test` | `traffic-reports:run-test` | none |
+| `GET /api/v1/admin/backups` | `backups:read-metadata` | none |
+| `POST /api/v1/admin/backups` | `backups:create` | none |
+| `GET /api/v1/admin/backups/{id}/download` | `backups:download` | none |
+| `GET /api/v1/admin/audit-events` | `audit:read` | none (session prefixes redacted) |
+| `GET /api/v1/admin/runtime` | `health:read` | none |
+
+Visibility is enforced after scope and resource constraints. A `public`
+token may only read data proven public: node-scoped routes consult the node's
+`is_public` flag through `nodeResourceVisibility`, and every non-public endpoint
+(managed node inventory, alerts, network tasks, traffic reports, backups,
+audit, health) is registered with `RequirePrivate`, so a public token is
+rejected with a `visibility` denial. Endpoints without a visibility concept
+treat the response as public only when they declare no resolver and no
+`RequirePrivate` flag, which keeps the anonymous public routes unchanged. A
+failed visibility lookup returns `503` instead of downgrading to an allow.
+
+Prometheus counters record authentication outcomes
+(`beat_service_token_authentications_total`), scope and resource denials
+(`beat_service_token_denials_total`) and rate limits
+(`beat_service_token_rate_limits_total`) with bounded enum labels only.
+`network-tasks:run-test` and `network-tasks:read`'s task-level constraint stay
+unwired because the task resource kind is not modelled yet.
+
 ## Administration experience
 
 The Security area gains a shadcn `Service tokens` tab. Cards or compact rows
@@ -153,14 +202,137 @@ Actor type is `service`, actor ID is the stable principal ID, and the display
 prefix may appear only in authenticated audit views. Request paths and resource
 IDs are bounded and redacted according to existing audit rules.
 
+### Implemented data-plane audit, 2026-10-14
+
+`admin_audit_events.actor_type` distinguishes `admin` from `service`; the v16
+service-principal migration adds it to existing databases with the `admin`
+default, and every browser audit write keeps that default. Data-plane rows use
+`action=service_token.request`, actor type `service`, the stable principal ID,
+the operator-provided name, the resolved resource (or the scope when the route
+has no resource) and a bounded detail JSON with `reason`, `scope`, `method` and
+path only.
+
+Already-authenticated denials are always recorded with the reason
+`scope`, `resource`, `visibility` or `rate_limit`; failed or unavailable
+authentication is recorded as `unauthenticated` or `unavailable`. Successful
+mutations and administrative reads (`audit:read`, `backups:read-metadata`,
+`backups:download`, `health:read`) are recorded after the handler with the real
+HTTP outcome, while routine telemetry reads stay covered by `last_used_at` and
+Prometheus counters so polling cannot flood the audit table. A handler response
+of `400` or above is recorded as a failure with reason `handler_error`.
+
+Audit writes never carry token plaintext, token hashes or session prefixes, and
+never block an authorization decision: a failed write is logged and the request
+outcome is unchanged. The `/admin/security` audit tab marks `service` actors.
+
+Failed authentication is admitted before it can write a row: a separate source
+bucket (default 30 attempts per second per canonical client IP) rejects further
+unauthenticated attempts with `429` and a `Retry-After` header, and the rejected
+attempt is counted under `beat_service_token_rate_limits_total{kind="source"}`
+without an audit row. Legitimate tokens are unaffected because the failure
+bucket is independent of both the per-token and per-source success buckets.
+
 Prometheus metrics cover authentication outcomes, scope denials, rate limits,
 active/expiring/revoked counts, and operation latency. Scope and reason labels
 are bounded enums; token IDs, prefixes, names, IPs, and resource IDs are not
 metric labels.
 
+Implemented families are `beat_service_token_authentications_total{outcome}`,
+`beat_service_token_denials_total{reason}`,
+`beat_service_token_rate_limits_total{kind}`,
+`beat_service_token_operation_seconds{scope}` (histogram over the fixed scope
+catalog) and `beat_service_tokens{state="active|expiring|revoked"}`. The gauge
+is refreshed at scrape time from `service_principals`; active means not revoked
+and not expired (including rotation-overlap predecessors that still
+authenticate), expiring means active with at most seven days left, and revoked
+means `revoked_at` is set. A failed statistics query keeps the previous
+snapshot instead of reporting a misleading zero.
+
 Optional security notifications include token created, rotated, revoked,
 expiring, repeated authentication failures, and source-policy violations. They
 use the durable notification queue and never include token plaintext or hashes.
+
+## External CLI (`beat-cli`)
+
+`cmd/beat-cli` plus `internal/beatcli` implement the external automation client
+required by the acceptance gate. It authenticates with a service token only and
+never with a browser session.
+
+| Command | Endpoint | Scope |
+| --- | --- | --- |
+| `beat-cli health` | `GET /api/v1/admin/runtime` | `health:read` |
+| `beat-cli nodes list` | `GET /api/v1/nodes/manage` | `nodes:read` |
+| `beat-cli nodes metrics <node-id> [--metric --from --to]` | `GET /api/v1/nodes/{id}/metrics` | `metrics:read` |
+| `beat-cli backups list` | `GET /api/v1/admin/backups` | `backups:read-metadata` |
+| `beat-cli backups create` | `POST /api/v1/admin/backups` | `backups:create` |
+| `beat-cli backups download <backup-id> --output <path>` | `GET /api/v1/admin/backups/{id}/download` | `backups:download` |
+| `beat-cli audit list [--action --actor-id --limit --offset]` | `GET /api/v1/admin/audit-events` | `audit:read` |
+
+Global flags are `--server` (or `BEAT_SERVER`), `--token-file` (or
+`BEAT_SERVICE_TOKEN`; `-` reads standard input), `--ca-file`, `--timeout` and
+`--raw`. There is deliberately no `--token` flag, so plaintext tokens never reach
+a process list or shell history, and a token file that is readable by group or
+others is refused with the `chmod 600` remediation.
+
+### Console-only commands (administrator session)
+
+Metric erasure (`owner(...)`) and remote operation tasks (`router.admin`) are
+browser-session routes; a service token cannot reach them by design. The CLI
+covers them with a separate credential instead of widening any route:
+
+| Command | Endpoint |
+| --- | --- |
+| `beat-cli erasure list [--limit]` | `GET /api/v1/admin/metric-erasure/jobs` |
+| `beat-cli erasure get <job-id>` | `GET /api/v1/admin/metric-erasure/jobs/{job_id}` |
+| `beat-cli erasure create --scope --request-id --confirm [--target]` | `POST /api/v1/admin/metric-erasure/jobs` |
+| `beat-cli erasure retry <job-id>` | `POST /api/v1/admin/metric-erasure/jobs/{job_id}/retry` |
+| `beat-cli erasure cancel <job-id>` | `POST /api/v1/admin/metric-erasure/jobs/{job_id}/cancel` |
+| `beat-cli operations tasks list [--limit --cursor]` | `GET /api/v1/admin/operations/tasks` |
+| `beat-cli operations tasks cancel <task-id>` | `POST /api/v1/admin/operations/tasks/{id}/cancel` |
+
+Credential flags are `--admin-user` (`BEAT_ADMIN_USER`), `--admin-password-file`
+(`BEAT_ADMIN_PASSWORD`, or `-` for standard input), `--admin-totp-code`
+(`BEAT_ADMIN_TOTP`) and `--session-file`. The password file must be `0600`, the
+same rule as a token file. `--session-file` caches the session cookie in a
+`0600` file and reuses it while `GET /api/v1/auth/session` still succeeds, so
+repeat invocations do not open a new console session each time.
+
+Every console command logs in with `POST /api/v1/auth/login` (carrying the
+server's own `Origin`, which the login route requires) and then opens the
+recent-authentication window with `POST /api/v1/auth/reauthenticate`, because
+the erasure routes reject sessions that have not confirmed the password
+recently. Nothing about route authorization changes: the same `owner(...)` and
+`router.admin` guards still apply, and the console session is never accepted on
+the scoped data routes.
+
+Behaviour that matters for automation:
+
+- success prints the envelope's `data` field as indented JSON; `--raw` keeps the
+  full envelope and non-JSON payloads pass through unchanged;
+- non-2xx responses collapse into one bounded stderr line (status, bounded server
+  message, `Retry-After` capped at 24 hours) and exit code 1; the token is never
+  echoed;
+- redirects are followed only within the same host, so the Bearer token cannot be
+  replayed to another origin;
+- `backups download` creates the archive with mode `0600`, refuses to overwrite
+  unless `--force` is set, removes partial files on failure, and writes its byte
+  count to stderr so `--output -` stays pipeable;
+- IPv4 and IPv6 targets are both valid (`http://127.0.0.1:8080`,
+  `http://[::1]:8080`).
+
+Acceptance smoke, once per address family on the host that serves Beat:
+
+```bash
+go build -trimpath -o /tmp/beat-cli ./cmd/beat-cli
+install -m 0600 /dev/null /tmp/beat-service-token   # paste the one-time token
+/tmp/beat-cli --server http://127.0.0.1:8080 --token-file /tmp/beat-service-token health
+/tmp/beat-cli --server 'http://[::1]:8080' --token-file /tmp/beat-service-token nodes list
+/tmp/beat-cli --server http://127.0.0.1:8080 --token-file /tmp/beat-service-token backups list
+```
+
+Denied scopes must produce the same bounded message and a non-zero exit; the
+`beat_service_v1_` prefix, `0600` file rule and missing-flag guidance are
+validated before any request is sent.
 
 ## Backup, restore, and rollback
 
@@ -197,7 +369,7 @@ at least 90 percent coverage, race/lint/security/build gates, and restore drills
 ## Approval boundary
 
 This feature changes authentication, authorization, API, SQLite, audit, backup,
-and operational behavior. It is canonical SQLite migration `v11`.
+and operational behavior. It is canonical SQLite migration `v16`.
 Implementation requires explicit approval of this complete design and a final
 scope list; approval of browser authentication or Agent credentials does not
 implicitly approve service tokens.

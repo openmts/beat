@@ -9,6 +9,13 @@ import type {
   ExternalIdentity,
   OIDCProvider,
   OIDCProviderPublic,
+  SecurityEvent,
+  SecurityEventFilter,
+  SecurityEventPage,
+  SecurityEventSource,
+  SecurityNotificationSettings,
+  SecurityNotificationSettingsWrite,
+  SecurityOptions,
   TOTPSetup,
 } from "@/types/security"
 
@@ -42,14 +49,16 @@ export async function getAdminSession(): Promise<AdminPrincipal> {
 }
 
 export async function reauthenticateAdmin(password: string, totpCode?: string): Promise<AdminSession> {
-  return (await api.post<AdminSession>("/auth/reauthenticate", {
+  const session = (await api.post<AdminSession>("/auth/reauthenticate", {
     password,
     totp_code: totpCode ?? "",
   })).data
+  emitAdminSessionRefreshed(session)
+  return session
 }
 
-export async function listAdminUsers(): Promise<AdminUser[]> {
-  return (await api.get<AdminUser[]>("/admin/users")).data
+export async function listAdminUsers(signal?: AbortSignal): Promise<AdminUser[]> {
+  return (await api.get<AdminUser[]>("/admin/users", { signal })).data
 }
 
 export async function createAdminUser(payload: {
@@ -92,8 +101,9 @@ export async function disableTOTP(): Promise<void> {
   await api.delete("/admin/users/me/totp")
 }
 
-export async function listAdminSessions(): Promise<AdminSession[]> {
-  return (await api.get<AdminSession[]>("/admin/sessions")).data
+/** 会话列表是有界页：服务端只返回活跃与最近吊销的会话，并标记当前会话。 */
+export async function listAdminSessions(limit = 50): Promise<AdminSession[]> {
+  return (await api.get<AdminSession[]>("/admin/sessions", { params: { limit } })).data
 }
 
 export async function revokeAdminSession(id: string): Promise<void> {
@@ -104,8 +114,17 @@ export async function revokeOtherAdminSessions(): Promise<number> {
   return (await api.delete<{ revoked: number }>("/admin/sessions/others")).data.revoked
 }
 
-export async function listAuditEvents(offset = 0): Promise<AuditPage> {
-  return (await api.get<AuditPage>("/admin/audit-events", { params: { limit: 50, offset } })).data
+export interface AuditEventQuery {
+  action?: string
+  actorId?: string
+  cursor?: string
+  limit?: number
+}
+
+export async function listAuditEvents(query: AuditEventQuery = {}): Promise<AuditPage> {
+  return (await api.get<AuditPage>("/admin/audit-events", {
+    params: { action: query.action, actor_id: query.actorId, cursor: query.cursor, limit: query.limit },
+  })).data
 }
 
 export async function listPublicOIDCProviders(): Promise<OIDCProviderPublic[]> {
@@ -168,3 +187,37 @@ export async function updateOIDCProvider(
 export async function deleteOIDCProvider(id: string): Promise<void> {
   await api.delete(`/admin/oidc/providers/${id}`)
 }
+export async function listSecurityEvents(
+  filter: SecurityEventFilter,
+  signal?: AbortSignal,
+): Promise<SecurityEventPage> {
+  return (await api.get<SecurityEventPage>("/admin/security/events", { params: filter, signal })).data
+}
+
+export async function getSecurityEvent(id: string, signal?: AbortSignal): Promise<SecurityEvent> {
+  return (await api.get<SecurityEvent>(`/admin/security/events/${encodeURIComponent(id)}`, { signal })).data
+}
+
+export async function acknowledgeSecurityEvent(id: string, note: string): Promise<SecurityEvent> {
+  return (await api.post<SecurityEvent>(`/admin/security/events/${encodeURIComponent(id)}/ack`, { note })).data
+}
+
+export async function getSecurityEventSource(id: string, signal?: AbortSignal): Promise<SecurityEventSource> {
+  return (await api.get<SecurityEventSource>(`/admin/security/events/${encodeURIComponent(id)}/source`, { signal })).data
+}
+
+export async function getSecurityOptions(signal?: AbortSignal): Promise<SecurityOptions> {
+  return (await api.get<SecurityOptions>("/admin/security/options", { signal })).data
+}
+
+export async function getSecurityPolicy(signal?: AbortSignal): Promise<SecurityNotificationSettings> {
+  return (await api.get<SecurityNotificationSettings>("/admin/security/policy", { signal })).data
+}
+
+export async function updateSecurityPolicy(
+  payload: SecurityNotificationSettingsWrite,
+): Promise<SecurityNotificationSettings> {
+  return (await api.put<SecurityNotificationSettings>("/admin/security/policy", payload)).data
+}
+
+import { emitAdminSessionRefreshed } from "@/lib/auth"

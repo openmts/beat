@@ -49,7 +49,8 @@ func (service *Service) ValidateUpload(
 	defer func() { _ = os.RemoveAll(validated.root) }()
 	completed := service.now()
 	record := model.BackupRecord{ID: id, Filename: filename, Source: "uploaded",
-		State: model.BackupStateValidated, CreatedAt: completed, CompletedAt: &completed,
+		State: model.BackupStateValidated, CreatedAt: completed, UpdatedAt: completed,
+		CompletedAt:    &completed,
 		SnapshotCutoff: &validated.manifest.SnapshotCutoff, SizeBytes: size,
 		SQLiteBytes:  validated.manifest.PayloadSizes[sqliteEntry],
 		MetricsBytes: validated.manifest.PayloadSizes[metricsEntry],
@@ -61,20 +62,37 @@ func (service *Service) ValidateUpload(
 	return record, nil
 }
 
+// StageRequest 汇总一次恢复暂存请求：备份 ID、确认短语与审计主体。
+type StageRequest struct {
+	BackupID     string
+	Confirmation string
+	Actor        Actor
+}
+
+// StageRestore 先提交 staging 与随机代次，再写私有 journal，最后提交 staged；
+// 任一步失败都会回滚，绝不留下“journal 已写但没有 staged 授权”的可用恢复。
 func (service *Service) StageRestore(
 	ctx context.Context,
-	id string,
-	confirmation string,
+	request StageRequest,
 ) (model.BackupRecord, error) {
-	if confirmation != RestoreConfirmation {
+	if request.Confirmation != RestoreConfirmation {
 		return model.BackupRecord{}, ErrInvalidConfirm
 	}
-	record, err := service.record(ctx, id)
+	release, err := service.acquireSecretLifecycle(ctx)
+	if err != nil {
+		return model.BackupRecord{}, err
+	}
+	defer release()
+	record, err := service.record(ctx, request.BackupID)
 	if err != nil {
 		return model.BackupRecord{}, err
 	}
 	if record.State != model.BackupStateReady && record.State != model.BackupStateValidated {
 		return model.BackupRecord{}, errors.New("backup archive cannot be staged")
+	}
+	// 已存在别的待应用 journal 时必须拒绝，避免覆盖另一个暂存恢复。
+	if err := service.rejectConflictingJournal(request.BackupID); err != nil {
+		return model.BackupRecord{}, err
 	}
 	path, err := service.archivePath(record.Filename)
 	if err != nil {
@@ -87,16 +105,33 @@ func (service *Service) StageRestore(
 	if err := os.RemoveAll(validated.root); err != nil {
 		return model.BackupRecord{}, fmt.Errorf("remove restore validation directory: %w", err)
 	}
-	journal := model.RestoreJournal{BackupID: id, ArchivePath: path,
-		State: "pending", CreatedAt: service.now()}
-	if err := writeJournal(filepath.Join(filepath.Dir(service.root), "restore.pending.json"), journal); err != nil {
+	generation := uuid.NewString()
+	staging := *record
+	staging.State = model.BackupStateStaging
+	staging.PreviousState = record.State
+	staging.RestoreGeneration = generation
+	staging.UpdatedAt = service.now()
+	if err := service.transition(ctx, transitionRequest{record: staging,
+		expected: []string{record.State}, actor: request.Actor,
+		action: "backup.restore.staging"}); err != nil {
 		return model.BackupRecord{}, err
 	}
-	record.State = model.BackupStateStaged
-	if err := service.records.Update(ctx, record); err != nil {
-		return model.BackupRecord{}, err
+	journal := model.RestoreJournal{BackupID: record.ID, ArchivePath: path, State: "pending",
+		Generation: generation, CreatedAt: service.now()}
+	if err := writeJournal(service.journalPath(), journal); err != nil {
+		return model.BackupRecord{}, errors.Join(err,
+			service.abortStaging(ctx, record.ID, request.Actor))
 	}
-	return *record, nil
+	staged := staging
+	staged.State = model.BackupStateStaged
+	staged.UpdatedAt = service.now()
+	if err := service.transition(ctx, transitionRequest{record: staged,
+		expected: []string{model.BackupStateStaging}, actor: request.Actor,
+		action: "backup.restore.staged"}); err != nil {
+		return model.BackupRecord{}, errors.Join(err,
+			service.abortStaging(ctx, record.ID, request.Actor))
+	}
+	return staged, nil
 }
 
 func writeJournal(path string, journal model.RestoreJournal) error {

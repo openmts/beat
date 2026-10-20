@@ -108,9 +108,21 @@ func (s *TerminalService) OpenTerminal(
 
 	request := sshclient.Request{Node: *node, PrivateKey: privateKey}
 	if err := s.connector.OpenTerminal(sessionCtx, request, stream); err != nil {
+		if sessionCtx.Err() == nil {
+			reportTerminalFailure(stream, err)
+		}
 		return fmt.Errorf("open ssh terminal: %w", err)
 	}
 	return nil
+}
+
+// reportTerminalFailure 在关闭流之前把失败原因写给终端客户端：桥接层随后就会关闭流，
+// 晚于这一步的写入不会被送达。会话被撤销（上下文结束）时不上报，避免把取消说成故障。
+func reportTerminalFailure(stream io.ReadWriteCloser, err error) {
+	if stream == nil || err == nil {
+		return
+	}
+	_, _ = fmt.Fprintf(stream, "\r\n[terminal error] %s\r\n", err)
 }
 
 func (s *TerminalService) ExecuteBatch(
@@ -175,8 +187,12 @@ func (s *TerminalService) credentials(ctx context.Context, nodeID string) (*mode
 	if key == nil {
 		return nil, "", ErrTerminalManagedKeyNotFound
 	}
-	if key.PrivateKey == "" {
+	privateKey, err := s.keys.ReadPrivateKey(ctx, key.ID)
+	if err != nil {
+		return nil, "", fmt.Errorf("read managed ssh key: %w", err)
+	}
+	if privateKey == "" {
 		return nil, "", ErrTerminalPrivateKeyUnavailable
 	}
-	return node, key.PrivateKey, nil
+	return node, privateKey, nil
 }

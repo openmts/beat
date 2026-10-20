@@ -134,6 +134,7 @@ func TestHandleExecuteBatch(t *testing.T) {
 	request := httptest.NewRequest(http.MethodPost, "/api/v1/terminal/execute", strings.NewReader(
 		`{"node_ids":["node-one"],"command":"uptime"}`,
 	))
+	request.Header.Set("Content-Type", "application/json")
 	response := httptest.NewRecorder()
 
 	handler.HandleExecuteBatch(response, request)
@@ -164,6 +165,7 @@ func TestHandleExecuteBatchValidation(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			request := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(tt.body))
+			request.Header.Set("Content-Type", "application/json")
 			response := httptest.NewRecorder()
 			NewTerminalHandler(&fakeTerminalOperations{}).HandleExecuteBatch(response, request)
 			if response.Code != http.StatusBadRequest {
@@ -177,6 +179,7 @@ func TestHandleExecuteBatchUnavailable(t *testing.T) {
 	request := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(
 		`{"node_ids":["node"],"command":"uptime"}`,
 	))
+	request.Header.Set("Content-Type", "application/json")
 	response := httptest.NewRecorder()
 	NewTerminalHandler(nil).HandleExecuteBatch(response, request)
 	if response.Code != http.StatusServiceUnavailable {

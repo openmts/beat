@@ -27,6 +27,10 @@ import (
 
 func buildThemeZip(t *testing.T, manifest string, files map[string]string) []byte {
 	t.Helper()
+	var parsed model.ThemeManifest
+	if err := json.Unmarshal([]byte(manifest), &parsed); err == nil && parsed.Runtime == model.ThemeRuntimeDeclarative && files != nil {
+		files[definitionName] = fixtureDefinitionJSON
+	}
 	var buffer bytes.Buffer
 	writer := zip.NewWriter(&buffer)
 	if manifest != "" {
@@ -53,8 +57,9 @@ func sampleManifest(t *testing.T, overrides map[string]any) string {
 	t.Helper()
 	preview := "preview.png"
 	files := []model.ThemeManifestFile{
-		{Path: "preview.png", Size: 1, SHA256: sha256Hex([]byte("p"))},
+		{Path: "preview.png", Size: int64(len(fixturePNG)), SHA256: sha256Hex([]byte(fixturePNG))},
 		{Path: "assets/theme.css", Size: 1, SHA256: sha256Hex([]byte("c"))},
+		{Path: definitionName, Size: int64(len(fixtureDefinitionJSON)), SHA256: sha256Hex([]byte(fixtureDefinitionJSON))},
 	}
 	base := map[string]any{
 		"schema_version": 1, "id": "acme-theme", "name": "Acme",
@@ -75,7 +80,7 @@ func sampleManifest(t *testing.T, overrides map[string]any) string {
 func validPackageBytes(t *testing.T) []byte {
 	t.Helper()
 	return buildThemeZip(t, sampleManifest(t, nil), map[string]string{
-		"preview.png":      "p",
+		"preview.png":      fixturePNG,
 		"assets/theme.css": "c",
 	})
 }
@@ -86,7 +91,7 @@ func TestValidateArchiveRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("validate: %v", err)
 	}
-	if validated.Digest == "" || validated.Manifest.ID != "acme-theme" || len(validated.Files) != 2 {
+	if validated.Digest == "" || validated.Manifest.ID != "acme-theme" || len(validated.Files) != 3 {
 		t.Fatalf("validated = %#v", validated)
 	}
 	if validated.Content["assets/theme.css"] == nil || validated.Content["preview.png"] == nil {
@@ -101,14 +106,14 @@ func TestValidateArchiveRoundTrip(t *testing.T) {
 
 func TestValidateArchiveRejectsBadInputs(t *testing.T) {
 	t.Run("missing manifest", func(t *testing.T) {
-		raw := buildThemeZip(t, "", map[string]string{"preview.png": "p"})
+		raw := buildThemeZip(t, "", map[string]string{"preview.png": fixturePNG})
 		if _, err := ValidateArchive(raw); err == nil {
 			t.Fatal("missing manifest accepted")
 		}
 	})
 	t.Run("unknown manifest field", func(t *testing.T) {
 		raw := buildThemeZip(t, sampleManifest(t, map[string]any{"evil": 1}), map[string]string{
-			"preview.png": "p", "assets/theme.css": "c",
+			"preview.png": fixturePNG, "assets/theme.css": "c",
 		})
 		if _, err := ValidateArchive(raw); err == nil {
 			t.Fatal("unknown manifest field accepted")
@@ -116,7 +121,7 @@ func TestValidateArchiveRejectsBadInputs(t *testing.T) {
 	})
 	t.Run("traversal path", func(t *testing.T) {
 		raw := buildThemeZip(t, sampleManifest(t, nil), map[string]string{
-			"../../etc/passwd": "x", "preview.png": "p", "assets/theme.css": "c",
+			"../../etc/passwd": "x", "preview.png": fixturePNG, "assets/theme.css": "c",
 		})
 		if _, err := ValidateArchive(raw); err == nil {
 			t.Fatal("traversal accepted")
@@ -124,7 +129,7 @@ func TestValidateArchiveRejectsBadInputs(t *testing.T) {
 	})
 	t.Run("absolute path", func(t *testing.T) {
 		raw := buildThemeZip(t, sampleManifest(t, nil), map[string]string{
-			"/etc/passwd": "x", "preview.png": "p", "assets/theme.css": "c",
+			"/etc/passwd": "x", "preview.png": fixturePNG, "assets/theme.css": "c",
 		})
 		if _, err := ValidateArchive(raw); err == nil {
 			t.Fatal("absolute path accepted")
@@ -152,7 +157,7 @@ func TestValidateArchiveRejectsBadInputs(t *testing.T) {
 	})
 	t.Run("bad version", func(t *testing.T) {
 		raw := buildThemeZip(t, sampleManifest(t, map[string]any{"version": "not-semver"}), map[string]string{
-			"preview.png": "p", "assets/theme.css": "c",
+			"preview.png": fixturePNG, "assets/theme.css": "c",
 		})
 		if _, err := ValidateArchive(raw); err == nil {
 			t.Fatal("bad version accepted")
@@ -161,14 +166,14 @@ func TestValidateArchiveRejectsBadInputs(t *testing.T) {
 	t.Run("manifest size overflow", func(t *testing.T) {
 		raw := buildThemeZip(t, sampleManifest(t, map[string]any{
 			"description": strings.Repeat("x", maxManifestBytes),
-		}), map[string]string{"preview.png": "p", "assets/theme.css": "c"})
+		}), map[string]string{"preview.png": fixturePNG, "assets/theme.css": "c"})
 		if _, err := ValidateArchive(raw); err == nil {
 			t.Fatal("oversized manifest accepted")
 		}
 	})
 	t.Run("unsupported extension", func(t *testing.T) {
 		raw := buildThemeZip(t, sampleManifest(t, nil), map[string]string{
-			"preview.png": "p", "assets/theme.css": "c", "evil.exe": "MZ",
+			"preview.png": fixturePNG, "assets/theme.css": "c", "evil.exe": "MZ",
 		})
 		if _, err := ValidateArchive(raw); err == nil {
 			t.Fatal("exe accepted")
@@ -209,7 +214,7 @@ func TestInstallActivateLifecycle(t *testing.T) {
 	}
 	// 兼容性不符
 	rawIncompatible := buildThemeZip(t, sampleManifest(t, map[string]any{"minimum_beat_version": "99.0.0"}), map[string]string{
-		"preview.png": "p", "assets/theme.css": "c",
+		"preview.png": fixturePNG, "assets/theme.css": "c",
 	})
 	if _, err := service.Install(ctx, rawIncompatible, model.ThemeSourceUpload, "", "owner-1"); !errors.Is(err, ErrRuntimeIncompatible) {
 		t.Fatalf("incompatible install error = %v", err)
@@ -291,8 +296,9 @@ func TestMarketFetchValidatesSignature(t *testing.T) {
 		t.Fatalf("generate key: %v", err)
 	}
 	catalog := model.ThemeCatalog{
-		SchemaVersion: 1, SourceID: "m1",
-		Themes: []model.ThemeCatalogEntry{{ThemeID: "acme", Name: "Acme", Version: "1.0.0"}},
+		SchemaVersion: 1, SourceID: marketTestIdentity(t, publicKey), ExpiresAt: time.Now().Add(time.Hour),
+		Themes: []model.ThemeCatalogEntry{{ThemeID: "acme", Name: "Acme", Version: "1.0.0", Runtime: model.ThemeRuntimeDeclarative,
+			PackageURL: "https://market.example/acme.zip", PackageSHA256: repeat('a', 64), ManifestSHA256: repeat('b', 64), MinimumBeat: "0.1.0"}},
 	}
 	body, err := json.Marshal(catalog)
 	if err != nil {
@@ -318,7 +324,7 @@ func TestMarketFetchValidatesSignature(t *testing.T) {
 	if err != nil {
 		t.Fatalf("fetch catalog: %v", err)
 	}
-	if fetched.SourceID != "m1" || len(fetched.Themes) != 1 {
+	if fetched.SourceID != marketTestIdentity(t, publicKey) || len(fetched.Themes) != 1 {
 		t.Fatalf("catalog = %#v", fetched)
 	}
 	expectedDigest := sha256.Sum256(body)
@@ -463,7 +469,7 @@ func TestThemeServiceErrorPathsWithClosedDatabase(t *testing.T) {
 		t.Fatal("list markets on closed db must fail")
 	}
 	if _, err := markets.CreateSource(ctx, &model.ThemeMarketSource{
-		Name: "M", CatalogURL: "https://m.example/c", PublicKey: repeat('k', 44),
+		Name: "M", CatalogURL: "https://m.example/c", PublicKey: base64.StdEncoding.EncodeToString(make([]byte, ed25519.PublicKeySize)),
 	}); err == nil {
 		t.Fatal("create market on closed db must fail")
 	}
@@ -473,7 +479,7 @@ func TestThemeServiceErrorPathsWithClosedDatabase(t *testing.T) {
 	if _, err := markets.RefreshCatalog(ctx, "m1"); err == nil {
 		t.Fatal("refresh catalog on closed db must fail")
 	}
-	if _, err := markets.InstallFromMarket(ctx, "m1", "t", "u"); err == nil {
+	if _, err := markets.InstallFromMarket(ctx, MarketSelection{SourceID: "m1", ThemeID: "valid-theme", Version: "1.0.0", PackageSHA256: repeat('a', 64)}, "u"); err == nil {
 		t.Fatal("market install on closed db must fail")
 	}
 }
@@ -498,7 +504,7 @@ func TestMarketServiceValidation(t *testing.T) {
 	}
 	// 更新不存在的源
 	if _, err := markets.UpdateSource(context.Background(), "missing", model.ThemeMarketSource{
-		Name: "N", CatalogURL: "https://m.example/c", PublicKey: repeat('k', 44),
+		Name: "N", CatalogURL: "https://m.example/c", PublicKey: base64.StdEncoding.EncodeToString(make([]byte, ed25519.PublicKeySize)),
 	}); !errors.Is(err, store.ErrThemeMarketNotFound) {
 		t.Fatalf("update missing = %v", err)
 	}
@@ -549,18 +555,18 @@ func TestMarketServiceRefreshAndInstall(t *testing.T) {
 	created, err := markets.CreateSource(context.Background(), &model.ThemeMarketSource{
 		Name: "Market", CatalogURL: "https://placeholder.invalid/catalog",
 		PublicKey:      base64.StdEncoding.EncodeToString(publicKey),
-		KeyFingerprint: "fp", Enabled: true,
+		KeyFingerprint: "", Enabled: true,
 	})
 	if err != nil {
 		t.Fatalf("create market: %v", err)
 	}
 
 	catalog := model.ThemeCatalog{
-		SchemaVersion: 1, SourceID: created.ID,
+		SchemaVersion: 1, SourceID: marketTestIdentity(t, publicKey), ExpiresAt: time.Now().Add(time.Hour),
 		Themes: []model.ThemeCatalogEntry{{
 			ThemeID: "acme-theme", Name: "Acme", Version: "1.0.0", Author: "a",
 			Runtime: model.ThemeRuntimeDeclarative, PackageURL: packageServer.URL,
-			PackageSHA256: packageDigest, MinimumBeat: "0.1.0",
+			PackageSHA256: packageDigest, ManifestSHA256: marketTestManifestDigest(t, packageBytes), MinimumBeat: "0.1.0",
 		}},
 	}
 	body, _ := json.Marshal(catalog)
@@ -589,18 +595,18 @@ func TestMarketServiceRefreshAndInstall(t *testing.T) {
 		t.Fatalf("refreshed = %#v", refreshed)
 	}
 	cached, err := markets.RefreshCatalog(context.Background(), created.ID)
-	if err != nil || cached != nil {
+	if err != nil || cached == nil || len(cached.Themes) != 1 {
 		t.Fatalf("cached refresh = %v / %v", cached, err)
 	}
 
-	pkg, err := markets.InstallFromMarket(context.Background(), created.ID, "acme-theme", "owner-1")
+	pkg, err := markets.InstallFromMarket(context.Background(), MarketSelection{SourceID: created.ID, ThemeID: "acme-theme", Version: "1.0.0", PackageSHA256: packageDigest}, "owner-1")
 	if err != nil {
 		t.Fatalf("market install: %v", err)
 	}
 	if pkg.ThemeID != "acme-theme" || pkg.SourceType != model.ThemeSourceMarket {
 		t.Fatalf("installed = %#v", pkg)
 	}
-	if _, err := markets.InstallFromMarket(context.Background(), created.ID, "missing", "owner-1"); !errors.Is(err, ErrMarketInvalid) {
+	if _, err := markets.InstallFromMarket(context.Background(), MarketSelection{SourceID: created.ID, ThemeID: "missing", Version: "1.0.0", PackageSHA256: packageDigest}, "owner-1"); !errors.Is(err, ErrMarketChanged) {
 		t.Fatalf("unknown theme error = %v", err)
 	}
 }
@@ -625,7 +631,7 @@ func TestValidateArchiveRejectsMoreInputs(t *testing.T) {
 	})
 	t.Run("backslash path", func(t *testing.T) {
 		raw := buildThemeZip(t, sampleManifest(t, nil), map[string]string{
-			"preview.png": "p", "assets/theme.css": "c", `evil\file.css`: "x",
+			"preview.png": fixturePNG, "assets/theme.css": "c", `evil\file.css`: "x",
 		})
 		if _, err := ValidateArchive(raw); err == nil {
 			t.Fatal("backslash path accepted")
@@ -633,7 +639,7 @@ func TestValidateArchiveRejectsMoreInputs(t *testing.T) {
 	})
 	t.Run("dot segment", func(t *testing.T) {
 		raw := buildThemeZip(t, sampleManifest(t, nil), map[string]string{
-			"preview.png": "p", "assets/theme.css": "c", "assets/./x.css": "x",
+			"preview.png": fixturePNG, "assets/theme.css": "c", "assets/./x.css": "x",
 		})
 		if _, err := ValidateArchive(raw); err == nil {
 			t.Fatal("dot segment accepted")
@@ -641,7 +647,7 @@ func TestValidateArchiveRejectsMoreInputs(t *testing.T) {
 	})
 	t.Run("nested manifest", func(t *testing.T) {
 		raw := buildThemeZip(t, sampleManifest(t, nil), map[string]string{
-			"preview.png": "p", "assets/theme.css": "c", "sub/beat-theme.json": "x",
+			"preview.png": fixturePNG, "assets/theme.css": "c", "sub/beat-theme.json": "x",
 		})
 		if _, err := ValidateArchive(raw); err == nil {
 			t.Fatal("nested manifest accepted")
@@ -720,7 +726,7 @@ func TestValidateArchiveAdditionalLimits(t *testing.T) {
 	})
 	t.Run("nul character path", func(t *testing.T) {
 		raw := buildThemeZip(t, sampleManifest(t, nil), map[string]string{
-			"preview.png": "p", "assets/theme.css": "c", "bad\x00.css": "x",
+			"preview.png": fixturePNG, "assets/theme.css": "c", "bad\x00.css": "x",
 		})
 		if _, err := ValidateArchive(raw); err == nil {
 			t.Fatal("nul path accepted")
@@ -729,7 +735,7 @@ func TestValidateArchiveAdditionalLimits(t *testing.T) {
 	t.Run("path too long", func(t *testing.T) {
 		long := strings.Repeat("a", maxPathBytes+1)
 		raw := buildThemeZip(t, sampleManifest(t, nil), map[string]string{
-			"preview.png": "p", "assets/theme.css": "c", long + ".css": "x",
+			"preview.png": fixturePNG, "assets/theme.css": "c", long + ".css": "x",
 		})
 		if _, err := ValidateArchive(raw); err == nil {
 			t.Fatal("long path accepted")
@@ -738,7 +744,7 @@ func TestValidateArchiveAdditionalLimits(t *testing.T) {
 	t.Run("too deep", func(t *testing.T) {
 		deep := strings.Join([]string{"a", "b", "c", "d", "e", "f", "g", "h", "i"}, "/") + ".css"
 		raw := buildThemeZip(t, sampleManifest(t, nil), map[string]string{
-			"preview.png": "p", "assets/theme.css": "c", deep: "x",
+			"preview.png": fixturePNG, "assets/theme.css": "c", deep: "x",
 		})
 		if _, err := ValidateArchive(raw); err == nil {
 			t.Fatal("too deep path accepted")
@@ -849,14 +855,14 @@ func TestServiceMultiVersionLifecycle(t *testing.T) {
 	ctx := context.Background()
 
 	// 版本 1.0.0
-	v1 := buildThemeZip(t, sampleManifest(t, nil), map[string]string{"preview.png": "p", "assets/theme.css": "c"})
+	v1 := buildThemeZip(t, sampleManifest(t, nil), map[string]string{"preview.png": fixturePNG, "assets/theme.css": "c"})
 	pkg1, err := service.Install(ctx, v1, model.ThemeSourceUpload, "", "u")
 	if err != nil {
 		t.Fatalf("install v1: %v", err)
 	}
 	// 版本 1.1.0（同 theme_id，不同 version）
 	v2 := buildThemeZip(t, sampleManifest(t, map[string]any{"version": "1.1.0"}), map[string]string{
-		"preview.png": "p", "assets/theme.css": "c",
+		"preview.png": fixturePNG, "assets/theme.css": "c",
 	})
 	pkg2, err := service.Install(ctx, v2, model.ThemeSourceUpload, "", "u")
 	if err != nil {
@@ -956,8 +962,8 @@ func TestMarketServiceBranchCoverage(t *testing.T) {
 	ctx := context.Background()
 
 	source, err := markets.CreateSource(ctx, &model.ThemeMarketSource{
-		Name: "M", CatalogURL: "https://placeholder.invalid/c", PublicKey: repeat('k', 44),
-		KeyFingerprint: "fp", Enabled: true,
+		Name: "M", CatalogURL: "https://placeholder.invalid/c", PublicKey: base64.StdEncoding.EncodeToString(make([]byte, ed25519.PublicKeySize)),
+		KeyFingerprint: "", Enabled: true,
 	})
 	if err != nil {
 		t.Fatalf("create: %v", err)
@@ -969,15 +975,15 @@ func TestMarketServiceBranchCoverage(t *testing.T) {
 		t.Fatalf("update url = %v / %v", updated, err)
 	}
 	// 更新公钥（触发密钥变更分支）
-	source.PublicKey = repeat('z', 44)
-	source.KeyFingerprint = "new-fp"
+	source.PublicKey = base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{1}, ed25519.PublicKeySize))
+	source.KeyFingerprint = ""
 	if _, err := markets.UpdateSource(ctx, source.ID, *source); err != nil {
 		t.Fatalf("update key: %v", err)
 	}
 	// 指向不可达目录：刷新与安装走 fetch 失败分支
 	unreachable := &model.ThemeMarketSource{
 		ID: "m2", Name: "Unreachable", CatalogURL: "https://unreachable.invalid/catalog",
-		PublicKey: repeat('q', 44), KeyFingerprint: "fp2", Enabled: true,
+		PublicKey: base64.StdEncoding.EncodeToString(make([]byte, ed25519.PublicKeySize)), KeyFingerprint: "", Enabled: true,
 	}
 	createdUnreachable, err := markets.CreateSource(ctx, unreachable)
 	if err != nil {
@@ -986,7 +992,7 @@ func TestMarketServiceBranchCoverage(t *testing.T) {
 	if _, err := markets.RefreshCatalog(ctx, createdUnreachable.ID); !errors.Is(err, ErrMarketUnavailable) {
 		t.Fatalf("refresh unreachable = %v", err)
 	}
-	if _, err := markets.InstallFromMarket(ctx, createdUnreachable.ID, "t", "u"); !errors.Is(err, ErrMarketUnavailable) {
+	if _, err := markets.InstallFromMarket(ctx, MarketSelection{SourceID: createdUnreachable.ID, ThemeID: "valid-theme", Version: "1.0.0", PackageSHA256: repeat('a', 64)}, "u"); !errors.Is(err, ErrMarketUnavailable) {
 		t.Fatalf("install unreachable = %v", err)
 	}
 	// 禁用后刷新与安装失败
@@ -997,7 +1003,7 @@ func TestMarketServiceBranchCoverage(t *testing.T) {
 	if _, err := markets.RefreshCatalog(ctx, source.ID); !errors.Is(err, ErrMarketUnavailable) {
 		t.Fatalf("refresh disabled = %v", err)
 	}
-	if _, err := markets.InstallFromMarket(ctx, source.ID, "t", "u"); !errors.Is(err, ErrMarketUnavailable) {
+	if _, err := markets.InstallFromMarket(ctx, MarketSelection{SourceID: source.ID, ThemeID: "valid-theme", Version: "1.0.0", PackageSHA256: repeat('a', 64)}, "u"); !errors.Is(err, ErrMarketUnavailable) {
 		t.Fatalf("install disabled = %v", err)
 	}
 }
@@ -1077,7 +1083,7 @@ func TestActivateAndDeleteEdgeBranches(t *testing.T) {
 	}
 	// 兼容性校验（最大版本小于当前）
 	rawMax := buildThemeZip(t, sampleManifest(t, map[string]any{"maximum_beat_version": "0.0.1"}), map[string]string{
-		"preview.png": "p", "assets/theme.css": "c",
+		"preview.png": fixturePNG, "assets/theme.css": "c",
 	})
 	if _, err := service.Install(ctx, rawMax, model.ThemeSourceUpload, "", "u"); !errors.Is(err, ErrRuntimeIncompatible) {
 		t.Fatalf("max version incompatible = %v", err)
@@ -1089,7 +1095,10 @@ func TestMarketFetch304AndKeyErrors(t *testing.T) {
 	if err != nil {
 		t.Fatalf("generate key: %v", err)
 	}
-	body := []byte(`{"schema_version":1,"source_id":"m1","themes":[]}`)
+	body, err := json.Marshal(model.ThemeCatalog{SchemaVersion: 1, SourceID: marketTestIdentity(t, pub), ExpiresAt: time.Now().Add(time.Hour), Themes: []model.ThemeCatalogEntry{}})
+	if err != nil {
+		t.Fatal(err)
+	}
 	sig := ed25519.Sign(priv, body)
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("If-None-Match") == `"etag-1"` {
@@ -1109,7 +1118,7 @@ func TestMarketFetch304AndKeyErrors(t *testing.T) {
 	source := &model.ThemeMarketSource{ID: "m1", CatalogURL: server.URL,
 		PublicKey: base64.StdEncoding.EncodeToString(pub), CacheETag: `"etag-1"`}
 	catalog, digest, err := client.FetchCatalog(context.Background(), source)
-	if err != nil || catalog != nil {
+	if err != nil || catalog == nil || digest == "" {
 		t.Fatalf("304 fetch = %v / %v / %v", catalog, digest, err)
 	}
 	// 密钥长度错误 → ErrMarketInvalid

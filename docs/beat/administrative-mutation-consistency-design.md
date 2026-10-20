@@ -2,7 +2,7 @@
 
 Updated: 2026-07-30
 
-Status: reviewed schema-free design; implementation requires explicit approval
+Status: reviewed schema-free design; owner approved implementation on 2026-10-15 (blanket approval of all pending items)
 
 ## Goal
 
@@ -193,7 +193,7 @@ replace credentials, alter outbound trust, restore data, or execute remotely:
 
 Audit list access remains available to both administrator roles with redacted
 fields. A future export, expanded sensitive detail, or decrypted operation
-content is owner-only and recent-authenticated. Migration `v6` may split
+content is owner-only and recent-authenticated. Migration `v10` splits
 notification enable/test from endpoint/secret updates so admins retain routine
 operations while owners control outbound trust. Migration `v5` may replace the
 current SSH commands, but it cannot weaken the recent-auth admission rule.
@@ -217,7 +217,7 @@ secret. Repeating begin replaces only that session's pending setup.
 
 Enable verifies a code against the pending secret and then commits the encrypted
 secret, enabled timestamp, and audit event in one SQLite transaction. After
-`v5`, durable encryption uses the user-bound shared envelope from
+`v9`, durable encryption uses the user-bound shared envelope from
 [`application-secret-lifecycle-design.md`](./application-secret-lifecycle-design.md);
 this schema-free batch does not create another key or ciphertext format. Cancel,
 expiry, logout, session revocation, user disablement, password change, process
@@ -244,9 +244,9 @@ lifecycle state. Existing multi-row stores keep their domain invariants and add
 the audit insert to the same transaction rather than opening a nested one.
 
 Successful login moves session creation, last-login update and successful audit
-into one store transaction. Migration `v12 login-security` later extends that
+into one store transaction. Migration `v17 login-security` later extends that
 same transaction with security-event, source/device and notification-outbox
-rows. Failed login aggregation remains owned by `v12` so an unauthenticated
+rows. Failed login aggregation remains owned by `v17` so an unauthenticated
 attacker cannot grow the audit table without bound.
 
 Logout, reauthentication and password change similarly become atomic. A
@@ -280,10 +280,10 @@ This schema-free batch does not invent a generic cross-store transaction.
 Instead it requires the existing or planned durable owner to carry the actor,
 request and audit linkage:
 
-- `v19 application-data-lifecycle` owns backup archive/row/journal states and
+- `v24 application-data-lifecycle` owns backup archive/row/journal states and
   startup reconciliation. Accepted, completed, failed and reconciled audit
   events reference the backup ID and restore generation.
-- `v17 metric-erasure` replaces synchronous node/task MTS deletion with
+- `v22 metric-erasure` replaces synchronous node/task MTS deletion with
   tombstones and retryable jobs. SQLite request state and accepted audit commit
   together; terminal audit follows durable MTS completion.
 - `v6 notification-delivery` owns test-send and delivery attempts. HTTP success
@@ -340,7 +340,7 @@ The shadcn/ui `base-nova` audit view shows translated action/outcome labels,
 actor display name, readable resource snapshot, time, source, request ID and a
 bounded detail drawer. IDs remain copyable technical values, never the primary
 display label. Filters use the stable action catalog and cursor pagination from
-`v19`; they do not show raw route patterns as user-facing resources.
+`v24`; they do not show raw route patterns as user-facing resources.
 
 Sensitive actions use one shared reauthentication dialog in the current
 workflow instead of requiring navigation to the Account tab. A `428` response
@@ -397,9 +397,9 @@ or unknown evidence, and deployed audit request IDs match HTTP request IDs.
 
 This is schema-free batch `administrative-mutation-consistency` in
 [`commercial-parity-implementation-sequence.md`](./commercial-parity-implementation-sequence.md).
-It consumes no SQLite migration, leaves the next migration at `v20`, and keeps
+It consumes no SQLite migration, leaves the next migration at `v25`, and keeps
 backup format `v4`. It should deploy before adding more administrator mutations.
-Later `v5`, `v6`, `v12`, `v17` and `v19` implementations must use this
+Later `v9`, `v10`, `v17`, `v22` and `v24` implementations must use this
 authorization/audit envelope and operation linkage rather than introducing
 parallel vocabularies.
 

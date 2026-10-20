@@ -61,10 +61,13 @@ describe("security API", () => {
     await revokeAdminSession("session")
     mock.onDelete("/admin/sessions/others").reply(200, { revoked: 2 })
     expect(await revokeOtherAdminSessions()).toBe(2)
-    mock.onGet("/admin/audit-events").reply((config) => [200, {
-      events: [], total: 0, limit: 50, offset: Number(config.params.offset),
-    }])
-    expect((await listAuditEvents(50)).offset).toBe(50)
+    mock.onGet("/admin/audit-events").reply((config) => {
+      expect(config.params).toMatchObject({ limit: 50, cursor: "page-1", action: "backup.create" })
+      return [200, { events: [{ id: "event" }], next_cursor: "page-2" }]
+    })
+    const page = await listAuditEvents({ limit: 50, cursor: "page-1", action: "backup.create" })
+    expect(page.next_cursor).toBe("page-2")
+    expect(page.events).toHaveLength(1)
   })
 })
 

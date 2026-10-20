@@ -120,11 +120,12 @@ func TestNetworkRoutesAuthAndWorkflow(t *testing.T) {
 	}
 
 	assertNetworkStatus(t, fixture.router, networkRequestSpec{
-		method: http.MethodDelete, path: "/api/v1/network/tasks/" + created.Data.ID, want: http.StatusUnauthorized,
+		method: http.MethodDelete, path: "/api/v1/network/tasks/" + created.Data.ID, want: http.StatusForbidden,
 	})
+	// v22 起任务删除是 owner 会话 + 精确确认的异步生命周期请求；Bearer 管理令牌不够。
 	assertNetworkStatus(t, fixture.router, networkRequestSpec{
 		method: http.MethodDelete, path: "/api/v1/network/tasks/" + created.Data.ID,
-		token: "admin-secret", want: http.StatusNoContent,
+		token: "admin-secret", want: http.StatusForbidden,
 	})
 }
 

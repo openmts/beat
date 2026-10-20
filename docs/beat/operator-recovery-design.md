@@ -2,7 +2,9 @@
 
 Updated: 2026-07-30
 
-Status: reviewed design; implementation requires explicit approval
+Status: local CLI implemented (`inspect`, `unlock-owner`, `stage-restore`).
+See the [operator runbook](operator-recovery-runbook.md). No production recovery
+operation is requested or performed.
 
 ## Goal and evidence
 
@@ -77,7 +79,7 @@ confirmation that repeats the site name and owner name. It:
 - validates and hashes a replacement password supplied twice;
 - removes TOTP from that owner;
 - re-enables the owner if disabled;
-- restores local password login after OIDC migration `v2`;
+- restores local password login after OIDC migration `v5`;
 - revokes every administrator session, not only the selected owner's sessions;
 - writes `security.break_glass_recovery` with actor kind `local_operator`, the
   target username snapshot, operation flags, timestamp, and no secret values.
@@ -117,8 +119,8 @@ authority.
 
 ## Locking and filesystem contract
 
-Normal Server startup and every recovery command share a lock file under the
-resolved data directory. The lock file is `0600`, opened without following
+Normal Server startup and every recovery command share a lock file beside the
+resolved data directory, outside restore replacement scope. The lock file is `0600`, opened without following
 symlinks, and locked through an operating-system advisory exclusive lock.
 Recovery refuses network filesystems when reliable locking cannot be proven.
 
@@ -194,12 +196,11 @@ state byte-for-byte unchanged.
 This is schema-free release batch `operator-recovery-cli` in
 [`commercial-parity-implementation-sequence.md`](./commercial-parity-implementation-sequence.md).
 It uses the deployed administrator, session, audit, backup, and restore schema.
-The local-login restoration action activates only after OIDC migration `v2`.
+The local-login restoration action activates only after OIDC migration `v5`.
 It does not change the backup archive format.
 
-Implementation requires separate explicit approval because it adds a privileged
-offline mutation surface, a shared startup lock contract, empty-directory
-creation, and release/runbook behavior. Approval must confirm the stopped-
-service requirement, all-session revocation, no owner creation, no network
-recovery listener, full archive validation before restore staging, and first-run
-restore before bootstrap setup.
+The current commercial delivery authorization covers implementing this batch
+with the stopped-service requirement, all-session revocation, no owner creation,
+no network recovery listener, and complete archive validation before staging.
+Actual use of the privileged recovery command remains an explicit local operator
+action. Tests use isolated temporary instances only.

@@ -2,13 +2,15 @@ package trafficreport
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"strings"
 	"time"
 
 	"github.com/beat/backend/internal/model"
-	"github.com/beat/backend/internal/notification"
+	"github.com/beat/backend/internal/notificationqueue"
+	"github.com/beat/backend/internal/store"
 )
 
 var (
@@ -23,16 +25,12 @@ type scheduleStore interface {
 	Create(context.Context, *model.TrafficReportSchedule) (*model.TrafficReportSchedule, error)
 	Update(context.Context, string, *model.TrafficReportSchedule) (*model.TrafficReportSchedule, error)
 	Delete(context.Context, string) error
-	ClaimDue(context.Context, string, string, time.Time, time.Time) (bool, error)
-	CompleteRun(context.Context, string, time.Time, model.TrafficReportDeliveryStatus) error
+	CompletePeriodTx(context.Context, *sql.Tx, store.TrafficReportCompletion) (bool, error)
+	RecordTestRunTx(context.Context, *sql.Tx, store.TrafficReportTest) error
 }
 
 type nodeStore interface {
 	ListNodes(context.Context, string) ([]model.Node, error)
-}
-
-type channelStore interface {
-	ListAlertChannels(context.Context) ([]model.AlertChannel, error)
 }
 
 type metricsStore interface {
@@ -44,44 +42,52 @@ type metricsStore interface {
 	) (model.TrafficTotals, error)
 }
 
-type deliveryService interface {
-	SendMessage(
-		context.Context,
-		*model.AlertChannel,
-		notification.Message,
-	) (model.AlertDeliveryStatus, error)
+type Queue interface {
+	notificationqueue.Enqueuer
+	SourceReceipt(context.Context, string) (notificationqueue.Receipt, error)
+}
+
+type Config struct {
+	Schedules scheduleStore
+	Nodes     nodeStore
+	Metrics   metricsStore
+	Queue     Queue
 }
 
 type Service struct {
 	schedules scheduleStore
 	nodes     nodeStore
-	channels  channelStore
 	metrics   metricsStore
-	delivery  deliveryService
+	queue     Queue
 	now       func() time.Time
+	tests     reportTestBudget
 }
 
-func NewService(
-	schedules scheduleStore,
-	nodes nodeStore,
-	channels channelStore,
-	metrics metricsStore,
-	delivery deliveryService,
-) *Service {
-	return &Service{
-		schedules: schedules, nodes: nodes, channels: channels,
-		metrics: metrics, delivery: delivery, now: model.NowUTC,
-	}
+func NewService(config Config) *Service {
+	return &Service{schedules: config.Schedules, nodes: config.Nodes, metrics: config.Metrics, queue: config.Queue, now: model.NowUTC,
+		tests: reportTestBudget{last: make(map[string]time.Time)}}
 }
 
 func (s *Service) List(ctx context.Context) ([]model.TrafficReportSchedule, error) {
-	return s.schedules.List(ctx)
+	schedules, err := s.schedules.List(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for index := range schedules {
+		if err := s.hydrateDelivery(ctx, &schedules[index]); err != nil {
+			return nil, err
+		}
+	}
+	return schedules, nil
 }
 
 func (s *Service) Create(
 	ctx context.Context,
 	schedule *model.TrafficReportSchedule,
 ) (*model.TrafficReportSchedule, error) {
+	if schedule == nil {
+		return nil, ErrInvalidSchedule
+	}
 	normalizeSchedule(schedule)
 	if err := ValidateSchedule(*schedule); err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrInvalidSchedule, err)
@@ -106,6 +112,9 @@ func (s *Service) Update(
 	if existing == nil {
 		return nil, ErrScheduleNotFound
 	}
+	if schedule == nil {
+		return nil, ErrInvalidSchedule
+	}
 	normalizeSchedule(schedule)
 	if err := ValidateSchedule(*schedule); err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrInvalidSchedule, err)
@@ -126,89 +135,6 @@ func (s *Service) Delete(ctx context.Context, id string) error {
 		return ErrScheduleNotFound
 	}
 	return s.schedules.Delete(ctx, id)
-}
-
-func (s *Service) TestRun(
-	ctx context.Context,
-	id string,
-) (model.TrafficReportRunResult, error) {
-	schedule, err := s.schedules.Get(ctx, id)
-	if err != nil {
-		return model.TrafficReportRunResult{}, fmt.Errorf("get traffic report schedule: %w", err)
-	}
-	if schedule == nil {
-		return model.TrafficReportRunResult{}, ErrScheduleNotFound
-	}
-	runAt, err := PreviousRun(*schedule, s.now())
-	if err != nil {
-		return model.TrafficReportRunResult{}, err
-	}
-	return s.runUnclaimed(ctx, *schedule, runAt)
-}
-
-func (s *Service) RunDue(ctx context.Context) error {
-	now := s.now()
-	schedules, err := s.schedules.ListDue(ctx, now)
-	if err != nil {
-		return fmt.Errorf("list due traffic report schedules: %w", err)
-	}
-	errorsFound := make([]error, 0)
-	for _, schedule := range schedules {
-		if err := s.runScheduled(ctx, schedule, now); err != nil {
-			errorsFound = append(errorsFound, fmt.Errorf("run schedule %s: %w", schedule.ID, err))
-		}
-	}
-	return errors.Join(errorsFound...)
-}
-
-func (s *Service) runScheduled(
-	ctx context.Context,
-	schedule model.TrafficReportSchedule,
-	now time.Time,
-) error {
-	period, err := ReportPeriod(schedule, schedule.NextRunAt)
-	if err != nil {
-		return err
-	}
-	nextRun, err := NextRun(schedule, schedule.NextRunAt)
-	if err != nil {
-		return err
-	}
-	claimed, err := s.schedules.ClaimDue(ctx, schedule.ID, period.Key, nextRun, now)
-	if err != nil || !claimed {
-		return err
-	}
-	result, runErr := s.runForPeriod(ctx, schedule, period)
-	if err := s.schedules.CompleteRun(ctx, schedule.ID, now, result.Delivery); err != nil {
-		return errors.Join(runErr, err)
-	}
-	return runErr
-}
-
-func (s *Service) runUnclaimed(
-	ctx context.Context,
-	schedule model.TrafficReportSchedule,
-	runAt time.Time,
-) (model.TrafficReportRunResult, error) {
-	period, err := ReportPeriod(schedule, runAt)
-	if err != nil {
-		return model.TrafficReportRunResult{}, err
-	}
-	return s.runForPeriod(ctx, schedule, period)
-}
-
-func (s *Service) runForPeriod(
-	ctx context.Context,
-	schedule model.TrafficReportSchedule,
-	period model.TrafficReportPeriod,
-) (model.TrafficReportRunResult, error) {
-	report, err := s.buildReport(ctx, schedule, period)
-	if err != nil {
-		status := failedDeliveryStatus(s.now(), "failed to build traffic report")
-		return model.TrafficReportRunResult{Delivery: status}, err
-	}
-	status, deliveryErr := s.deliver(ctx, schedule, report)
-	return model.TrafficReportRunResult{Report: report, Delivery: status}, deliveryErr
 }
 
 func normalizeSchedule(schedule *model.TrafficReportSchedule) {
@@ -245,10 +171,4 @@ func uniqueStrings(values []string) []string {
 		unique = append(unique, value)
 	}
 	return unique
-}
-
-func failedDeliveryStatus(now time.Time, message string) model.TrafficReportDeliveryStatus {
-	return model.TrafficReportDeliveryStatus{
-		State: model.TrafficReportDeliveryFailed, Message: message, DeliveredAt: now,
-	}
 }

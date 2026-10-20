@@ -131,15 +131,13 @@ func (s *NetworkTaskStore) listEffectiveTaskNodes(
 	query := `SELECT n.id, n.name, n.alias FROM nodes n`
 	args := []any{}
 	if !allNodes {
-		query += ` JOIN network_task_nodes a ON a.node_id = n.id WHERE a.task_id = ?`
+		query += ` JOIN network_task_nodes a ON a.node_id = n.id WHERE a.task_id = ? AND ` + hiddenNodeFilter
 		args = append(args, taskID)
+	} else {
+		query += ` WHERE n.credential_state <> 'pending_claim'`
 	}
 	if publicOnly {
-		if allNodes {
-			query += ` WHERE n.is_public = 1`
-		} else {
-			query += ` AND n.is_public = 1`
-		}
+		query += ` AND n.is_public = 1`
 	}
 	query += ` ORDER BY n.sort_order ASC, n.name ASC`
 	rows, err := s.db.QueryContext(ctx, query, args...)

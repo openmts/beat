@@ -4,7 +4,6 @@ import (
 	"archive/zip"
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -17,7 +16,7 @@ import (
 
 const (
 	maximumArchiveEntries = 600
-	maximumMetricRows     = 1_000_000_000
+	maximumMetricRows     = model.MaximumBackupMetricRows
 	maximumJSONLLine      = 1 << 20
 )
 
@@ -63,26 +62,13 @@ func extractAllowlisted(files []*zip.File, root string) error {
 	if len(files) < 4 || len(files) > maximumArchiveEntries {
 		return errors.New("backup archive entry count is invalid")
 	}
-	allowed := map[string]bool{manifestEntry: true, sqliteEntry: true, metricsEntry: true,
-		dataKeyEntry: true, checksumsEntry: true}
 	seen := map[string]bool{}
 	var expanded uint64
 	for _, file := range files {
-		name := file.Name
-		isTheme := strings.HasPrefix(name, "themes/")
-		if (!allowed[name] && !isTheme) || seen[name] || filepath.IsAbs(name) || filepath.Clean(name) != name {
-			return fmt.Errorf("backup archive entry %q is not allowed", name)
+		if err := validateArchiveEntry(file, seen); err != nil {
+			return err
 		}
-		if isTheme && !validThemeBackupPath(name) {
-			return fmt.Errorf("backup archive theme entry %q is not allowed", name)
-		}
-		seen[name] = true
-		if file.FileInfo().Mode()&os.ModeSymlink != 0 || file.FileInfo().IsDir() || file.Flags&1 != 0 {
-			return fmt.Errorf("backup archive entry %q has an unsafe type", name)
-		}
-		if file.Method != zip.Store && file.Method != zip.Deflate {
-			return fmt.Errorf("backup archive entry %q uses unsupported compression", name)
-		}
+		seen[file.Name] = true
 		if file.UncompressedSize64 > uint64(MaximumExpandedBytes)-expanded {
 			return errors.New("backup archive expanded size exceeds limit")
 		}
@@ -133,17 +119,18 @@ func validateExtracted(ctx context.Context, root string) (model.BackupManifest, 
 	if err != nil {
 		return model.BackupManifest{}, err
 	}
-	if err := validatePayloads(root, manifest); err != nil {
+	if err := validateExtractedPayloads(ctx, root, manifest); err != nil {
 		return model.BackupManifest{}, err
 	}
-	if err := validateSQLite(ctx, filepath.Join(root, sqliteEntry)); err != nil {
+	inventory, err := archivedMetricInventory(ctx, root, manifest)
+	if err != nil {
 		return model.BackupManifest{}, err
 	}
-	if err := validateOIDCCiphertexts(ctx, filepath.Join(root, sqliteEntry),
-		filepath.Join(root, filepath.FromSlash(dataKeyEntry))); err != nil {
+	metricCutoff, err := archiveMetricCutoff(manifest)
+	if err != nil {
 		return model.BackupManifest{}, err
 	}
-	rows, err := validateMetrics(filepath.Join(root, metricsEntry), manifest.SnapshotCutoff.UnixNano())
+	rows, err := validateCatalogMetricsContext(ctx, metricValidationInput{path: filepath.Join(root, metricsEntry), cutoff: metricCutoff.UnixNano(), definitions: inventory})
 	if err != nil {
 		return model.BackupManifest{}, err
 	}
@@ -152,29 +139,6 @@ func validateExtracted(ctx context.Context, root string) (model.BackupManifest, 
 	}
 	if checksumErr := validateChecksumList(root, manifest); checksumErr != nil {
 		return model.BackupManifest{}, checksumErr
-	}
-	return manifest, nil
-}
-
-func readManifest(path string) (model.BackupManifest, error) {
-	file, err := os.Open(path)
-	if err != nil {
-		return model.BackupManifest{}, fmt.Errorf("open backup manifest: %w", err)
-	}
-	defer func() { _ = file.Close() }()
-	decoder := json.NewDecoder(io.LimitReader(file, 1<<20))
-	decoder.DisallowUnknownFields()
-	var manifest model.BackupManifest
-	if err := decoder.Decode(&manifest); err != nil {
-		return model.BackupManifest{}, fmt.Errorf("decode backup manifest: %w", err)
-	}
-	if (manifest.FormatVersion != 1 && manifest.FormatVersion != 2) ||
-		manifest.CreatedAt.IsZero() || manifest.SnapshotCutoff.IsZero() ||
-		manifest.MetricRows < 0 || manifest.MetricRows > maximumMetricRows {
-		return model.BackupManifest{}, errors.New("backup manifest is incompatible")
-	}
-	if manifest.FormatVersion == 2 && len(manifest.ThemeFiles) == 0 {
-		return model.BackupManifest{}, errors.New("backup format 2 requires theme metadata")
 	}
 	return manifest, nil
 }
@@ -197,7 +161,7 @@ func validatePayloads(root string, manifest model.BackupManifest) error {
 	required := map[string]bool{sqliteEntry: true, metricsEntry: true}
 	for name := range manifest.Checksums {
 		if name != sqliteEntry && name != metricsEntry && name != dataKeyEntry &&
-			!strings.HasPrefix(name, "themes/") {
+			!strings.HasPrefix(name, "themes/") && !validGeoIPEntry(name) {
 			return fmt.Errorf("manifest payload %q is not allowed", name)
 		}
 		required[name] = true
@@ -288,29 +252,28 @@ func archivedActiveThemeDigest(sqlitePath string) (string, error) {
 	return digest, nil
 }
 
-func validateChecksumList(root string, manifest model.BackupManifest) error {
-	content, err := os.ReadFile(filepath.Join(root, checksumsEntry))
-	if err != nil {
-		return fmt.Errorf("read checksum list: %w", err)
+func validateExtractedPayloads(ctx context.Context, root string, manifest model.BackupManifest) error {
+	if err := validatePayloads(root, manifest); err != nil {
+		return err
 	}
-	if len(content) > 64<<10 {
-		return errors.New("checksum list is too large")
+	if err := validateGeoIPPayloads(root, manifest); err != nil {
+		return err
 	}
-	parsed := map[string]string{}
-	for _, line := range strings.Split(strings.TrimSpace(string(content)), "\n") {
-		parts := strings.SplitN(line, "  ", 2)
-		if len(parts) != 2 || parsed[parts[1]] != "" {
-			return errors.New("checksum list is malformed")
-		}
-		parsed[parts[1]] = parts[0]
+	if err := validateAgentReleaseSnapshot(ctx, root, manifest); err != nil {
+		return err
 	}
-	if len(parsed) != len(manifest.Checksums) {
-		return errors.New("checksum list does not match manifest")
+	if err := validateSQLite(ctx, filepath.Join(root, sqliteEntry)); err != nil {
+		return err
 	}
-	for name, checksum := range manifest.Checksums {
-		if parsed[name] != checksum {
-			return errors.New("checksum list does not match manifest")
-		}
+	if err := validateOIDCCiphertexts(ctx, filepath.Join(root, sqliteEntry),
+		filepath.Join(root, filepath.FromSlash(dataKeyEntry))); err != nil {
+		return err
+	}
+	if _, err := validateTrafficCalibrationLedger(ctx, filepath.Join(root, sqliteEntry)); err != nil {
+		return err
+	}
+	if _, err := validateMetricErasureLedger(ctx, filepath.Join(root, sqliteEntry)); err != nil {
+		return err
 	}
 	return nil
 }

@@ -3,6 +3,7 @@ package handler
 import (
 	"errors"
 	"net/http"
+	"sync/atomic"
 	"time"
 
 	"github.com/beat/backend/internal/model"
@@ -17,10 +18,19 @@ const (
 )
 
 type NetworkHandler struct {
-	tasks *store.NetworkTaskStore
-	nodes *store.NodeStore
-	mts   *store.MTSStore
-	now   func() time.Time
+	tasks   *store.NetworkTaskStore
+	nodes   *store.NodeStore
+	mts     *store.MTSStore
+	erasure *store.MetricErasureStore
+	now     func() time.Time
+	// historyShare 合并在途的相同公共网络历史读取；nil 时逐次直读。
+	historyShare *networkHistoryShare
+	// quality 保存最近一次成功的公共网络质量视图；由请求线程整体替换，调用方只读。
+	quality atomic.Pointer[networkQualitySnapshot]
+	// qualityGeneration 是视图代：任务、分配或探测结果写入后自增，使旧视图立即失效。
+	qualityGeneration atomic.Uint64
+	// qualityShare 合并在途的公共网络质量重建，避免同时到达的观看者各建一份视图。
+	qualityShare *networkQualityShare
 }
 
 type networkTaskRequest struct {
@@ -60,7 +70,9 @@ func NewNetworkHandler(
 	nodes *store.NodeStore,
 	mtsStore *store.MTSStore,
 ) *NetworkHandler {
-	return &NetworkHandler{tasks: tasks, nodes: nodes, mts: mtsStore, now: model.NowUTC}
+	return &NetworkHandler{tasks: tasks, nodes: nodes, mts: mtsStore, now: model.NowUTC,
+		historyShare: newHistoryShare[[]store.NetworkProbePoint](),
+		qualityShare: newHistoryShare[networkQualityView]()}
 }
 
 func (body networkTaskRequest) task() model.NetworkTask {

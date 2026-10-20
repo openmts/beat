@@ -69,11 +69,26 @@ func prepareRestore(
 		prepared.cleanup()
 		return nil, fmt.Errorf("inspect restored themes: %w", err)
 	}
+	if err := prepareGeoIPRestore(validated, prepared, geoIPRestoreTarget{dataDir: dataDir, token: token}); err != nil {
+		prepared.cleanup()
+		return nil, err
+	}
 	return prepared, nil
 }
 
 // copyTree 递归复制目录树（保留 0600/0700 权限）。
-func copyTree(sourceRoot, destinationRoot string) error {
+func copyTree(sourceRoot, destinationRoot string) (resultErr error) {
+	if err := os.MkdirAll(filepath.Dir(destinationRoot), 0o700); err != nil {
+		return err
+	}
+	if err := os.Mkdir(destinationRoot, 0o700); err != nil {
+		return err
+	}
+	defer func() {
+		if resultErr != nil {
+			resultErr = errors.Join(resultErr, os.RemoveAll(destinationRoot))
+		}
+	}()
 	return filepath.WalkDir(sourceRoot, func(path string, info os.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
@@ -84,7 +99,7 @@ func copyTree(sourceRoot, destinationRoot string) error {
 		}
 		target := filepath.Join(destinationRoot, relative)
 		if relative == "." {
-			return os.MkdirAll(target, 0o700)
+			return nil
 		}
 		if info.IsDir() {
 			return os.MkdirAll(target, 0o700)
@@ -182,7 +197,7 @@ func copyFile(sourcePath, destinationPath string, mode os.FileMode) error {
 	closeDestinationErr := destination.Close()
 	closeSourceErr := source.Close()
 	if err := errors.Join(copyErr, syncErr, closeDestinationErr, closeSourceErr); err != nil {
-		return fmt.Errorf("copy restore target: %w", err)
+		return errors.Join(fmt.Errorf("copy restore target: %w", err), os.Remove(destinationPath))
 	}
 	return nil
 }

@@ -13,9 +13,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/beat/backend/internal/api/middleware"
+	"github.com/beat/backend/internal/metricquery"
 	"github.com/beat/backend/internal/model"
 	"github.com/beat/backend/internal/store"
+	"github.com/beat/backend/internal/testutil"
 )
 
 func agentReportRequest(
@@ -29,16 +33,15 @@ func agentReportRequest(
 	if err != nil {
 		t.Fatalf("create report node: %v", err)
 	}
-	request := httptest.NewRequest(http.MethodPost, "/api/nodes/report", strings.NewReader(body))
-	identity := model.AgentIdentity{
-		NodeID: node.ID, NodeName: node.Name, Mode: model.AgentCredentialActive,
-	}
+	request := httptest.NewRequest(http.MethodPost, "/api/nodes/report", strings.NewReader(testutil.VersionedAgentReport(t, body)))
+	request.Header.Set("Content-Type", "application/json")
+	identity := testutil.AgentTestIdentity(*node)
 	return request.WithContext(middleware.WithAgentIdentity(request.Context(), identity))
 }
 
 func setupNodeTestDB(t *testing.T) (*store.SQLiteStore, *store.MTSStore) {
 	t.Helper()
-	s, err := store.NewSQLiteStore("file::memory:?cache=shared")
+	s, err := store.NewSQLiteStore(handlerFixturePath(t))
 	if err != nil {
 		t.Fatalf("failed to create test database: %v", err)
 	}
@@ -198,6 +201,7 @@ func TestHandleUpdateMissingNode(t *testing.T) {
 	}
 	body := `{"alias":"missing","group_id":"` + group.ID + `"}`
 	request := httptest.NewRequest(http.MethodPut, "/api/nodes/missing", strings.NewReader(body))
+	request.Header.Set("Content-Type", "application/json")
 	request.SetPathValue("id", "missing")
 	response := httptest.NewRecorder()
 	NewNodeHandler(store.NewNodeStore(s.DB), mtsStore).HandleUpdateNode(response, request)
@@ -219,11 +223,18 @@ func TestHandleNodeReportWithoutMetricsStore(t *testing.T) {
 	}
 }
 
+// asyncDeletionBody 构造 v22 异步擦除请求体：request_id 必须是 UUID，confirmation
+// 必须精确等于服务端解析出的目标显示名。
+func asyncDeletionBody(confirmation string) string {
+	return `{"request_id":"` + uuid.NewString() + `","confirmation":"` + confirmation + `"}`
+}
+
 func TestHandleDeleteNode(t *testing.T) {
 	s, mongoStore := setupNodeTestDB(t)
 	ctx := context.Background()
 	nodeStore := store.NewNodeStore(s.DB)
-	h := NewNodeHandler(nodeStore, mongoStore)
+	// 节点删除是 v22 的异步擦除任务：必须注入耐久账本，否则返回 503。
+	h := NewNodeHandler(nodeStore, mongoStore).WithErasureStore(store.NewMetricErasureStore(s.DB))
 
 	disableFK(t, s.DB)
 	node, err := nodeStore.UpsertNode(ctx, "delete-node", "192.168.0.1", 22)
@@ -232,15 +243,20 @@ func TestHandleDeleteNode(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	req := httptest.NewRequest(http.MethodDelete, "/api/nodes/"+node.ID, nil)
+	body := strings.NewReader(asyncDeletionBody(node.Name))
+	req := httptest.NewRequest(http.MethodDelete, "/api/nodes/"+node.ID, body)
+	req.Header.Set("Content-Type", "application/json")
 	req = req.WithContext(ctx)
 	req.SetPathValue("id", node.ID)
 	w := httptest.NewRecorder()
 
 	h.HandleDeleteNode(w, req)
 
-	if w.Code != http.StatusNoContent {
-		t.Errorf("expected status 204, got %d", w.Code)
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("expected status 202, got %d (%s)", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "delete_node") {
+		t.Fatalf("expected a deletion job in the response, got %s", w.Body.String())
 	}
 }
 
@@ -272,6 +288,7 @@ func TestHandleNodeReport(t *testing.T) {
 			t.Fatalf("flush metrics: %v", err)
 		}
 		listRequest := httptest.NewRequest(http.MethodGet, "/api/nodes", nil).WithContext(ctx)
+		listRequest.Header.Set("Content-Type", "application/json")
 		listResponse := httptest.NewRecorder()
 		h.HandleListNodes(listResponse, listRequest)
 		if listResponse.Code != http.StatusOK ||
@@ -307,8 +324,8 @@ func TestHandleNodeReport(t *testing.T) {
 
 		h.HandleNodeReport(w, req)
 
-		if w.Code != http.StatusCreated {
-			t.Errorf("expected status 201, got %d: %s", w.Code, w.Body.String())
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("expected status 400, got %d: %s", w.Code, w.Body.String())
 		}
 	})
 
@@ -329,12 +346,12 @@ func TestHandleNodeReport(t *testing.T) {
 		}
 	})
 
-	t.Run("missing name returns 400", func(t *testing.T) {
+	t.Run("bound identity does not require reported name", func(t *testing.T) {
 		s, mongoStore := setupNodeTestDB(t)
 		nodeStore := store.NewNodeStore(s.DB)
 		h := NewNodeHandler(nodeStore, mongoStore)
 
-		body := `{"host": "10.0.0.3", "port": 22}`
+		body := `{"host": "10.0.0.3", "port": 22, "metrics":{}}`
 		req := agentReportRequest(t, nodeStore, "bound-node", body)
 		req.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
@@ -386,6 +403,96 @@ func TestHandleNodeReport(t *testing.T) {
 			t.Fatalf("status = %d, want 400", response.Code)
 		}
 	})
+}
+
+func TestHandleGetNodeMetricsReturnsBucketedHistoryWithinBudget(t *testing.T) {
+	s, mtsStore := setupNodeTestDB(t)
+	nodeStore := store.NewNodeStore(s.DB)
+	h := NewNodeHandler(nodeStore, mtsStore)
+	node, err := nodeStore.UpsertNode(t.Context(), "bucket-node", "10.0.0.13", 22)
+	if err != nil {
+		t.Fatalf("upsert node: %v", err)
+	}
+	from := time.Unix(1_700_000_000, 0).UTC()
+	for _, sample := range []struct {
+		offset time.Duration
+		value  float64
+	}{{0, 10}, {time.Second, 20}, {2 * time.Second, 30}, {4 * time.Second, 40}} {
+		if err := mtsStore.WriteMetric(t.Context(), node.ID, "cpu", sample.value, from.Add(sample.offset)); err != nil {
+			t.Fatalf("write metric: %v", err)
+		}
+	}
+	tests := []struct {
+		name    string
+		to      time.Time
+		want    []float64
+		maximum int
+	}{
+		// 二十分钟区间给出 2 秒桶宽：前两个样本聚合进同一个桶。
+		{name: "bucketed range", to: from.Add(20 * time.Minute), want: []float64{15, 30, 40}, maximum: 600},
+		{name: "thirty day range", to: from.Add(30 * 24 * time.Hour), want: []float64{25}, maximum: 600},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/api/nodes/"+node.ID+"/metrics?metric=cpu&from="+
+				from.Format(time.RFC3339)+"&to="+test.to.Format(time.RFC3339), nil)
+			req = req.WithContext(t.Context())
+			req.SetPathValue("id", node.ID)
+			w := httptest.NewRecorder()
+			h.HandleGetNodeMetrics(w, req)
+			if w.Code != http.StatusOK {
+				t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+			}
+			var body struct {
+				Data map[string][]metricResponse `json:"data"`
+			}
+			if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+				t.Fatalf("decode response: %v", err)
+			}
+			points := body.Data["cpu"]
+			if len(points) > test.maximum {
+				t.Fatalf("points = %d, want at most %d", len(points), test.maximum)
+			}
+			for index, want := range test.want {
+				if index >= len(points) || points[index].Value != want {
+					t.Fatalf("points = %#v, want %v at index %d", points, test.want, index)
+				}
+			}
+		})
+	}
+}
+
+func TestHandleGetNodeMetricsRejectsOutOfBudgetRequests(t *testing.T) {
+	s, mtsStore := setupNodeTestDB(t)
+	nodeStore := store.NewNodeStore(s.DB)
+	h := NewNodeHandler(nodeStore, mtsStore)
+	node, err := nodeStore.UpsertNode(t.Context(), "budget-node", "10.0.0.12", 22)
+	if err != nil {
+		t.Fatalf("upsert node: %v", err)
+	}
+	nine := append([]string{}, model.MetricNames()[:metricquery.MaximumSeries+1]...)
+	tests := []struct {
+		name  string
+		query string
+	}{
+		{name: "too many explicit metrics", query: "?metric=" + strings.Join(nine, ",") + "&from=2024-01-01T00:00:00Z&to=2024-01-02T00:00:00Z"},
+		{name: "duplicate metric", query: "?metric=cpu,cpu&from=2024-01-01T00:00:00Z&to=2024-01-02T00:00:00Z"},
+		{name: "reversed range", query: "?metric=cpu&from=2024-01-02T00:00:00Z&to=2024-01-01T00:00:00Z"},
+		{name: "range beyond thirty one days", query: "?metric=cpu&from=2024-01-01T00:00:00Z&to=2024-03-15T00:00:00Z"},
+		{name: "future only range", query: "?metric=cpu&from=2999-01-01T00:00:00Z&to=2999-01-02T00:00:00Z"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/api/nodes/"+node.ID+"/metrics"+test.query, nil)
+			req = req.WithContext(t.Context())
+			req.SetPathValue("id", node.ID)
+			w := httptest.NewRecorder()
+			h.HandleGetNodeMetrics(w, req)
+			if w.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d, want 400 (%s)", w.Code, w.Body.String())
+			}
+		})
+	}
 }
 
 func TestHandleGetNodeMetrics(t *testing.T) {
@@ -593,6 +700,7 @@ func TestHandleUpdateNodeEnqueuesKeyTask(t *testing.T) {
 	// First update assigns a key -> task enqueued.
 	body := `{"alias":"a","group_id":"` + defaultGroup.ID + `","ssh_public_key":"ssh-ed25519 key-a"}`
 	req := httptest.NewRequest(http.MethodPut, "/api/nodes/"+node.ID, strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
 	req.SetPathValue("id", node.ID)
 	w := httptest.NewRecorder()
 	h.HandleUpdateNode(w, req)
@@ -605,6 +713,7 @@ func TestHandleUpdateNodeEnqueuesKeyTask(t *testing.T) {
 
 	// Same key update -> no task enqueued.
 	req = httptest.NewRequest(http.MethodPut, "/api/nodes/"+node.ID, strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
 	req.SetPathValue("id", node.ID)
 	w = httptest.NewRecorder()
 	h.HandleUpdateNode(w, req)
@@ -632,6 +741,7 @@ func TestHandleUpdateNodeNoEnqueuer(t *testing.T) {
 	}
 	body := `{"alias":"a","group_id":"` + defaultGroup.ID + `","ssh_public_key":"ssh-ed25519 key-b"}`
 	req := httptest.NewRequest(http.MethodPut, "/api/nodes/"+node.ID, strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
 	req.SetPathValue("id", node.ID)
 	w := httptest.NewRecorder()
 	h.HandleUpdateNode(w, req)
@@ -657,6 +767,7 @@ func TestHandleUpdateNodeEnqueueFailureLogged(t *testing.T) {
 	}
 	body := `{"alias":"a","group_id":"` + defaultGroup.ID + `","ssh_public_key":"ssh-ed25519 key-c"}`
 	req := httptest.NewRequest(http.MethodPut, "/api/nodes/"+node.ID, strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
 	req.SetPathValue("id", node.ID)
 	w := httptest.NewRecorder()
 	h.HandleUpdateNode(w, req)
@@ -672,16 +783,17 @@ func TestHandleNodeReportCustomMetrics(t *testing.T) {
 	s, mtsStore := setupNodeTestDB(t)
 	ctx := context.Background()
 	nodeStore := store.NewNodeStore(s.DB)
-	h := NewNodeHandler(nodeStore, mtsStore)
+	h := NewNodeHandler(nodeStore, mtsStore).WithMetricCatalog(store.NewMetricCatalogStore(s.DB))
 	disableFK(t, s.DB)
 
 	node, err := nodeStore.UpsertNode(ctx, "custom-metrics-node", "10.0.0.9", 22)
 	if err != nil {
 		t.Fatalf("upsert node: %v", err)
 	}
+	definitions := bindReportedMetrics(t, s, reportMetricBindings{nodeID: node.ID, names: []string{"http_latency", "disk_io"}})
 	body := `{"name":"custom-metrics-node","host":"10.0.0.9","port":22,
-		"custom_metrics":{"http_latency":12.5,"disk_io":42}}`
-	req := agentReportRequest(t, nodeStore, "custom-metrics-node", body)
+		"metrics":{},"custom_metrics":{"http_latency":12.5,"disk_io":42}}`
+	req := agentReportRequest(t, nodeStore, "custom-metrics-node", testutil.VersionedCustomAgentReport(t, body, definitions))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	h.HandleNodeReport(w, req)
@@ -711,7 +823,7 @@ func TestHandleNodeReportInvalidCustomMetricName(t *testing.T) {
 	h := NewNodeHandler(nodeStore, mtsStore)
 	disableFK(t, s.DB)
 
-	body := `{"name":"bad-custom","host":"10.0.0.9","port":22,"custom_metrics":{"bad name":1}}`
+	body := `{"name":"bad-custom","host":"10.0.0.9","port":22,"metrics":{},"custom_metrics":{"bad name":1}}`
 	req := agentReportRequest(t, nodeStore, "bad-custom", body)
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()

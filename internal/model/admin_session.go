@@ -2,6 +2,16 @@ package model
 
 import "time"
 
+const (
+	// MaxActiveAdminSessions 是每用户活跃会话上限：成功登录时在同一事务内吊销最旧的多余会话。
+	MaxActiveAdminSessions = 32
+	// AdminSessionPageSize 与 AdminSessionMaximumPage 约束会话列表的返回上限。
+	AdminSessionPageSize    = 50
+	AdminSessionMaximumPage = 200
+	// AdminSessionRecentRevokedWindow 让界面仍能看到刚刚被吊销的会话，而不是只剩活跃会话。
+	AdminSessionRecentRevokedWindow = 24 * time.Hour
+)
+
 type AdminSession struct {
 	ID                   string     `json:"id"`
 	UserID               string     `json:"user_id"`

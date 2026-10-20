@@ -93,7 +93,7 @@ var platformSchemaStatements = []string{
 		id, site_title, site_description, logo_url, favicon_url, default_theme,
 		show_ip_addresses, show_network_quality, updated_at
 	) VALUES (1, 'Beat Monitor', 'Server monitoring and operations dashboard.',
-		'', '/favicon.svg', 'system', 1, 1, CURRENT_TIMESTAMP)`,
+		'', '/favicon.svg', 'system', 0, 1, CURRENT_TIMESTAMP)`,
 	`CREATE TABLE IF NOT EXISTS maintenance_settings (
 		id INTEGER PRIMARY KEY CHECK(id = 1), retention_days INTEGER NOT NULL CHECK(retention_days BETWEEN 1 AND 3650),
 		auto_cleanup_enabled INTEGER NOT NULL CHECK(auto_cleanup_enabled IN (0, 1)),

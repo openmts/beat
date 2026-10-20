@@ -132,13 +132,13 @@ describe("network public components", () => {
     })
   })
 
-  it("shows task and node labels without exposing IDs, then opens history", () => {
+  it("shows task and node labels without exposing IDs, then opens history", async () => {
     providers(<NetworkQualityBand />)
     expect(screen.getByText("Primary API")).toBeInTheDocument()
     expect(screen.getByText("Edge (node-one)")).toBeInTheDocument()
     expect(screen.queryByText("node-secret-id")).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole("button", { name: "Edge (node-one) History" }))
-    expect(screen.getByRole("dialog")).toBeInTheDocument()
+    expect(await screen.findByRole("dialog")).toBeInTheDocument()
     expect(screen.getByTestId("network-x-axis")).toHaveAttribute("data-domain", "100:200")
     expect(screen.getByTestId("network-y-axis")).toHaveTextContent("1.5 s")
   })

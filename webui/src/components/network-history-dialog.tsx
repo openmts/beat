@@ -22,6 +22,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { useLocale } from "@/context/locale"
 import { useNetworkHistory } from "@/hooks/use-network"
+import { dateTimeFormatter, formatDateTime } from "@/lib/intl-format"
 import { formatLatency, networkHistoryRanges, networkNodeLabel } from "@/lib/network-quality"
 import type { NetworkTaskView } from "@/types"
 
@@ -141,6 +142,7 @@ interface HistoryChartProps {
 }
 
 export function NetworkHistoryChart({ data, from, to, rangeHours, latencyLabel }: HistoryChartProps) {
+  const { locale } = useLocale()
   return (
     <div className="h-72 w-full" data-testid="network-history-chart" data-from={from} data-to={to}>
       <ResponsiveContainer width="100%" height="100%">
@@ -152,7 +154,7 @@ export function NetworkHistoryChart({ data, from, to, rangeHours, latencyLabel }
             scale="linear"
             domain={[from, to]}
             allowDataOverflow
-            tickFormatter={(value) => formatHistoryTime(value, rangeHours)}
+            tickFormatter={(value) => formatHistoryTime(value, rangeHours, locale)}
             fontSize={11}
             tickLine={false}
             axisLine={false}
@@ -167,7 +169,7 @@ export function NetworkHistoryChart({ data, from, to, rangeHours, latencyLabel }
             width={56}
           />
           <Tooltip
-            labelFormatter={(value) => new Date(Number(value) * 1000).toLocaleString()}
+            labelFormatter={(value) => formatDateTime(locale, Number(value) * 1000)}
             formatter={(value) => [formatLatency(Number(value)), latencyLabel]}
             contentStyle={{
               fontSize: "12px",
@@ -182,10 +184,10 @@ export function NetworkHistoryChart({ data, from, to, rangeHours, latencyLabel }
   )
 }
 
-export function formatHistoryTime(value: number | string, rangeHours: number): string {
+export function formatHistoryTime(value: number | string, rangeHours: number, locale?: string): string {
   const date = new Date(Number(value) * 1000)
   if (rangeHours >= 168) {
-    return date.toLocaleString(undefined, { month: "numeric", day: "numeric", hour: "2-digit" })
+    return dateTimeFormatter(locale, { month: "numeric", day: "numeric", hour: "2-digit" }).format(date)
   }
-  return date.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })
+  return dateTimeFormatter(locale, { hour: "2-digit", minute: "2-digit" }).format(date)
 }

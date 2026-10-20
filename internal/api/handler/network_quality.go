@@ -1,23 +1,28 @@
 package handler
 
 import (
+	"context"
 	"net/http"
+	"strconv"
+	"time"
 
 	"github.com/beat/backend/internal/model"
+	"github.com/beat/backend/internal/store"
 )
 
+// HandlePublicNetworkQuality 复用上一代公共网络质量视图：同一代内的观看者共享一次构建，
+// 写入之后立即失效，过期后由下一个请求重建。
 func (h *NetworkHandler) HandlePublicNetworkQuality(w http.ResponseWriter, r *http.Request) {
-	tasks, err := h.tasks.ListTasks(r.Context(), true)
-	if err != nil {
-		JSONError(w, http.StatusInternalServerError, "failed to list network quality")
-		return
-	}
-	views, err := h.buildTaskViews(r, tasks, true)
+	view, err := h.sharedPublicQualityView(r.Context())
 	if err != nil {
 		JSONError(w, http.StatusInternalServerError, "failed to load network quality")
 		return
 	}
-	JSONResponse(w, http.StatusOK, views)
+	if view.failure != "" {
+		JSONError(w, http.StatusInternalServerError, view.failure)
+		return
+	}
+	writeNetworkQualityView(w, r, view.snapshot)
 }
 
 func (h *NetworkHandler) HandlePublicNetworkHistory(w http.ResponseWriter, r *http.Request) {
@@ -69,7 +74,11 @@ func (h *NetworkHandler) handleNetworkHistory(w http.ResponseWriter, r *http.Req
 		JSONError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	points, err := h.mts.QueryNetworkHistory(r.Context(), taskID, nodeID, from, to)
+	key := historyShareKey(taskID, nodeID, from.UTC().Format(time.RFC3339Nano),
+		to.UTC().Format(time.RFC3339Nano), strconv.FormatBool(public))
+	points, err := h.historyShare.do(r.Context(), key, func(ctx context.Context) ([]store.NetworkProbePoint, error) {
+		return h.mts.QueryNetworkHistory(ctx, taskID, nodeID, from, to)
+	})
 	if err != nil {
 		JSONError(w, http.StatusInternalServerError, "failed to read network history")
 		return
@@ -80,7 +89,7 @@ func (h *NetworkHandler) handleNetworkHistory(w http.ResponseWriter, r *http.Req
 }
 
 func (h *NetworkHandler) buildTaskViews(
-	r *http.Request,
+	ctx context.Context,
 	tasks []model.NetworkTask,
 	publicOnly bool,
 ) ([]networkTaskView, error) {
@@ -89,16 +98,16 @@ func (h *NetworkHandler) buildTaskViews(
 		var nodes []model.NetworkNode
 		var err error
 		if publicOnly {
-			nodes, err = h.tasks.ListEffectivePublicTaskNodes(r.Context(), task.ID, task.AllNodes)
+			nodes, err = h.tasks.ListEffectivePublicTaskNodes(ctx, task.ID, task.AllNodes)
 		} else {
-			nodes, err = h.tasks.ListEffectiveTaskNodes(r.Context(), task.ID, task.AllNodes)
+			nodes, err = h.tasks.ListEffectiveTaskNodes(ctx, task.ID, task.AllNodes)
 		}
 		if err != nil {
 			return nil, err
 		}
 		states := make([]networkNodeState, 0, len(nodes))
 		for _, node := range nodes {
-			latest, err := h.mts.QueryNetworkLatest(r.Context(), task.ID, node.ID)
+			latest, err := h.mts.QueryNetworkLatest(ctx, task.ID, node.ID)
 			if err != nil {
 				return nil, err
 			}

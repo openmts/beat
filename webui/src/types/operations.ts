@@ -1,0 +1,14 @@
+export interface OperationLimits { kind: string; targets: number; timeout_seconds: number; output_bytes: number; run_as_root: boolean }
+export interface OperationRoot { name?: string; id: string; read: boolean; write: boolean; maximum_bytes: number; overwrite: boolean; executable: boolean }
+export interface OperationPolicy { supported_shells?: string[]; retention?: { task_days?: number; output_days?: number; artifact_hours?: number; queue_hours?: number; upload_hours?: number }; enabled: boolean; kinds: string[]; maximum_targets: number; maximum_active_tasks: number; concurrency: number; timeout_seconds: number; output_bytes: number; allow_root: boolean; require_scan: boolean; roots: OperationRoot[] }
+export interface OperationPolicyRecord { id: string; name: string; version: number; policy: OperationPolicy; node_ids: string[]; group_ids: string[] }
+export interface OperationTarget { restore_risk?: boolean; id: string; node_id: string; node_name: string; state: string; attempt_id: string }
+export interface OperationTask { id: string; kind: string; actor_id: string; created_at: number; expires_at: number; cancel_requested: boolean; state?: string; target_count?: number; succeeded_count?: number; failed_count?: number; pending_count?: number; running_count?: number; targets?: OperationTarget[] }
+export interface OperationTaskPage { items: OperationTask[]; next_cursor: string }
+export interface OperationTaskInput { file?: { root_id: string; relative_path: string; size: number; digest: string; mode: number; overwrite: boolean }; dedupe_key: string; policy_id: string; shell_family: string; command: string; node_ids: string[]; group_ids: string[]; limits: OperationLimits; snippet_id?: string; snippet_version?: number }
+export interface OperationOutput { attempt_id: string; state: string; exit_code: number; stdout: string | null; stderr: string | null; truncated: boolean; reason?: string; started_at?: number; finished_at?: number }
+export interface OperationSnippet { owner_id: string; id: string; name: string; description: string; visibility: "private" | "shared"; version: number; shell_family: string; fingerprint: string; approved: boolean }
+export interface OperationSnippetInput { id: string; name: string; description: string; visibility: "private" | "shared"; shell_family: string; content: string; expected_version: number }
+
+export interface OperationTransfer { download_available?: boolean; id: string; direction: "deploy" | "collect"; state: string; size: number; digest: string; task_id?: string; expires_at: number; missing_chunks?: number[]; targets?: { id: string; node_id: string; node_name: string; state: string; progress_bytes: number }[] }
+export interface OperationTransferInput { direction: "deploy" | "collect"; filename?: string; policy_id: string; node_ids: string[]; group_ids: string[]; file: { root_id: string; relative_path: string; size: number; digest: string; mode: number; overwrite: boolean } }

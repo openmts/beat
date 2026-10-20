@@ -13,6 +13,9 @@ import (
 
 var ErrAlreadyRunning = errors.New("maintenance is already running")
 
+// securityRetentionBatch 限制单次维护删除的登录安全行数。
+const securityRetentionBatch = 5000
+
 type settingsStore interface {
 	Get(context.Context) (model.MaintenanceSettings, model.MaintenanceRunStatus, error)
 	Update(context.Context, model.MaintenanceSettings) (model.MaintenanceSettings, error)
@@ -25,6 +28,8 @@ type mtsOperations interface {
 	CleanupBefore(context.Context, time.Time) error
 	DiskUsage() (int64, error)
 	Health() (bool, []string)
+	// RepairCompactionIfDegraded 在分片压缩退化时就地整理一次，见 store 侧说明。
+	RepairCompactionIfDegraded(context.Context) (bool, error)
 }
 
 type sqliteOperations interface {
@@ -36,11 +41,23 @@ type auditOperations interface {
 	CleanupAuditEventsBefore(context.Context, time.Time) (int64, error)
 }
 
+// securityOperations 清理过期的登录安全事件、指纹与阈值窗口。
+type securityOperations interface {
+	PurgeSecurityData(context.Context, time.Time, int) (int64, error)
+}
+
 type ServiceOption func(*Service)
 
 func WithAuditStore(store auditOperations) ServiceOption {
 	return func(service *Service) {
 		service.audit = store
+	}
+}
+
+// WithSecurityStore 注册登录安全数据保留清理。
+func WithSecurityStore(store securityOperations) ServiceOption {
+	return func(service *Service) {
+		service.security = store
 	}
 }
 
@@ -50,6 +67,7 @@ type Service struct {
 	mts      mtsOperations
 	sqlite   sqliteOperations
 	audit    auditOperations
+	security securityOperations
 	now      func() time.Time
 	mu       sync.Mutex
 	running  bool
@@ -137,6 +155,26 @@ func (service *Service) start(trigger string) error {
 	return nil
 }
 
+// RepairCompactionIfDegraded 在分片压缩退化时就地整理一次，与每日维护共用
+// 「同一时刻只跑一个」的互斥；它不写维护状态行，也不删除保留窗口内的数据。
+func (service *Service) RepairCompactionIfDegraded(ctx context.Context) (bool, error) {
+	service.mu.Lock()
+	if service.running {
+		service.mu.Unlock()
+		return false, ErrAlreadyRunning
+	}
+	service.running = true
+	service.mu.Unlock()
+	defer service.releaseRunning()
+	return service.mts.RepairCompactionIfDegraded(ctx)
+}
+
+func (service *Service) releaseRunning() {
+	service.mu.Lock()
+	service.running = false
+	service.mu.Unlock()
+}
+
 func (service *Service) execute(startedAt, cutoff time.Time) {
 	defer service.wg.Done()
 	integrity, runErr := service.run(service.ctx, cutoff)
@@ -164,7 +202,11 @@ func (service *Service) run(ctx context.Context, cutoff time.Time) (string, erro
 	if service.audit != nil {
 		_, auditErr = service.audit.CleanupAuditEventsBefore(ctx, service.now().AddDate(0, 0, -180))
 	}
-	if err := errors.Join(mtsErr, sqliteErr, auditErr); err != nil {
+	var securityErr error
+	if service.security != nil {
+		_, securityErr = service.security.PurgeSecurityData(ctx, service.now(), securityRetentionBatch)
+	}
+	if err := errors.Join(mtsErr, sqliteErr, auditErr, securityErr); err != nil {
 		return integrity, fmt.Errorf("run maintenance: %w", err)
 	}
 	return integrity, nil

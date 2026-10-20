@@ -25,7 +25,7 @@ func TestRunStopsWithContext(t *testing.T) {
 	mtsPath := filepath.Join(t.TempDir(), "mts")
 	staticDir := t.TempDir()
 	go func() {
-		errorsCh <- run(ctx, dbPath, mtsPath, address, staticDir)
+		errorsCh <- run(ctx, serverRunConfig{dbPath: dbPath, mtsPath: mtsPath, listenAddr: address, staticDir: staticDir})
 	}()
 	waitForServerHealth(t, address, errorsCh)
 	cancel()
@@ -49,7 +49,8 @@ func availableServerAddress(t *testing.T) string {
 
 func waitForServerHealth(t *testing.T, address string, errorsCh <-chan error) {
 	t.Helper()
-	deadline := time.Now().Add(10 * time.Second)
+	// race 检出的服务端启动要跑迁移和后台工作线程，加载较重时需要更宽的健康等待窗口。
+	deadline := time.Now().Add(60 * time.Second)
 	for time.Now().Before(deadline) {
 		select {
 		case err := <-errorsCh:
@@ -72,7 +73,7 @@ func waitForServerHealth(t *testing.T, address string, errorsCh <-chan error) {
 
 func TestRunRejectsInvalidDatabasePath(t *testing.T) {
 	t.Chdir(t.TempDir())
-	err := run(context.Background(), "/dev/null/beat.db", t.TempDir(), "127.0.0.1:0", t.TempDir())
+	err := run(context.Background(), serverRunConfig{dbPath: "/dev/null/beat.db", mtsPath: t.TempDir(), listenAddr: "127.0.0.1:0", staticDir: t.TempDir()})
 	if err == nil || !strings.Contains(err.Error(), "create data directory") {
 		t.Fatalf("error = %v, want data directory error", err)
 	}
@@ -80,8 +81,7 @@ func TestRunRejectsInvalidDatabasePath(t *testing.T) {
 
 func TestRunRejectsInvalidTrustedProxyConfiguration(t *testing.T) {
 	t.Setenv("BEAT_TRUSTED_PROXIES", "invalid")
-	err := run(context.Background(), filepath.Join(t.TempDir(), "beat.db"), filepath.Join(t.TempDir(), "mts"),
-		"127.0.0.1:0", t.TempDir())
+	err := run(context.Background(), serverRunConfig{dbPath: filepath.Join(t.TempDir(), "beat.db"), mtsPath: filepath.Join(t.TempDir(), "mts"), listenAddr: "127.0.0.1:0", staticDir: t.TempDir()})
 	if err == nil || !strings.Contains(err.Error(), "configure trusted proxies") {
 		t.Fatalf("error = %v", err)
 	}
@@ -90,11 +90,7 @@ func TestRunRejectsInvalidTrustedProxyConfiguration(t *testing.T) {
 func TestRunRejectsInvalidListenAddress(t *testing.T) {
 	t.Chdir(t.TempDir())
 	err := run(
-		context.Background(),
-		filepath.Join(t.TempDir(), "beat.db"),
-		filepath.Join(t.TempDir(), "mts"),
-		"invalid-address",
-		t.TempDir(),
+		context.Background(), serverRunConfig{dbPath: filepath.Join(t.TempDir(), "beat.db"), mtsPath: filepath.Join(t.TempDir(), "mts"), listenAddr: "invalid-address", staticDir: t.TempDir()},
 	)
 	if err == nil || !strings.Contains(err.Error(), "http server") {
 		t.Fatalf("error = %v, want HTTP server error", err)
@@ -104,11 +100,7 @@ func TestRunRejectsInvalidListenAddress(t *testing.T) {
 func TestRunRejectsInvalidMTSPath(t *testing.T) {
 	t.Chdir(t.TempDir())
 	err := run(
-		context.Background(),
-		filepath.Join(t.TempDir(), "beat.db"),
-		"/dev/null/mts",
-		"127.0.0.1:0",
-		t.TempDir(),
+		context.Background(), serverRunConfig{dbPath: filepath.Join(t.TempDir(), "beat.db"), mtsPath: "/dev/null/mts", listenAddr: "127.0.0.1:0", staticDir: t.TempDir()},
 	)
 	if err == nil || !strings.Contains(err.Error(), "initialize mts store") {
 		t.Fatalf("error = %v, want MTS initialization error", err)
@@ -150,8 +142,7 @@ func TestRunInitializationFailures(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			dataDir := t.TempDir()
 			dbPath := test.prepare(t, dataDir)
-			err := run(context.Background(), dbPath, filepath.Join(dataDir, "mts"),
-				"127.0.0.1:0", t.TempDir())
+			err := run(context.Background(), serverRunConfig{dbPath: dbPath, mtsPath: filepath.Join(dataDir, "mts"), listenAddr: "127.0.0.1:0", staticDir: t.TempDir()})
 			if err == nil || !strings.Contains(err.Error(), test.wantError) {
 				t.Fatalf("error = %v, want %q", err, test.wantError)
 			}
@@ -184,8 +175,10 @@ func TestMainStartsAndStopsOnSignal(t *testing.T) {
 		"-listen-addr", address,
 		"-static-dir", t.TempDir(),
 	}
+	healthy := make(chan bool, 1)
 	go func() {
-		waitForHTTPHealth(t, address)
+		// 健康检查失败也必须发出信号：否则 main() 会一直运行到整包超时，把失败变成挂死。
+		healthy <- waitForHTTPHealth(address)
 		process, err := os.FindProcess(os.Getpid())
 		if err != nil {
 			t.Errorf("find self process: %v", err)
@@ -196,24 +189,26 @@ func TestMainStartsAndStopsOnSignal(t *testing.T) {
 		}
 	}()
 	main()
+	if !<-healthy {
+		t.Error("server did not become healthy before shutdown")
+	}
 }
 
-func waitForHTTPHealth(t *testing.T, address string) {
-	t.Helper()
-	deadline := time.Now().Add(10 * time.Second)
+func waitForHTTPHealth(address string) bool {
+	deadline := time.Now().Add(60 * time.Second)
 	for time.Now().Before(deadline) {
 		response, err := http.Get("http://" + address + "/healthz")
 		if err == nil {
 			if closeErr := response.Body.Close(); closeErr != nil {
-				t.Fatalf("close health response: %v", closeErr)
+				return false
 			}
 			if response.StatusCode == http.StatusOK {
-				return
+				return true
 			}
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	t.Fatal("server did not become healthy")
+	return false
 }
 
 func TestBuildVersionIncludesBuildInfo(t *testing.T) {

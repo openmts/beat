@@ -19,7 +19,7 @@ channel config. List, create and update responses replace those values with an
 empty field plus a `has_bot_token` or `has_password` marker, but response
 redaction is not encryption at rest. Leaving the secret blank during an edit
 preserves the existing value. Changing the channel type requires a valid
-configuration for the new type. The shared `v5` key lifecycle and `v6` channel
+configuration for the new type. The shared `v9` key lifecycle and `v10` channel
 backfill are reviewed in
 [`application-secret-lifecycle-design.md`](./application-secret-lifecycle-design.md).
 

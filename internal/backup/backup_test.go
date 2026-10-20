@@ -18,6 +18,7 @@ import (
 
 	"github.com/beat/backend/internal/model"
 	"github.com/beat/backend/internal/store"
+	"github.com/beat/backend/internal/testutil"
 )
 
 type backupFixture struct {
@@ -45,6 +46,7 @@ func newBackupFixture(t *testing.T) *backupFixture {
 	if err := os.WriteFile(filepath.Join(dataDir, "admin-data.key"), key, 0o600); err != nil {
 		t.Fatalf("write data key: %v", err)
 	}
+	secrets := testutil.OpenSecrets(t, sqliteStore.DB, dataDir)
 	records := store.NewBackupStore(sqliteStore.DB)
 	service, err := NewService(t.Context(), records, sqliteStore, mtsStore,
 		filepath.Join(dataDir, "backups"), filepath.Join(dataDir, "admin-data.key"), "test")
@@ -53,6 +55,7 @@ func newBackupFixture(t *testing.T) *backupFixture {
 		_ = sqliteStore.Close()
 		t.Fatalf("new backup service: %v", err)
 	}
+	service.SetSecretLifecycle(secrets)
 	fixture := &backupFixture{dataDir: dataDir, sqlite: sqliteStore, mts: mtsStore, service: service}
 	t.Cleanup(func() {
 		service.Wait()
@@ -79,7 +82,7 @@ func TestBackupCreateValidateUploadAndRestoreRoundTrip(t *testing.T) {
 		t.Fatalf("start backup: %v", err)
 	}
 	fixture.service.Wait()
-	records, err := fixture.service.List(t.Context())
+	records, err := listBackups(t, fixture.service)
 	if err != nil || len(records) != 1 || records[0].State != "ready" || records[0].MetricRows != 2 {
 		t.Fatalf("backup records = %#v, error = %v", records, err)
 	}
@@ -176,10 +179,12 @@ func TestBackupServiceStageDeleteAndErrorPaths(t *testing.T) {
 		t.Fatalf("start backup: %v", err)
 	}
 	fixture.service.Wait()
-	if _, err := fixture.service.StageRestore(t.Context(), record.ID, "wrong"); !errors.Is(err, ErrInvalidConfirm) {
+	if _, err := fixture.service.StageRestore(t.Context(), StageRequest{BackupID: record.ID,
+		Confirmation: "wrong"}); !errors.Is(err, ErrInvalidConfirm) {
 		t.Fatalf("invalid restore confirmation error = %v", err)
 	}
-	staged, err := fixture.service.StageRestore(t.Context(), record.ID, RestoreConfirmation)
+	staged, err := fixture.service.StageRestore(t.Context(), StageRequest{BackupID: record.ID,
+		Confirmation: RestoreConfirmation})
 	if err != nil || staged.State != model.BackupStateStaged {
 		t.Fatalf("stage restore = %#v, %v", staged, err)
 	}
@@ -187,13 +192,14 @@ func TestBackupServiceStageDeleteAndErrorPaths(t *testing.T) {
 	if err != nil || journal.BackupID != record.ID || journal.State != "pending" {
 		t.Fatalf("restore journal = %#v, %v", journal, err)
 	}
-	if err := fixture.service.Delete(t.Context(), record.ID); err == nil {
+	if err := fixture.service.Delete(t.Context(), record.ID, SystemActor()); err == nil {
 		t.Fatal("staged backup was deleted")
 	}
 	if _, _, err := fixture.service.Open(t.Context(), "missing"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("missing backup open error = %v", err)
 	}
-	if _, err := fixture.service.StageRestore(t.Context(), "missing", RestoreConfirmation); !errors.Is(err, ErrNotFound) {
+	if _, err := fixture.service.StageRestore(t.Context(), StageRequest{BackupID: "missing",
+		Confirmation: RestoreConfirmation}); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("missing restore error = %v", err)
 	}
 	if _, err := fixture.service.archivePath("../outside.zip"); err == nil {
@@ -359,7 +365,8 @@ func assertFileContent(t *testing.T, path, expected string) {
 }
 
 func restoreJournal(id, path string) model.RestoreJournal {
-	return model.RestoreJournal{BackupID: id, ArchivePath: path, State: "pending", CreatedAt: time.Now().UTC()}
+	return model.RestoreJournal{BackupID: id, ArchivePath: path, State: "pending",
+		Origin: model.RestoreOriginOffline, CreatedAt: time.Now().UTC()}
 }
 
 type zipTestEntry struct {

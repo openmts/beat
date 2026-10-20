@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react"
 import { ActivityIcon, PlusIcon } from "lucide-react"
 
+import { DiagnosticsPanel } from "@/components/diagnostics/diagnostics-panel"
 import { NetworkHistoryDialog } from "@/components/network-history-dialog"
 import { NetworkTaskCard } from "@/components/network-task-card"
 import { NetworkTaskDialog } from "@/components/network-task-dialog"
@@ -8,12 +9,13 @@ import { PageHeader } from "@/components/page-header"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Skeleton } from "@/components/ui/skeleton"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { useLocale } from "@/context/locale"
 import { useNodes } from "@/hooks/use-api"
 import { useAdminNetworkTasks } from "@/hooks/use-network"
 import * as networkApi from "@/lib/network-api"
+import { EntityDeleteDialog } from "@/pages/admin/entity-delete-dialog"
 import type { NetworkTaskPayload, NetworkTaskView } from "@/types"
 
 export default function Network() {
@@ -25,6 +27,7 @@ export default function Network() {
   const [deleteView, setDeleteView] = useState<NetworkTaskView | null>(null)
   const [historyView, setHistoryView] = useState<NetworkTaskView | null>(null)
   const [actionLoading, setActionLoading] = useState(false)
+  const [tab, setTab] = useState("quality")
   const [actionError, setActionError] = useState<string | null>(null)
   const ordered = useMemo(
     () => [...(tasks.data ?? [])].sort((a, b) => a.task.sort_order - b.task.sort_order),
@@ -40,9 +43,9 @@ export default function Network() {
     setDialogOpen(false)
   })
 
-  const remove = async () => runAction(async () => {
+  const remove = async (requestId: string) => runAction(async () => {
     if (!deleteView) return
-    await networkApi.deleteNetworkTask(deleteView.task.id)
+    await networkApi.deleteNetworkTask(deleteView.task.id, deleteView.task.name, requestId)
     await tasks.refresh()
     setDeleteView(null)
   })
@@ -74,13 +77,22 @@ export default function Network() {
 
   return (
     <div className="flex flex-col gap-6">
-      <PageHeader title={t("network.manage")} description={t("network.manage_description")}>
-        <Button onClick={() => { setEditView(null); setDialogOpen(true) }}>
-          <PlusIcon data-icon="inline-start" />{t("network.create_task")}
-        </Button>
-      </PageHeader>
-      {(tasks.error || nodes.error || actionError) && (
-        <Alert variant="destructive"><AlertDescription>{tasks.error ?? nodes.error ?? actionError}</AlertDescription></Alert>
+      <PageHeader title={t("network.manage")} description={t("network.manage_description")} />
+      <Tabs value={tab} onValueChange={(value) => setTab(String(value))}>
+        <TabsList>
+          <TabsTrigger value="quality">{t("diagnostics.tab_quality")}</TabsTrigger>
+          <TabsTrigger value="diagnostics">{t("diagnostics.tab_diagnostics")}</TabsTrigger>
+        </TabsList>
+        <TabsContent value="quality" className="flex flex-col gap-6">
+          <div className="flex justify-end">
+            <Button onClick={() => { setEditView(null); setDialogOpen(true) }}>
+              <PlusIcon data-icon="inline-start" />{t("network.create_task")}
+            </Button>
+          </div>
+      {pageError(tasks.error, nodes.error, deleteView ? null : actionError) && (
+        <Alert variant="destructive">
+          <AlertDescription>{pageError(tasks.error, nodes.error, deleteView ? null : actionError)}</AlertDescription>
+        </Alert>
       )}
       {tasks.loading || nodes.loading ? (
         <TaskGridSkeleton />
@@ -105,8 +117,19 @@ export default function Network() {
         onOpenChange={setDialogOpen}
         onSave={save}
       />
-      <DeleteTaskDialog view={deleteView} loading={actionLoading} onOpenChange={(open) => { if (!open) setDeleteView(null) }} onDelete={remove} />
+      <EntityDeleteDialog
+        target={deleteView ? { id: deleteView.task.id, name: deleteView.task.name, scope: "delete_network_task" } : null}
+        pending={actionLoading}
+        error={actionError}
+        onOpenChange={(open) => { if (!open) { setDeleteView(null); setActionError(null) } }}
+        onConfirm={remove}
+      />
       <NetworkHistoryDialog open={historyView !== null} view={historyView} admin onOpenChange={(open) => { if (!open) setHistoryView(null) }} />
+        </TabsContent>
+        <TabsContent value="diagnostics" className="flex flex-col gap-4">
+          {tab === "diagnostics" && <DiagnosticsPanel />}
+        </TabsContent>
+      </Tabs>
     </div>
   )
 
@@ -152,36 +175,14 @@ function TaskSection({ title, views, onEdit, onDelete, onHistory, onMove }: Task
   )
 }
 
+function pageError(tasksError: string | null, nodesError: string | null, actionError: string | null): string | null {
+  return tasksError ?? nodesError ?? actionError
+}
+
 function TaskGridSkeleton() {
   return (
     <div className="grid grid-cols-1 gap-3 lg:grid-cols-2 2xl:grid-cols-3">
       {Array.from({ length: 4 }).map((_, index) => <Skeleton key={index} className="h-64" />)}
     </div>
-  )
-}
-
-function DeleteTaskDialog({
-  view,
-  loading,
-  onOpenChange,
-  onDelete,
-}: {
-  view: NetworkTaskView | null
-  loading: boolean
-  onOpenChange: (open: boolean) => void
-  onDelete: () => Promise<void>
-}) {
-  const { t } = useLocale()
-  return (
-    <Dialog open={view !== null} onOpenChange={onOpenChange}>
-      <DialogContent>
-        <DialogHeader><DialogTitle>{t("confirm.delete")}</DialogTitle></DialogHeader>
-        <p className="text-sm text-muted-foreground">{view?.task.name}</p>
-        <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)}>{t("app.cancel")}</Button>
-          <Button variant="destructive" disabled={loading} onClick={() => void onDelete()}>{t("app.delete")}</Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
   )
 }

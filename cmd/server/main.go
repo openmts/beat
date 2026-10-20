@@ -14,6 +14,21 @@ import (
 
 func main() {
 	configureLogger()
+	if handled, err := handleRecoveryCommand(os.Args[1:], os.Stdout); handled {
+		if err != nil {
+			_, _ = fmt.Fprintf(os.Stderr, "operation=admin_recovery phase=complete result=failed code=recovery_rejected: %v\n", err)
+			os.Exit(1)
+		}
+		_, _ = fmt.Fprintln(os.Stderr, "operation=admin_recovery phase=complete result=success code=ok")
+		return
+	}
+	if handled, err := handleSecretCommand(os.Args[1:], os.Stdout); handled {
+		if err != nil {
+			_, _ = fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
 	dbPath := flag.String("db-path", "./data/beat.db", "path to sqlite database file")
 	mtsPath := flag.String("mts-path", "./data/beat_mts", "path to MTS time series data")
 	listenAddr := flag.String("listen-addr", ":8080", "address to listen on")
@@ -28,8 +43,8 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	if err := run(ctx, *dbPath, *mtsPath, *listenAddr, *staticDir); err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+	if err := run(ctx, serverRunConfig{dbPath: *dbPath, mtsPath: *mtsPath, listenAddr: *listenAddr, staticDir: *staticDir}); err != nil {
+		_, _ = fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
 	}
 }

@@ -10,7 +10,9 @@ import (
 	"testing"
 
 	"github.com/beat/backend/internal/api/handler"
+	"github.com/beat/backend/internal/backup"
 	"github.com/beat/backend/internal/model"
+	"github.com/beat/backend/internal/store"
 )
 
 type optionBackup struct{}
@@ -19,22 +21,54 @@ func (optionBackup) Start(context.Context) (model.BackupRecord, error) {
 	return model.BackupRecord{ID: "backup", State: model.BackupStateRunning}, nil
 }
 
-func (optionBackup) List(context.Context) ([]model.BackupRecord, error) {
-	return []model.BackupRecord{{ID: "backup", State: model.BackupStateReady}}, nil
+func (optionBackup) List(context.Context, store.BackupQuery) (model.BackupPage, error) {
+	return model.BackupPage{Items: []model.BackupRecord{{ID: "backup", State: model.BackupStateReady}}}, nil
+}
+
+func (optionBackup) ListQuarantine(context.Context) ([]model.BackupQuarantineRecord, error) {
+	return []model.BackupQuarantineRecord{{ID: "quarantine", Filename: "beat-orphan.zip"}}, nil
+}
+
+func (optionBackup) ListQuarantinedUploads(context.Context) ([]model.BackupUploadSession, error) {
+	return []model.BackupUploadSession{{ID: "session-quarantine", Filename: "beat-rejected.zip", State: "quarantined"}}, nil
 }
 
 func (optionBackup) Open(context.Context, string) (*os.File, model.BackupRecord, error) {
 	return nil, model.BackupRecord{ID: "backup", Filename: "backup.zip"}, nil
 }
 
-func (optionBackup) Delete(context.Context, string) error { return nil }
+func (optionBackup) Delete(context.Context, string, backup.Actor) error { return nil }
 
 func (optionBackup) ValidateUpload(context.Context, io.Reader) (model.BackupRecord, error) {
 	return model.BackupRecord{ID: "upload", State: model.BackupStateValidated}, nil
 }
 
-func (optionBackup) StageRestore(context.Context, string, string) (model.BackupRecord, error) {
+func (optionBackup) StageRestore(context.Context, backup.StageRequest) (model.BackupRecord, error) {
 	return model.BackupRecord{ID: "backup", State: model.BackupStateStaged}, nil
+}
+
+func (optionBackup) StartUpload(context.Context, store.BackupUploadActor, backup.UploadSessionRequest) (backup.UploadSessionStatus, error) {
+	return backup.UploadSessionStatus{}, backup.ErrUploadUnavailable
+}
+
+func (optionBackup) ListUploads(context.Context, store.BackupUploadActor) ([]model.BackupUploadSession, error) {
+	return nil, backup.ErrUploadUnavailable
+}
+
+func (optionBackup) UploadStatus(context.Context, store.BackupUploadActor, string) (backup.UploadSessionStatus, error) {
+	return backup.UploadSessionStatus{}, backup.ErrUploadUnavailable
+}
+
+func (optionBackup) UploadChunk(context.Context, store.BackupUploadActor, string, backup.UploadChunkRequest) (model.BackupUploadChunk, error) {
+	return model.BackupUploadChunk{}, backup.ErrUploadUnavailable
+}
+
+func (optionBackup) FinalizeUpload(context.Context, store.BackupUploadActor, string) (model.BackupRecord, error) {
+	return model.BackupRecord{}, backup.ErrUploadUnavailable
+}
+
+func (optionBackup) CancelUpload(context.Context, store.BackupUploadActor, string) error {
+	return backup.ErrUploadUnavailable
 }
 
 var _ handler.BackupOperations = optionBackup{}

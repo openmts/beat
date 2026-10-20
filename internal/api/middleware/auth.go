@@ -96,10 +96,12 @@ func authenticateAgent(
 		return model.AgentIdentity{}, http.StatusInternalServerError
 	}
 	if node != nil {
-		if err := authenticator.TouchAgentToken(
-			r.Context(), node.ID, time.Now().UTC(), agentLastUsedInterval,
-		); err != nil {
-			return model.AgentIdentity{}, http.StatusInternalServerError
+		if readOnly, _ := r.Context().Value(agentReportAuthenticationKey{}).(bool); !readOnly {
+			if err := authenticator.TouchAgentToken(
+				r.Context(), node.ID, time.Now().UTC(), agentLastUsedInterval,
+			); err != nil {
+				return model.AgentIdentity{}, http.StatusInternalServerError
+			}
 		}
 		return nodeIdentity(*node, model.AgentCredentialActive), http.StatusOK
 	}
@@ -117,11 +119,14 @@ func authenticateAgent(
 	if node == nil {
 		return model.AgentIdentity{}, http.StatusUnauthorized
 	}
-	return nodeIdentity(*node, model.AgentCredentialLegacy), http.StatusOK
+	identity := nodeIdentity(*node, model.AgentCredentialLegacy)
+	digest := sha256.Sum256([]byte(token))
+	identity.CredentialFingerprint = model.AgentCredentialFingerprint(digest[:])
+	return identity, http.StatusOK
 }
 
 func nodeIdentity(node model.Node, mode string) model.AgentIdentity {
-	return model.AgentIdentity{NodeID: node.ID, NodeName: node.Name, Mode: mode}
+	return model.AgentIdentity{NodeID: node.ID, NodeName: node.Name, Mode: mode, CredentialFingerprint: model.AgentCredentialFingerprint(node.AgentTokenHash)}
 }
 
 func WebSocketBearerAuth(expectedToken string) func(http.Handler) http.Handler {

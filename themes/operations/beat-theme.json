@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "id": "beat-operations",
+  "name": "Operations",
+  "description": "Dense operational table with compact side-by-side node details.",
+  "version": "1.0.0",
+  "author": "Beat contributors",
+  "license": "MIT",
+  "runtime": "declarative",
+  "minimum_beat_version": "0.1.0",
+  "preview": "preview.png",
+  "supported_locales": [
+    "en",
+    "zh-CN"
+  ]
+}

@@ -33,7 +33,7 @@ func TestAgentTaskStoreLifecycle(t *testing.T) {
 		t.Fatalf("pending = %#v, want task %s", got, task.ID)
 	}
 
-	if err := stores.CompleteTask(ctx, task.ID, model.AgentTaskStatusDone, ""); err != nil {
+	if err := stores.CompleteTask(ctx, task.ID, model.AgentTaskStatusDone, "", ""); err != nil {
 		t.Fatalf("complete task: %v", err)
 	}
 	after, err := stores.GetPendingTasks(ctx, node.ID)
@@ -44,7 +44,7 @@ func TestAgentTaskStoreLifecycle(t *testing.T) {
 		t.Fatalf("pending after complete = %#v, want none", after)
 	}
 
-	if err := stores.CompleteTask(ctx, task.ID, model.AgentTaskStatusDone, ""); err == nil {
+	if err := stores.CompleteTask(ctx, task.ID, model.AgentTaskStatusDone, "", ""); err == nil {
 		t.Fatal("completing a non-pending task should fail")
 	}
 }
@@ -93,10 +93,10 @@ func TestAgentTaskStoreInvalidStatus(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create task: %v", err)
 	}
-	if err := stores.CompleteTask(ctx, task.ID, "bogus", ""); err == nil {
+	if err := stores.CompleteTask(ctx, task.ID, "bogus", "", ""); err == nil {
 		t.Fatal("completing task with invalid status should fail")
 	}
-	if err := stores.CompleteTask(ctx, task.ID, model.AgentTaskStatusFailed, "boom"); err != nil {
+	if err := stores.CompleteTask(ctx, task.ID, model.AgentTaskStatusFailed, "boom", ""); err != nil {
 		t.Fatalf("fail task: %v", err)
 	}
 }

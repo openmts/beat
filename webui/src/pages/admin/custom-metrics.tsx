@@ -12,12 +12,14 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Textarea } from "@/components/ui/textarea"
-import { PlusIcon, Trash2Icon, PencilIcon, RefreshCwIcon, Link2Icon, ChartLineIcon } from "lucide-react"
+import { PlusIcon, Trash2Icon, PencilIcon, RefreshCwIcon, Link2Icon, ChartLineIcon, FlaskConicalIcon } from "lucide-react"
 import { PageHeader } from "@/components/page-header"
 import { useNodes } from "@/hooks/use-api"
 import { getNodeMetrics } from "@/lib/api"
 import { MetricsChart } from "@/components/metrics-chart"
-import type { CustomMetric, CustomMetricPayload, MetricDataPoint } from "@/types"
+import { CustomMetricHealthPanel } from "@/components/custom-metric-health"
+import { CustomMetricProbeDialog } from "@/components/custom-metric-probe"
+import type { CustomMetric, CustomMetricHealth, CustomMetricPayload, MetricDataPoint } from "@/types"
 
 const intervalOptions = [
   { label: "5s", value: 5 },
@@ -45,7 +47,9 @@ function CustomMetrics() {
   const [bindLoading, setBindLoading] = useState(false)
   const [viewMetric, setViewMetric] = useState<CustomMetric | null>(null)
   const [viewData, setViewData] = useState<Record<string, MetricDataPoint[]>>({})
+  const [viewHealth, setViewHealth] = useState<CustomMetricHealth | null>(null)
   const [viewLoading, setViewLoading] = useState(false)
+  const [probeMetric, setProbeMetric] = useState<CustomMetric | null>(null)
 
   const { data: nodes, loading: nodesLoading } = useNodes()
   const onlineNodes = nodes?.filter((n) => n.status === "online") ?? []
@@ -163,7 +167,16 @@ function CustomMetrics() {
     setViewMetric(metric)
     setViewLoading(true)
     setViewData({})
+    setViewHealth(null)
     try {
+      let health: CustomMetricHealth | null = null
+      try {
+        health = (await api.getCustomMetricHealth(metric.id)) ?? null
+      } catch {
+        // 采样健康度不可用时仍展示历史曲线，不阻塞既有的数据查看路径。
+        health = null
+      }
+      setViewHealth(health)
       const bound = await api.listCustomMetricNodes(metric.id)
       const to = new Date()
       const from = new Date(to.getTime() - 6 * 3600 * 1000)
@@ -238,6 +251,10 @@ function CustomMetrics() {
                         <Button variant="ghost" size="icon" aria-label={t("custom_metric.view_data")}
                           onClick={() => void openView(metric)}>
                           <ChartLineIcon data-icon />
+                        </Button>
+                        <Button variant="ghost" size="icon" aria-label={t("custom_metric.probe")}
+                          onClick={() => setProbeMetric(metric)}>
+                          <FlaskConicalIcon data-icon />
                         </Button>
                         <Button variant="ghost" size="icon" aria-label={t("custom_metric.bind_nodes")}
                           onClick={() => void openBind(metric)}>
@@ -384,6 +401,7 @@ function CustomMetrics() {
             <DialogDescription>{t("custom_metric.view_description")}</DialogDescription>
           </DialogHeader>
           {actionError && <Alert variant="destructive"><AlertDescription>{actionError}</AlertDescription></Alert>}
+          <CustomMetricHealthPanel health={viewHealth} nodes={nodes} />
           {viewLoading ? (
             <div className="flex flex-col gap-3">
               <Skeleton className="h-48 w-full" />
@@ -417,6 +435,8 @@ function CustomMetrics() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <CustomMetricProbeDialog metric={probeMetric} onClose={() => setProbeMetric(null)} />
     </div>
   )
 }

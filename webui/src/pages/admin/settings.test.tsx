@@ -3,7 +3,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest"
 import { LocaleProvider } from "@/context/locale"
 import Settings from "@/pages/admin/settings"
 import * as api from "@/lib/api"
+import { APIError } from "@/lib/api-error"
+import { reauthenticateAdmin } from "@/lib/security-api"
 import type { MaintenanceOverview, SiteSettings } from "@/types"
+
+vi.mock("@/lib/security-api", () => ({ reauthenticateAdmin: vi.fn() }))
 
 const contextMocks = vi.hoisted(() => ({ applySettings: vi.fn() }))
 const siteState = vi.hoisted(() => ({
@@ -13,7 +17,7 @@ const siteState = vi.hoisted(() => ({
     logo_url: "/logo.svg",
     favicon_url: "/favicon.svg",
     default_theme: "system",
-    show_ip_addresses: true,
+    public_address_mode: "full",
     show_network_quality: true,
     updated_at: "",
   } as SiteSettings,
@@ -26,9 +30,12 @@ vi.mock("@/context/site-settings", () => ({
 }))
 vi.mock("@/lib/api", () => ({
   updateSiteSettings: vi.fn(),
+  getDeploymentAccess: vi.fn(),
   getMaintenanceOverview: vi.fn(),
   updateMaintenanceSettings: vi.fn(),
   startMaintenance: vi.fn(),
+  getPublicTelemetryPolicy: vi.fn(),
+  updatePublicTelemetryPolicy: vi.fn(),
 }))
 vi.mock("@/components/ui/select", async () => {
   const mocks = await vi.importActual<typeof import("@/test/admin-ui-mocks")>("@/test/admin-ui-mocks")
@@ -98,13 +105,23 @@ describe("admin site settings", () => {
       logo_url: "/logo.svg",
       favicon_url: "/favicon.svg",
       default_theme: "system",
-      show_ip_addresses: true,
+      public_address_mode: "full",
       show_network_quality: true,
+      show_accelerators: true,
       updated_at: "",
     }
+    vi.mocked(api.getDeploymentAccess).mockResolvedValue({
+      valid: true, public_base_url: "https://beat.example.com", api_origin_mode: "configured", api_origin_count: 2,
+      ws_origin_mode: "same_origin", ws_origin_count: 0,
+    })
     vi.mocked(api.getMaintenanceOverview).mockResolvedValue(maintenanceOverview)
     vi.mocked(api.updateMaintenanceSettings).mockImplementation(async (settings) => settings)
     vi.mocked(api.startMaintenance).mockResolvedValue()
+    vi.mocked(api.getPublicTelemetryPolicy).mockResolvedValue({
+      enabled: false, allowed_events: ["page_view"], sample_ceiling: 1000, retention_days: 30,
+      revision: 1, updated_by: "", updated_at: "2026-07-30T00:00:00Z",
+    })
+    vi.mocked(api.updatePublicTelemetryPolicy).mockImplementation(async (policy) => ({ ...policy, updated_by: "owner" }))
     vi.spyOn(window, "confirm").mockReturnValue(true)
   })
 
@@ -120,15 +137,16 @@ describe("admin site settings", () => {
 
     fireEvent.change(screen.getByLabelText("Site title"), { target: { value: "Operations" } })
     fireEvent.change(screen.getByLabelText("Logo URL"), { target: { value: "/brand.svg" } })
-    fireEvent.click(screen.getAllByRole("switch")[0])
+    fireEvent.click(screen.getByRole("button", { name: "Hidden" }))
     fireEvent.click(screen.getAllByRole("button", { name: "Save" })[0])
 
     await waitFor(() => expect(api.updateSiteSettings).toHaveBeenCalledWith(
       expect.objectContaining({
         site_title: "Operations",
         logo_url: "/brand.svg",
-        show_ip_addresses: false,
+        public_address_mode: "hidden",
         default_theme: "system",
+        show_accelerators: true,
       }),
     ))
     expect(contextMocks.applySettings).toHaveBeenCalled()
@@ -168,5 +186,54 @@ describe("admin site settings", () => {
     fireEvent.click(screen.getByRole("button", { name: "Run maintenance" }))
     await waitFor(() => expect(api.startMaintenance).toHaveBeenCalled())
     expect(window.confirm).toHaveBeenCalled()
+  })
+
+  it("shows deployment policy as readable modes without leaking origins", async () => {
+    view()
+    expect(await screen.findByText("https://beat.example.com")).toBeInTheDocument()
+    expect(screen.getByText("2 configured origins")).toBeInTheDocument()
+    expect(screen.getByText("Same origin")).toBeInTheDocument()
+    expect(screen.queryByText(/console.example.com/)).not.toBeInTheDocument()
+  })
+
+  it("keeps the anonymous telemetry policy owner-owned and readable", async () => {
+    view()
+    expect(await screen.findByText("Anonymous aggregate telemetry")).toBeInTheDocument()
+    expect(await screen.findByLabelText("Session sample ceiling")).toHaveValue(1000)
+    expect(screen.getByLabelText("Aggregate retention (days)")).toHaveValue(30)
+
+    fireEvent.click(screen.getByLabelText("Accept anonymous interaction counts"))
+    fireEvent.click(screen.getByLabelText("Save public telemetry policy"))
+    await waitFor(() => expect(api.updatePublicTelemetryPolicy).toHaveBeenCalledWith(
+      expect.objectContaining({ enabled: true, revision: 2, sample_ceiling: 1000 }),
+    ))
+    expect(await screen.findByText("Public telemetry policy saved")).toBeInTheDocument()
+  })
+
+  it("hides the telemetry section for administrators without owner rights", async () => {
+    vi.mocked(api.getPublicTelemetryPolicy).mockRejectedValue(new APIError("owner permission is required", 403))
+    view()
+    await waitFor(() => expect(api.getPublicTelemetryPolicy).toHaveBeenCalled())
+    expect(screen.queryByText("Anonymous aggregate telemetry")).not.toBeInTheDocument()
+  })
+
+  it("collects identity proof when telemetry changes need recent authentication", async () => {
+    vi.mocked(api.updatePublicTelemetryPolicy)
+      .mockRejectedValueOnce(new APIError("recent authentication is required", 428))
+      .mockImplementationOnce(async (policy) => ({ ...policy, updated_by: "owner" }))
+    view()
+    await screen.findByText("Anonymous aggregate telemetry")
+    fireEvent.click(screen.getByLabelText("Save public telemetry policy"))
+    expect(await screen.findByLabelText("Current password")).toBeInTheDocument()
+    fireEvent.change(screen.getByLabelText("Current password"), { target: { value: "fixture-password" } })
+    fireEvent.click(screen.getByRole("button", { name: "Confirm" }))
+    await waitFor(() => expect(reauthenticateAdmin).toHaveBeenCalledWith("fixture-password", ""))
+    expect(await screen.findByText("Public telemetry policy saved")).toBeInTheDocument()
+  })
+
+  it("reports deployment policy as unavailable when the endpoint fails", async () => {
+    vi.mocked(api.getDeploymentAccess).mockRejectedValueOnce(new Error("forbidden"))
+    view()
+    expect(await screen.findAllByText("Unavailable")).toHaveLength(2)
   })
 })

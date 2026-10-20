@@ -22,11 +22,16 @@ const (
 )
 
 type Service struct {
-	config    ServiceConfig
-	limiter   *RateLimiter
-	dummyHash string
-	now       func() time.Time
-	random    io.Reader
+	config         ServiceConfig
+	security       *securityCounters
+	limiter        *RateLimiter
+	passwordBudget *authenticationBudget
+	pendingTOTP    *pendingTOTPStore
+	live           *liveSessionRegistry
+	liveInterval   time.Duration
+	dummyHash      string
+	now            func() time.Time
+	random         io.Reader
 }
 
 func NewService(config ServiceConfig) (*Service, error) {
@@ -46,7 +51,9 @@ func NewService(config ServiceConfig) (*Service, error) {
 	if err != nil {
 		return nil, fmt.Errorf("create constant-work password hash: %w", err)
 	}
-	return &Service{config: config, limiter: NewRateLimiter(4096), dummyHash: dummyHash,
+	return &Service{config: config, security: newSecurityCounters(), limiter: NewRateLimiter(4096), dummyHash: dummyHash,
+		passwordBudget: newAuthenticationBudget(), pendingTOTP: newPendingTOTPStore(),
+		live: &liveSessionRegistry{sessions: make(map[*liveSession]struct{})}, liveInterval: liveSessionCheckInterval,
 		now: config.Now, random: config.Random}, nil
 }
 
@@ -72,11 +79,14 @@ func (service *Service) Now() time.Time {
 }
 
 func (service *Service) Logout(ctx context.Context, principal *model.AdminPrincipal) error {
-	if err := service.config.Store.RevokeSession(ctx, principal.Session.ID, service.now()); err != nil {
+	if principal == nil {
+		return ErrSessionInvalid
+	}
+	if err := service.commitSessionSecurity(ctx, *principal, nil); err != nil {
 		return err
 	}
-	return service.RecordAudit(ctx, AuditInput{Principal: principal, Action: "auth.logout",
-		ResourceType: "session", ResourceID: principal.Session.ID, Outcome: model.AuditOutcomeSuccess})
+	service.revokeLiveSession(principal.Session.ID)
+	return nil
 }
 
 func (service *Service) Bootstrap(ctx context.Context, request BootstrapRequest) (LoginResult, error) {
@@ -90,28 +100,40 @@ func (service *Service) Bootstrap(ctx context.Context, request BootstrapRequest)
 	if !constantTokenEqual(request.BootstrapToken, service.config.LegacyToken) {
 		return LoginResult{}, ErrBootstrapDenied
 	}
+	release, err := service.admitPassword(ctx, "ip:"+request.IPAddress)
+	if err != nil {
+		return LoginResult{}, err
+	}
+	defer release()
 	user, err := service.newBootstrapUser(request)
 	if err != nil {
 		return LoginResult{}, err
 	}
-	result, session, err := service.newSession(user, request.IPAddress, request.UserAgent)
+	result, _, err := service.newSession(user, request.IPAddress, request.UserAgent)
 	if err != nil {
 		return LoginResult{}, err
 	}
-	if err := service.config.Store.Bootstrap(ctx, user, session); err != nil {
+	if err := service.admitLocalSession(ctx, result, true); err != nil {
 		return LoginResult{}, fmt.Errorf("bootstrap administrator: %w", err)
 	}
-	_ = service.RecordAudit(ctx, AuditInput{Principal: &result.Principal, Action: "auth.bootstrap",
-		ResourceType: "administrator", ResourceID: user.ID, Outcome: model.AuditOutcomeSuccess,
-		IPAddress: request.IPAddress, UserAgent: request.UserAgent})
+	result.Principal.User.LastLoginAt = &result.Principal.Session.CreatedAt
 	return result, nil
 }
 
 func (service *Service) Login(ctx context.Context, request LoginRequest) (LoginResult, error) {
+	release, err := service.admitPassword(ctx, "ip:"+request.IPAddress)
+	if err != nil {
+		return LoginResult{}, err
+	}
+	defer release()
 	request.Username = model.NormalizeUsername(request.Username)
 	keys := []string{"ip:" + request.IPAddress, "user:" + request.Username}
 	now := service.now()
-	if !service.limiter.Allowed(keys, now) {
+	locked, err := service.loginLocked(ctx, request, now)
+	if err != nil {
+		return LoginResult{}, err
+	}
+	if locked || !service.limiter.Allowed(keys, now) {
 		_ = service.RecordAudit(ctx, AuditInput{Action: "auth.login", ResourceType: "session",
 			Outcome: model.AuditOutcomeFailure, IPAddress: request.IPAddress, UserAgent: request.UserAgent})
 		return LoginResult{}, ErrLocked
@@ -122,46 +144,53 @@ func (service *Service) Login(ctx context.Context, request LoginRequest) (LoginR
 	}
 	if err := service.verifyLogin(user, request, now); err != nil {
 		service.limiter.Failure(keys, now)
-		_ = service.RecordAudit(ctx, AuditInput{Action: "auth.login", ResourceType: "session",
-			Outcome: model.AuditOutcomeFailure, IPAddress: request.IPAddress, UserAgent: request.UserAgent})
+		service.recordLoginFailure(ctx, loginFailureInput{Username: request.Username, IPAddress: request.IPAddress,
+			UserAgent: request.UserAgent, Reason: failureReason(err), Now: now})
 		return LoginResult{}, err
 	}
-	result, session, err := service.newSession(user, request.IPAddress, request.UserAgent)
+	result, _, err := service.newSession(user, request.IPAddress, request.UserAgent)
 	if err != nil {
 		return LoginResult{}, err
 	}
-	if err := service.config.Store.CreateSession(ctx, session); err != nil {
-		return LoginResult{}, err
-	}
-	if err := service.config.Store.TouchUserLogin(ctx, user.ID, now); err != nil {
-		_ = service.config.Store.RevokeSession(ctx, session.ID, now)
+	if err := service.admitLocalSession(ctx, result, false); err != nil {
 		return LoginResult{}, err
 	}
 	service.limiter.Success(keys)
-	_ = service.RecordAudit(ctx, AuditInput{Principal: &result.Principal, Action: "auth.login",
-		ResourceType: "session", ResourceID: session.ID, Outcome: model.AuditOutcomeSuccess,
-		IPAddress: request.IPAddress, UserAgent: request.UserAgent})
+	service.clearLoginThresholds(ctx, request.Username, request.IPAddress, now)
+	result.Principal.User.LastLoginAt = &result.Principal.Session.CreatedAt
 	return result, nil
 }
 
 func (service *Service) Authenticate(ctx context.Context, rawToken string) (model.AdminPrincipal, error) {
 	hash := sha256.Sum256([]byte(rawToken))
 	session, err := service.config.Store.GetSessionByTokenHash(ctx, hash[:])
-	if err != nil || session == nil || !session.Active(service.now()) {
+	if err != nil {
+		return model.AdminPrincipal{}, sessionStoreError("load session", err)
+	}
+	if session == nil || !session.Active(service.now()) {
 		return model.AdminPrincipal{}, ErrSessionInvalid
 	}
 	user, err := service.config.Store.GetUserByID(ctx, session.UserID)
-	if err != nil || user == nil || !user.Enabled {
+	if err != nil {
+		return model.AdminPrincipal{}, sessionStoreError("load session user", err)
+	}
+	if user == nil || !user.Enabled {
 		return model.AdminPrincipal{}, ErrSessionInvalid
 	}
 	now := service.now()
 	idleExpiry := minTime(now.Add(sessionIdleLifetime), session.AbsoluteExpiresAt)
 	if err := service.config.Store.TouchSession(ctx, session.ID, now, idleExpiry); err != nil {
-		return model.AdminPrincipal{}, ErrSessionInvalid
+		return model.AdminPrincipal{}, sessionStoreError("touch session", err)
 	}
 	session.LastActivityAt = now
 	session.IdleExpiresAt = idleExpiry
 	return model.AdminPrincipal{User: *user, Session: *session}, nil
+}
+
+// sessionStoreError 把存储故障包装成 ErrSessionStore 并保留原始原因：
+// 路由层据此返回 503，运维日志里能直接看到底层错误（例如磁盘写满）。
+func sessionStoreError(operation string, err error) error {
+	return fmt.Errorf("%s: %w", operation, errors.Join(ErrSessionStore, err))
 }
 
 func (service *Service) newBootstrapUser(request BootstrapRequest) (*model.AdminUser, error) {
@@ -188,30 +217,6 @@ func (service *Service) newSession(
 ) (LoginResult, *model.AdminSession, error) {
 	return service.newSessionWithAttribution(user, ipAddress, userAgent,
 		model.AuthMethodLocal, nil)
-}
-
-// CreateOIDCSession 为已验证的 OIDC 身份创建会话，并记录认证方法归因。
-func (service *Service) CreateOIDCSession(
-	ctx context.Context, userID, externalIdentityID, ipAddress, userAgent string,
-) (LoginResult, error) {
-	user, err := service.config.Store.GetUserByID(ctx, userID)
-	if err != nil || user == nil || !user.Enabled {
-		return LoginResult{}, ErrInvalidCredentials
-	}
-	result, session, err := service.newSessionWithAttribution(
-		user, ipAddress, userAgent, model.AuthMethodOIDC, &externalIdentityID)
-	if err != nil {
-		return LoginResult{}, err
-	}
-	if err := service.config.Store.CreateSession(ctx, session); err != nil {
-		return LoginResult{}, err
-	}
-	now := service.now()
-	if err := service.config.Store.TouchUserLogin(ctx, user.ID, now); err != nil {
-		_ = service.config.Store.RevokeSession(ctx, session.ID, now)
-		return LoginResult{}, err
-	}
-	return result, nil
 }
 
 func (service *Service) newSessionWithAttribution(

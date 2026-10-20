@@ -12,9 +12,10 @@ const (
 )
 
 type AgentIdentity struct {
-	NodeID   string
-	NodeName string
-	Mode     string
+	NodeID                string
+	NodeName              string
+	Mode                  string
+	CredentialFingerprint string
 }
 
 type Node struct {

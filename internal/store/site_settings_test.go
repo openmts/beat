@@ -16,13 +16,17 @@ func TestSiteSettingsStore(t *testing.T) {
 	if settings.SiteTitle != "Beat Monitor" || settings.FaviconURL != "/favicon.svg" {
 		t.Fatalf("defaults = %#v", settings)
 	}
+	if settings.PublicAddressMode != model.PublicAddressHidden {
+		t.Fatalf("a fresh instance must default to hidden addresses, got %q", settings.PublicAddressMode)
+	}
 
 	settings.SiteTitle = "Operations"
 	settings.SiteDescription = "  Infrastructure status  "
 	settings.LogoURL = "https://example.com/logo.svg"
 	settings.DefaultTheme = model.ThemeDark
-	settings.ShowIPAddresses = false
+	settings.PublicAddressMode = model.PublicAddressMasked
 	settings.ShowNetworkQuality = false
+	settings.ShowAccelerators = false
 	updated, err := settingsStore.Update(t.Context(), settings)
 	if err != nil {
 		t.Fatalf("update settings: %v", err)
@@ -34,8 +38,8 @@ func TestSiteSettingsStore(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get updated settings: %v", err)
 	}
-	if persisted.SiteTitle != "Operations" || persisted.ShowIPAddresses ||
-		persisted.ShowNetworkQuality || persisted.DefaultTheme != model.ThemeDark {
+	if persisted.SiteTitle != "Operations" || persisted.PublicAddressMode != model.PublicAddressMasked ||
+		persisted.ShowNetworkQuality || persisted.ShowAccelerators || persisted.DefaultTheme != model.ThemeDark {
 		t.Fatalf("persisted = %#v", persisted)
 	}
 }

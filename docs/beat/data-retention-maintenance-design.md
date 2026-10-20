@@ -11,12 +11,12 @@ paths, measurements, or arbitrary deletion ranges.
 
 This feature expires old data by age. It does not provide explicit node,
 network-task, fleet, or all-history erasure. Those destructive lifecycle and
-governance semantics are a separate reviewed `v17` batch in
+governance semantics are a separate reviewed `v22` batch in
 [`metric-erasure-design.md`](./metric-erasure-design.md).
 
 It also does not own SQLite session, audit, alert-event, backup-record, or
 temporary-file retention. The current audit cleanup is coupled to this worker;
-the reviewed `v19` application lifecycle separates and completes that contract
+the reviewed `v24` application lifecycle separates and completes that contract
 in [`application-data-lifecycle-design.md`](./application-data-lifecycle-design.md).
 
 ## Persisted configuration

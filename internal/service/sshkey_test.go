@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/beat/backend/internal/store"
+	"github.com/beat/backend/internal/testutil"
 )
 
 func setupTestSSHKeyService(t *testing.T) *SSHKeyService {
@@ -18,6 +19,7 @@ func setupTestSSHKeyService(t *testing.T) *SSHKeyService {
 	t.Cleanup(func() { _ = sqliteStore.Close() })
 
 	sshKeyStore := store.NewSSHKeyStore(sqliteStore.DB)
+	sshKeyStore.SetSecrets(testutil.NewSecrets(t, sqliteStore.DB))
 	svc := NewSSHKeyService(sshKeyStore)
 	return svc
 }

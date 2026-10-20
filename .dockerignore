@@ -8,3 +8,7 @@ beat-server
 beat-linux-*.tar.gz
 **/*.log
 **/*.pid
+agent.json
+data
+deploy/beat.env
+webui/coverage

@@ -1,4 +1,8 @@
+import type { AcceleratorDevicePublic } from "./accelerator"
+import type { LifecyclePublic, LocationPublic } from "@/types/node-lifecycle"
 export interface Node {
+  location?: LocationPublic
+  lifecycle?: LifecyclePublic
   id: string
   name: string
   alias: string
@@ -23,13 +27,41 @@ export interface Node {
   traffic_limit_type?: TrafficLimitType
   traffic_reset_day?: number
   last_seen: string
+  telemetry_at?: string | null
+  telemetry_age_seconds?: number | null
+  telemetry_state?: TelemetryState
   created_at: string
   updated_at: string
   metrics?: Record<string, number>
+  accelerators?: AcceleratorDevicePublic[]
+  accelerator_visible?: boolean
   traffic?: TrafficSummary
 }
 
+export type TelemetryState = "fresh" | "delayed" | "stale" | "unavailable"
+
 export type SiteTheme = "system" | "light" | "dark"
+
+// 公共节点地址展示模式：hidden 清空，masked 只保留网络前缀，full 原样展示。
+export type PublicAddressMode = "hidden" | "masked" | "full"
+
+// 公共遥测的展示视图：只含开关、事件白名单与会话采样上限，绝不含来源或样本。
+export interface PublicSiteTelemetry {
+  enabled: boolean
+  allowed_events: string[]
+  sample_ceiling: number
+}
+
+// owner 读写的匿名聚合遥测策略；修订号用于并发冲突检查。
+export interface PublicTelemetryPolicy {
+  enabled: boolean
+  allowed_events: string[]
+  sample_ceiling: number
+  retention_days: number
+  revision: number
+  updated_by: string
+  updated_at: string
+}
 
 export interface SiteSettings {
   site_title: string
@@ -37,9 +69,21 @@ export interface SiteSettings {
   logo_url: string
   favicon_url: string
   default_theme: SiteTheme
-  show_ip_addresses: boolean
+  public_address_mode: PublicAddressMode
   show_network_quality: boolean
+  show_accelerators: boolean
   updated_at: string
+  public_telemetry?: PublicSiteTelemetry
+}
+
+// 部署访问策略来自环境配置，管理端只读展示模式与数量，永远不下发来源列表。
+export interface DeploymentAccessStatus {
+  valid: boolean
+  public_base_url: string
+  api_origin_mode: "all" | "configured" | "same_origin"
+  api_origin_count: number
+  ws_origin_mode: "all" | "configured" | "same_origin"
+  ws_origin_count: number
 }
 
 export interface MaintenanceSettings {
@@ -99,10 +143,13 @@ export interface AgentConfig {
 }
 
 export interface NodeCredential {
-  node: ManagedNode
+  node: ManagedNodeMetadata
   agent_token: string
   agent_config: AgentConfig
 }
+
+export type ManagedNodeMetadata = Omit<ManagedNode,
+  "metrics" | "traffic" | "telemetry_at" | "telemetry_age_seconds" | "telemetry_state">
 
 export interface ManagedNodePayload {
   name: string
@@ -131,6 +178,8 @@ export interface TrafficSummary {
   next_reset: string
   tracked_since: string | null
   status: TrafficStatus
+  accounting_mode?: "raw" | "calibrated"
+  calibrated_at?: string | null
 }
 
 export interface Group {
@@ -169,18 +218,7 @@ export interface AlertRule {
   updated_at: string
 }
 
-export interface AlertChannel {
-  id: string
-  name: string
-  channel_type: AlertChannelType
-  config: string
-  enabled: boolean
-  last_delivery?: AlertDeliveryStatus
-  created_at: string
-  updated_at: string
-}
-
-export type AlertChannelType = "webhook" | "telegram" | "email"
+export type { NotificationChannel as AlertChannel, NotificationChannelType as AlertChannelType } from "@/types/notification"
 
 export interface AlertDeliveryStatus {
   state: "success" | "failed"
@@ -189,6 +227,9 @@ export interface AlertDeliveryStatus {
 }
 
 export interface AlertEvent {
+  device_id?: string
+  device_name?: string
+  resolution_reason?: string
   id: string
   rule_id: string
   node_id: string
@@ -198,17 +239,28 @@ export interface AlertEvent {
   triggered_at: string
   acknowledged_at: string | null
   resolved_at: string | null
+  /** 事件创建时的规则显示名快照；空串表示规则已删除，界面绝不回退成 ID。 */
+  rule_name_snapshot?: string
+  /** 事件创建时的节点显示名快照；空串表示节点已删除，界面绝不回退成 ID。 */
+  node_name_snapshot?: string
+}
+
+/** 历史列表一律服务端筛选与游标分页，绝不整表下发。 */
+export interface AlertEventPage {
+  items: AlertEvent[]
+  next_cursor?: string
 }
 
 export type TrafficReportCadence = "daily" | "weekly" | "monthly"
-export type TrafficReportDeliveryState = "success" | "partial" | "failed"
+export type TrafficReportDeliveryState = "success" | "partial" | "failed" | "queued" | "not_routed" | "unknown"
 
 export interface TrafficReportDeliveryStatus {
   state: TrafficReportDeliveryState
   message: string
   delivered: number
   total: number
-  delivered_at: string
+  delivered_at?: string
+  queued_at?: string
 }
 
 export interface TrafficReportSchedule {
@@ -378,6 +430,43 @@ export interface CustomMetric {
   enabled: boolean
   created_at: string
   updated_at: string
+}
+
+export type CustomMetricHealthState = "ok" | "stale" | "missing" | "unverified" | "disabled"
+
+export interface CustomMetricHealthNode {
+  node_id: string
+  state: CustomMetricHealthState
+  value?: number
+  captured_at?: string
+  report_at?: string
+  age_seconds: number
+  sample_id?: string
+  cadence_ms?: number
+  definition_version?: string
+}
+
+export interface CustomMetricHealth {
+  metric: {
+    id: string
+    name: string
+    enabled: boolean
+    interval_seconds: number
+    stale_after_seconds: number
+  }
+  nodes: CustomMetricHealthNode[]
+}
+
+export type CustomMetricProbeStatus = "pending" | "done" | "failed"
+
+export interface CustomMetricProbe {
+  task_id: string
+  node_id: string
+  status: CustomMetricProbeStatus
+  success?: boolean
+  output?: string
+  failure?: string
+  completed_at?: string
 }
 
 export interface CustomMetricPayload {

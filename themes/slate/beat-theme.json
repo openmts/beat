@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "id": "beat-slate",
+  "name": "Slate",
+  "description": "Grouped cards with a balanced node detail view.",
+  "version": "1.0.1",
+  "author": "Beat contributors",
+  "license": "MIT",
+  "runtime": "declarative",
+  "minimum_beat_version": "0.1.0",
+  "preview": "preview.png",
+  "configuration": {
+    "type": "managed",
+    "items": [
+      {
+        "key": "overview",
+        "name": "theme.overview_layout",
+        "options": [
+          "cards",
+          "table"
+        ]
+      },
+      {
+        "key": "radius"
+      },
+      {
+        "key": "show_tags"
+      }
+    ]
+  },
+  "supported_locales": [
+    "en",
+    "zh-CN"
+  ]
+}

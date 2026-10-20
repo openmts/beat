@@ -21,6 +21,14 @@ func setupOIDCBackupDB(t *testing.T) (*store.SQLiteStore, *secretbox.Manager, []
 		t.Fatalf("new SQLite store: %v", err)
 	}
 	t.Cleanup(func() { _ = sqlite.Close() })
+	for _, statement := range []string{
+		"DROP TABLE application_data_keys", "DROP TABLE application_secret_state",
+		"ALTER TABLE ssh_keys DROP COLUMN private_key_encrypted", "DELETE FROM schema_migrations WHERE version >= 9",
+	} {
+		if _, err := sqlite.DB.Exec(statement); err != nil {
+			t.Fatal(err)
+		}
+	}
 	key := bytes.Repeat([]byte{7}, 32)
 	secrets, err := secretbox.NewFromKey(key, nil)
 	if err != nil {

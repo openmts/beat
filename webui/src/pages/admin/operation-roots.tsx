@@ -1,0 +1,15 @@
+import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
+import { Checkbox } from "@/components/ui/checkbox"
+import { useLocale } from "@/context/locale"
+import type { OperationRoot } from "@/types/operations"
+import { operationInputNumber, operationInteger, operationMaximumFileBytes, operationMaximumRoots, operationMiB, validOperationRoot } from "./operation-policy-validation"
+export function OperationRoots({ value, change }: { value: OperationRoot[]; change: (roots: OperationRoot[]) => void }) {
+ const { t } = useLocale()
+ const patch = (index: number, update: Partial<OperationRoot>) => change(value.map((root, position) => position === index ? { ...root, ...update } : root))
+ return <section className="space-y-3"><div className="flex items-center justify-between"><h3 className="text-sm font-medium">{t("operations.file_root_permissions")}</h3><Button size="sm" variant="outline" disabled={value.length >= operationMaximumRoots} onClick={() => change([...value, { id: "", read: true, write: false, maximum_bytes: 100 * operationMiB, overwrite: false, executable: false }])}>{t("operations.add_root")}</Button></div><p className="text-xs text-muted-foreground">{t("operations.use_unique_agent_root_ids_letters_digits_hyphens")}</p>
+  {value.map((root, index) => <div key={index} className="space-y-3 rounded-md border p-3"><div className="grid gap-3 sm:grid-cols-2"><label className="space-y-1 text-sm">{t("operations.display_name")}<Input value={root.name ?? ""} maxLength={160} onChange={event => patch(index, { name: event.target.value })} /></label><label className="space-y-1 text-sm">{t("operations.root_id")}<Input value={root.id} maxLength={128} aria-invalid={!/^[A-Za-z0-9_-]{1,128}$/.test(root.id) || value.some((other, position) => position !== index && other.id === root.id)} onChange={event => patch(index, { id: event.target.value })} /></label><label className="space-y-1 text-sm">{t("operations.maximum_size_mib")}<Input type="number" min={1 / operationMiB} max={operationMaximumFileBytes / operationMiB} step={1 / operationMiB} aria-invalid={!operationInteger(root.maximum_bytes, operationMaximumFileBytes)} value={Number.isFinite(root.maximum_bytes) ? root.maximum_bytes / operationMiB : ""} onChange={event => patch(index, { maximum_bytes: operationInputNumber(event.target.value) * operationMiB })} /></label></div>
+   {!validOperationRoot(root) && <p role="status" className="text-xs text-muted-foreground">{t("operations.check_the_root_id_display_name_and_file_size_lim")}</p>}
+   <div className="flex flex-wrap gap-3">{(["read", "write", "overwrite", "executable"] as const).map((key, position) => <label key={key} className="flex items-center gap-2 text-sm"><Checkbox checked={root[key]} onCheckedChange={checked => patch(index, { [key]: Boolean(checked) })} />{t(["operations.root_read", "operations.root_write", "operations.root_overwrite", "operations.root_executable"][position])}</label>)}<Button size="sm" variant="ghost" onClick={() => change(value.filter((_, position) => position !== index))}>{t("operations.remove")}</Button></div></div>)}
+ </section>
+}

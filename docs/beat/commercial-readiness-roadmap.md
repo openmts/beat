@@ -344,10 +344,8 @@ Required result:
   [`application-data-lifecycle-design.md`](./application-data-lifecycle-design.md).
 - Add versioned PWA static-shell caching while keeping every API, WebSocket,
   authentication, administration, health, and metric request network-only.
-  Provide a bounded HTML `/wallboard` over existing public REST/WebSocket data
-  instead of MJPEG. The offline, update, privacy, resource, and kiosk model is
-  reviewed in
-  [`public-pwa-wallboard-design.md`](./public-pwa-wallboard-design.md).
+  The HTML wallboard was removed on 2026-10-20; the PWA keeps its static-only
+  offline shell and explicit update model independently.
 - Add iperf3/MTR as a high-risk diagnostics batch after secure Agent operations,
   the metric catalog, signed rollout, and approved target policies. Every
   Agent-reported numeric result remains MTS-only; arbitrary destinations and
@@ -465,8 +463,7 @@ shared behavior, persistence, or deployment contracts:
    and external MMDB mounts.
 6. Metric catalog/retention/dashboard composition, GPU telemetry, signed Agent
    rollout, platform expansion, scoped service tokens, grouped Fleet
-   interaction, resumable backup upload, PWA/HTML-wallboard behavior, and
-   advanced diagnostics.
+   interaction, resumable backup upload, PWA behavior, and advanced diagnostics.
 7. Root deployment configuration, container files, CI, release signing, and
    environment templates.
 8. Local operator recovery, runtime profiling artifacts, external URL and
@@ -522,16 +519,15 @@ The canonical SQLite order is:
 18. `v22` application-history lifecycle, pagination, cleanup and backup
     reconciliation.
 
-The schema-free batches are `fleet-public`, `pwa-static-shell`, `wallboard-html`,
+The schema-free batches are `fleet-public`, `pwa-static-shell`,
 `operator-recovery-cli`, `migration-recovery-ops`, `runtime-diagnostics`,
 `runtime-resilience`, `ingress-governance`, `agent-ingest-consistency`,
 `administrative-mutation-consistency`, and `localization-parity`. Application
 secret lifecycle is not another schema-free approval unit: it is part of `v5`
 because its wrapped-key registry and SSH migration require that schema. Fleet
-precedes both presentation batches and localization; its route-asset isolation
-must pass before PWA caches only the public versioned static shell, and PWA is
-verified independently before wallboard install testing. Recovery and runtime
-diagnostics depend on deployed account security,
+precedes localization; its route-asset isolation must pass before PWA caches
+only the public versioned static shell. Recovery and runtime diagnostics depend
+on deployed account security,
 while
 migration/recovery operations also depend on the local recovery lock and CLI.
 Runtime resilience depends on deployed operability and public metrics, composes

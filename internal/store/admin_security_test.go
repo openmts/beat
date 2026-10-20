@@ -103,7 +103,7 @@ func TestAdminStoreSessionsAndAudit(t *testing.T) {
 	if loaded, err := store.GetSessionByID(t.Context(), second.ID); err != nil || loaded == nil {
 		t.Fatalf("session by ID = %#v, %v", loaded, err)
 	}
-	sessions, err := store.ListSessions(t.Context(), owner.ID)
+	sessions, err := store.ListSessions(t.Context(), owner.ID, now, model.AdminSessionPageSize)
 	if err != nil || len(sessions) != 2 {
 		t.Fatalf("sessions = %#v, %v", sessions, err)
 	}
@@ -138,9 +138,12 @@ func TestAdminStoreSessionsAndAudit(t *testing.T) {
 		t.Fatalf("page = %#v, err = %v", page, err)
 	}
 	page, err = store.ListAuditEvents(t.Context(), model.AuditFilter{Action: event.Action,
-		ActorID: owner.ID, Limit: 500, Offset: -1})
-	if err != nil || page.Limit != 200 || page.Offset != 0 || page.Total != 1 {
+		ActorID: owner.ID, Limit: 200})
+	if err != nil || len(page.Events) != 1 || page.NextCursor != "" {
 		t.Fatalf("filtered audit page = %#v, %v", page, err)
+	}
+	if _, err := store.ListAuditEvents(t.Context(), model.AuditFilter{Limit: 500}); !errors.Is(err, ErrInvalidAuditEventQuery) {
+		t.Fatalf("oversized audit limit = %v", err)
 	}
 	if count, err := store.CleanupAuditEventsBefore(t.Context(), now.Add(time.Second)); err != nil || count != 1 {
 		t.Fatalf("cleanup audit events = %d, %v", count, err)
@@ -198,11 +201,7 @@ func TestAdminModelsDoNotMarshalSecrets(t *testing.T) {
 
 func newAdminTestStore(t *testing.T) *AdminStore {
 	t.Helper()
-	sqlite, err := NewSQLiteStore("file:" + t.Name() + "?mode=memory&cache=shared")
-	if err != nil {
-		t.Fatalf("new sqlite store: %v", err)
-	}
-	t.Cleanup(func() { _ = sqlite.Close() })
+	sqlite := setupTestDB(t)
 	return NewAdminStore(sqlite.DB)
 }
 

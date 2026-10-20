@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 
 	"github.com/google/uuid"
@@ -14,7 +15,7 @@ type AgentTaskStore struct {
 	db *sql.DB
 }
 
-const agentTaskColumns = `id, node_id, type, payload, status, created_at, attempted_at, completed_at`
+const agentTaskColumns = `id, node_id, type, payload, status, output, failure, created_at, attempted_at, completed_at`
 
 func NewAgentTaskStore(db *sql.DB) *AgentTaskStore {
 	return &AgentTaskStore{db: db}
@@ -59,7 +60,7 @@ func (s *AgentTaskStore) GetPendingTasks(ctx context.Context, nodeID string) ([]
 	for rows.Next() {
 		var task model.AgentTask
 		if err := rows.Scan(
-			&task.ID, &task.NodeID, &task.Type, &task.Payload, &task.Status,
+			&task.ID, &task.NodeID, &task.Type, &task.Payload, &task.Status, &task.Output, &task.Failure,
 			&task.CreatedAt, &task.AttemptedAt, &task.CompletedAt,
 		); err != nil {
 			return nil, fmt.Errorf("scanning agent task: %w", err)
@@ -76,15 +77,16 @@ func (s *AgentTaskStore) CompleteTask(
 	ctx context.Context,
 	taskID string,
 	status string,
-	message string,
+	failure string,
+	output string,
 ) error {
 	if status != model.AgentTaskStatusDone && status != model.AgentTaskStatusFailed {
 		return fmt.Errorf("invalid agent task status %q", status)
 	}
 	now := model.NowUTC()
 	result, err := s.db.ExecContext(ctx,
-		"UPDATE agent_tasks SET status = ?, attempted_at = COALESCE(attempted_at, ?), completed_at = ? WHERE id = ? AND status = ?",
-		status, now, now, taskID, model.AgentTaskStatusPending,
+		"UPDATE agent_tasks SET status = ?, failure = ?, output = ?, attempted_at = COALESCE(attempted_at, ?), completed_at = ? WHERE id = ? AND status = ?",
+		status, model.TruncateAgentTaskFailure(failure), model.TruncateAgentTaskOutput(output), now, now, taskID, model.AgentTaskStatusPending,
 	)
 	if err != nil {
 		return fmt.Errorf("completing agent task: %w", err)
@@ -97,4 +99,20 @@ func (s *AgentTaskStore) CompleteTask(
 		return fmt.Errorf("agent task %q is not pending", taskID)
 	}
 	return nil
+}
+
+// GetTask 读取单个任务及其有界诊断字段，供管理端查询试运行结果。
+func (s *AgentTaskStore) GetTask(ctx context.Context, taskID string) (*model.AgentTask, error) {
+	var task model.AgentTask
+	err := s.db.QueryRowContext(ctx, "SELECT "+agentTaskColumns+" FROM agent_tasks WHERE id = ?", taskID).Scan(
+		&task.ID, &task.NodeID, &task.Type, &task.Payload, &task.Status, &task.Output, &task.Failure,
+		&task.CreatedAt, &task.AttemptedAt, &task.CompletedAt,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("reading agent task: %w", err)
+	}
+	return &task, nil
 }

@@ -1,8 +1,9 @@
 # GPU and accelerator telemetry
 
-Updated: 2026-07-30
+Updated: 2026-10-08
 
-Status: reviewed design; implementation requires explicit approval
+Status: implemented and deployed in the v14 preview; real vendor hardware
+acceptance awaits user testing. See [preview verification](./local-preview.md).
 
 ## Goal and scope
 
@@ -108,7 +109,7 @@ collector-wide parse or identity failure rejects the GPU section.
 
 ## Report and storage model
 
-Accelerator telemetry uses canonical SQLite migration `v9` after the metric
+Accelerator telemetry uses canonical SQLite migration `v14` after the metric
 catalog `v8`. It extends backup format `v4` through registered catalog entries
 and does not introduce another archive envelope. The assignments are maintained
 in
@@ -222,7 +223,7 @@ deployment verification.
 
 ## Approval boundary
 
-This design is canonical SQLite migration `v9` after metric catalog `v8`.
-Implementation may begin only after the user explicitly approves this complete
-design and any new dependency, schema, Agent protocol, release, or deployment
-changes.
+This design is canonical SQLite migration `v14` after metric catalog `v8`.
+Implementation and preview deployment were authorized by the user and delivered
+on 2026-10-08. Further changes to the approved behavior, dependencies, schema,
+Agent protocol or deployment scope require the applicable change approval.

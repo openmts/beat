@@ -12,7 +12,7 @@ export function GroupTabs({ groups, value, onChange }: GroupTabsProps) {
   const { t } = useLocale()
   return (
     <Tabs value={value} onValueChange={onChange}>
-      <TabsList className="max-w-full overflow-x-auto scrollbar-none">
+      <TabsList>
         <TabsTrigger value="">{t("group.all")}</TabsTrigger>
         {groups.map((group) => (
           <TabsTrigger key={group.id} value={group.id}>

@@ -5,10 +5,11 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"io"
 )
 
 // 信封格式 1 规范：magic + 版本 + 算法 + 数据键 ID（根密钥指纹）+ nonce + 密文。
-// 仅在 migration v5 将其转换为包装数据键信封之前用于已注册的 OIDC 资源。
+// 仅在 migration v9 将其转换为包装数据键信封之前用于已注册的 OIDC 资源。
 const (
 	envelopeMagic   = "BEATENC1"
 	envelopeFormat1 = 1
@@ -100,7 +101,7 @@ func (manager *Manager) EncryptEnvelope(plaintext []byte, aad ResourceAAD) ([]by
 	}
 	nonce := make([]byte, manager.aead.NonceSize())
 	manager.mu.Lock()
-	_, err := manager.random.Read(nonce)
+	_, err := io.ReadFull(manager.random, nonce)
 	manager.mu.Unlock()
 	if err != nil {
 		return nil, fmt.Errorf("generate envelope nonce: %w", err)

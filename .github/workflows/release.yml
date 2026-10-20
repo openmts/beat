@@ -5,12 +5,22 @@ on:
     tags: ["v*"]
 
 permissions:
-  contents: write
-  id-token: write
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
+  quality:
+    uses: ./.github/workflows/ci.yml
+
   release:
+    needs: quality
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
     steps:
       - uses: actions/checkout@v5
         with:
@@ -29,12 +39,23 @@ jobs:
         with:
           distribution: goreleaser
           version: latest
-          args: release --clean
+          args: release --clean --skip=publish
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      - name: Sign checksum manifest
-        run: cosign sign-blob --yes --bundle dist/checksums.txt.bundle dist/checksums.txt
-      - name: Upload signature bundle
+      - name: Validate artifacts and prepare verified signature
+        run: scripts/prepare-release.sh dist
+      - name: Upload prepared release draft
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/checksums.txt.bundle
+          draft: true
+          fail_on_unmatched_files: true
+          generate_release_notes: true
+          files: |
+            dist/beat_*.tar.gz
+            dist/beat_*.tar.gz.sbom.json
+            dist/checksums.txt
+            dist/checksums.txt.bundle
+      - name: Publish complete release
+        run: gh release edit "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft=false
+        env:
+          GH_TOKEN: ${{ github.token }}

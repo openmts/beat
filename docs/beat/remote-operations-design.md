@@ -2,7 +2,7 @@
 
 Updated: 2026-07-30
 
-Status: reviewed design; implementation requires explicit approval
+Status: reviewed design; owner approved implementation on 2026-10-15 (blanket approval of all pending items); the `v11` batch is implemented and deployed in the current worktree
 
 ## Goal
 
@@ -220,6 +220,12 @@ clipboard requires a direct user gesture and secure context. Selecting a
 snippet inserts it into the task editor; it never submits or sends a newline to
 an interactive terminal automatically.
 
+The library enforces authorship through `owner_id`: a global owner may approve a
+shared version but cannot edit or delete another author's snippet. Draft save and
+delete use the current authenticated session without an extra recent-auth prompt.
+Content requests bind the selected version and are aborted/discarded when the
+library closes or the authenticated identity changes.
+
 The first version deliberately has no server-side template language, secret
 substitution, arbitrary JavaScript, scheduled execution, or hidden parameters.
 The operator reviews the exact immutable command before execution.
@@ -432,10 +438,10 @@ runs at startup.
 
 ## Shared application-secret foundation
 
-Migration `v5` is the single owner of Beat's versioned secret envelope, AAD
+Migration `v9` is the single owner of Beat's versioned secret envelope, AAD
 registry, wrapped data-key registry, data/root-key rotation, readiness, and
 backup pairing validation. It converts existing TOTP ciphertext to user-bound
-AAD, converts retained `v2` OIDC envelopes to wrapped data keys, and migrates
+AAD, converts retained `v5` OIDC envelopes to wrapped data keys, and migrates
 every legacy SSH private key from plaintext to the shared envelope before
 serving. SSH list queries become metadata-only; one authorized terminal
 admission decrypts only its selected key for the shortest practical lifetime.
@@ -449,17 +455,20 @@ remote operations may not introduce another cipher, key file, or rotation path.
 
 ## SQLite application data
 
-Remote operations use canonical SQLite migration `v5` after secure Agent
-enrollment `v4`, as assigned by
+Remote operations use canonical SQLite migration `v11` after secure Agent
+enrollment `v7`, shared application secrets `v9`, and notification delivery `v10`, as assigned by
 [`commercial-parity-implementation-sequence.md`](./commercial-parity-implementation-sequence.md).
 
-Tables are:
+Existing prerequisites supplied by migration `v9` are retained, not recreated:
 
 - `application_data_keys` and bounded secret-lifecycle state: wrapped active and
   decrypt-only data keys, backfill/rotation generation and cursor, with no
   plaintext key material;
 - rebuilt `ssh_keys`: metadata plus AAD-bound private-key ciphertext, with legacy
   plaintext removed before readiness;
+
+Migration `v11` adds the following remote-operation tables:
+
 - `operation_policies`: owner-defined scope, limits, enabled kinds, retention,
   scan requirement, creator, version, and timestamps;
 - `operation_policy_nodes` and `operation_policy_groups`: explicit policy
@@ -601,7 +610,7 @@ values only and are guarded by regression tests.
 ### Terminal presentation preferences
 
 Komari stable Web exposes persisted xterm.js display settings. Beat includes a
-bounded equivalent in migration `v5` without accepting arbitrary CSS or an
+bounded equivalent in migration `v11` without accepting arbitrary CSS or an
 unvalidated xterm options object. The owner-managed operations policy stores:
 
 - font size from 11 to 24 px and scrollback from 500 to 20,000 lines;
@@ -758,7 +767,7 @@ Approval must confirm:
    silently replace it. Its recent-auth, non-cacheable response, session
    invalidation and audit admission are first supplied by the schema-free
    [`administrative-mutation-consistency-design.md`](./administrative-mutation-consistency-design.md)
-   contract and cannot be weakened by `v5`.
+   contract and cannot be weakened by `v11`.
 2. Remote operations are disabled by default and use the intersection of owner
    policy and local Agent policy.
 3. Explicit at-most-once start semantics: no automatic retry after durable

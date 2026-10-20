@@ -1,18 +1,16 @@
+import { preloadAdmin } from "@/lib/route-loaders"
 import { Link } from "react-router"
 import { Moon, Sun, Settings } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { useTheme } from "@/context/theme"
 import { useLocale } from "@/context/locale"
+import { LanguageMenu } from "@/components/language-menu"
 import { useSiteSettings } from "@/context/site-settings"
 
 export function Header() {
   const { theme, toggleTheme } = useTheme()
-  const { locale, setLocale, t } = useLocale()
+  const { t } = useLocale()
   const { settings } = useSiteSettings()
-
-  const toggleLocale = () => {
-    setLocale(locale === "en" ? "zh-CN" : "en")
-  }
 
   return (
     <header className="sticky top-0 z-30 flex h-12 shrink-0 items-center justify-between border-b bg-background/85 px-4 py-2 text-foreground backdrop-blur-md supports-[backdrop-filter]:bg-background/70">
@@ -31,16 +29,8 @@ export function Header() {
         <Button variant="ghost" size="icon" onClick={toggleTheme} title={t("app.theme")}>
           {theme === "dark" ? <Sun className="size-4" /> : <Moon className="size-4" />}
         </Button>
-        <Button
-          variant="ghost"
-          size="icon"
-          onClick={toggleLocale}
-          title={t("app.language")}
-          className="font-medium"
-        >
-          <span className="text-xs">{locale === "en" ? "中文" : "EN"}</span>
-        </Button>
-        <Link to="/admin">
+        <LanguageMenu size="icon" />
+        <Link to="/admin" onMouseEnter={preloadAdmin} onFocus={preloadAdmin}>
           <Button variant="ghost" size="icon" title={t("app.admin")}>
             <Settings className="size-4" />
           </Button>

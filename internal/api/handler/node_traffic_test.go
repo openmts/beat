@@ -38,6 +38,7 @@ func TestHandleUpdateNodeTrafficPolicy(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			request := httptest.NewRequest(http.MethodPut, "/api/v1/nodes/"+node.ID, strings.NewReader(test.body))
+			request.Header.Set("Content-Type", "application/json")
 			request.SetPathValue("id", node.ID)
 			response := httptest.NewRecorder()
 			handler.HandleUpdateNode(response, request)

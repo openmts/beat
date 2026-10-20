@@ -3,18 +3,22 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"fmt"
+	"errors"
 	"log/slog"
 	"net/http"
-	"strconv"
 	"strings"
+	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/beat/backend/internal/backup"
 	"github.com/beat/backend/internal/buildinfo"
+	"github.com/beat/backend/internal/ingress"
+	"github.com/beat/backend/internal/metricsfanout"
 	"github.com/beat/backend/internal/model"
 	"github.com/beat/backend/internal/notification"
 	"github.com/beat/backend/internal/observability"
+	"github.com/beat/backend/internal/store"
 )
 
 type sqliteMonitor interface {
@@ -32,7 +36,8 @@ type nodeMonitor interface {
 }
 
 type backupMonitor interface {
-	List(context.Context) ([]model.BackupRecord, error)
+	ListBackupsPage(context.Context, store.BackupQuery) (model.BackupPage, error)
+	CountQuarantine(context.Context) (int, error)
 }
 
 type runningMonitor interface {
@@ -48,7 +53,14 @@ type terminalMonitor interface {
 }
 
 type runtimeState struct {
-	workers *workerSupervisor
+	ingress             atomic.Pointer[ingress.Limiter]
+	metrics             atomic.Pointer[observability.Registry]
+	fanout              atomic.Pointer[metricsfanout.Service]
+	stopping            atomic.Bool
+	fanoutEvents        fanoutEvents
+	mtsSnapshotFailures atomic.Int64
+	evaluation          atomic.Pointer[evaluationSnapshot]
+	workers             *workerSupervisor
 }
 
 func newRuntimeState() *runtimeState {
@@ -71,18 +83,26 @@ func (state *runtimeState) schedulerHealth(now time.Time) []workerHealth {
 }
 
 type operability struct {
-	sqlite         sqliteMonitor
-	mts            mtsMonitor
-	nodes          nodeMonitor
-	backupRecords  backupMonitor
-	backups        runningMonitor
-	maintenance    runningMonitor
-	notifications  notificationMonitor
-	terminals      terminalMonitor
-	metrics        *observability.Registry
-	runtime        *runtimeState
-	pendingRestore func(string) (bool, error)
-	dataDir        string
+	agentRollouts     rolloutMonitor
+	accelerators      acceleratorMonitor
+	sqlite            sqliteMonitor
+	secrets           secretReadiness
+	mts               mtsMonitor
+	nodes             nodeMonitor
+	backupRecords     backupMonitor
+	backupReconcile   backup.ReconcileOutcome
+	backups           runningMonitor
+	maintenance       runningMonitor
+	notifications     notificationMonitor
+	notificationQueue secretReadiness
+	metricErasure     secretReadiness
+	metricErasureJobs metricErasureStatusSource
+	security          securityMetricsSource
+	terminals         terminalMonitor
+	metrics           *observability.Registry
+	runtime           *runtimeState
+	pendingRestore    func(string) (bool, error)
+	dataDir           string
 }
 
 type readinessCheck struct {
@@ -102,8 +122,15 @@ func newOperability(
 ) *operability {
 	return &operability{
 		sqlite: config.stores.sqlite, mts: config.stores.mts, nodes: config.stores.nodes,
+		secrets:       config.stores.secrets,
+		accelerators:  acceleratorMonitoring(config.services),
+		agentRollouts: rolloutMonitoring(config.services),
 		backupRecords: config.stores.backups, backups: config.services.backups,
-		maintenance: config.services.maintenance, notifications: config.services.delivery,
+		backupReconcile: config.services.reconciliation,
+		maintenance:     config.services.maintenance, notifications: config.services.delivery,
+		notificationQueue: config.services.delivery,
+		metricErasure:     config.services.metricErasure, metricErasureJobs: config.stores.metricErasure,
+		security:  securityMetricsSourceFrom(config.services),
 		terminals: config.services.terminal,
 		metrics:   metrics, runtime: config.runtime, pendingRestore: backup.PendingRestore, dataDir: config.dataDir,
 	}
@@ -132,12 +159,20 @@ func (operations *operability) handleReady(w http.ResponseWriter, request *http.
 
 func (operations *operability) readiness(ctx context.Context) (readinessResponse, bool) {
 	checks := map[string]readinessCheck{
-		"sqlite":     operations.sqliteCheck(ctx),
-		"mts":        operations.mtsCheck(),
-		"restore":    operations.restoreCheck(),
-		"schedulers": operations.schedulerCheck(),
+		"accelerators":   operations.acceleratorCheck(ctx),
+		"agent_rollouts": operations.agentRolloutCheck(ctx),
+		"sqlite":         operations.sqliteCheck(ctx),
+		"secrets":        operations.secretsCheck(ctx),
+		"notifications":  operations.notificationCheck(ctx),
+		"mts":            operations.mtsCheck(),
+		"restore":        operations.restoreCheck(),
+		"metric_erasure": operations.metricErasureCheck(ctx),
 	}
-	ready := true
+	if operations.security != nil {
+		checks["login_security"] = operations.loginSecurityCheck(ctx)
+	}
+	operations.addWorkerChecks(checks)
+	ready := !operations.runtime.stopping.Load()
 	for name, check := range checks {
 		if name != "restore" && check.Status != "ok" {
 			ready = false
@@ -152,9 +187,24 @@ func (operations *operability) readiness(ctx context.Context) (readinessResponse
 
 func (operations *operability) sqliteCheck(ctx context.Context) readinessCheck {
 	if err := operations.sqlite.Ready(ctx); err != nil {
-		return readinessCheck{Status: "error", Detail: "unavailable"}
+		return readinessCheck{Status: "error", Detail: sqliteFailureDetail(err)}
 	}
 	return readinessCheck{Status: "ok"}
+}
+
+// sqliteFailureDetail 只给出粗粒度原因：运维能一眼区分磁盘写满、只读挂载与权限问题，
+// 未认证的 /readyz 又不会拿到内部路径或 SQL 文本。
+func sqliteFailureDetail(err error) string {
+	switch {
+	case errors.Is(err, syscall.ENOSPC):
+		return "no space left on device"
+	case errors.Is(err, syscall.EROFS):
+		return "read-only file system"
+	case errors.Is(err, syscall.EACCES), errors.Is(err, syscall.EPERM):
+		return "permission denied"
+	default:
+		return "unavailable"
+	}
 }
 
 func (operations *operability) mtsCheck() readinessCheck {
@@ -193,126 +243,9 @@ func (operations *operability) schedulerCheck() readinessCheck {
 	return readinessCheck{Status: "ok"}
 }
 
-func (operations *operability) handleMetrics(w http.ResponseWriter, request *http.Request) {
-	w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
-	if _, err := w.Write([]byte(operations.prometheus(request.Context()))); err != nil {
-		slog.ErrorContext(request.Context(), "write metrics response", "error", err)
-	}
-}
-
-func (operations *operability) prometheus(ctx context.Context) string {
-	var output strings.Builder
-	output.WriteString(operations.metrics.Prometheus())
-	fmt.Fprintf(&output, "# TYPE beat_build_info gauge\nbeat_build_info{version=%s,commit=%s} 1\n",
-		strconv.Quote(buildinfo.Version), strconv.Quote(buildinfo.Commit))
-	operations.writeReadinessMetrics(&output, ctx)
-	operations.writeNodeMetrics(&output, ctx)
-	operations.writeStorageMetrics(&output)
-	operations.writeServiceMetrics(&output, ctx)
-	return output.String()
-}
-
-func (operations *operability) writeReadinessMetrics(output *strings.Builder, ctx context.Context) {
-	response, _ := operations.readiness(ctx)
-	output.WriteString("# TYPE beat_readiness_check gauge\n")
-	for _, name := range []string{"sqlite", "mts", "restore", "schedulers"} {
-		value := 0
-		if response.Checks[name].Status == "ok" {
-			value = 1
-		}
-		fmt.Fprintf(output, "beat_readiness_check{check=%q} %d\n", name, value)
-	}
-	restorePending := response.Checks["restore"].Detail == "restart_required"
-	fmt.Fprintf(output, "# TYPE beat_restore_pending gauge\nbeat_restore_pending %d\n", boolMetric(restorePending))
-
-	workers := operations.runtime.schedulerWorkers()
-	if len(workers) > 0 {
-		output.WriteString("# TYPE beat_scheduler_worker_running gauge\n")
-		output.WriteString("# TYPE beat_scheduler_worker_last_success_unix_seconds gauge\n")
-		output.WriteString("# TYPE beat_scheduler_worker_consecutive_failures gauge\n")
-		output.WriteString("# TYPE beat_scheduler_worker_restarts_total counter\n")
-		for _, worker := range workers {
-			lastSuccess := int64(0)
-			if !worker.LastSuccess.IsZero() {
-				lastSuccess = worker.LastSuccess.Unix()
-			}
-			fmt.Fprintf(output, "beat_scheduler_worker_running{worker=%q} %d\n",
-				worker.Name, boolMetric(worker.Running))
-			fmt.Fprintf(output, "beat_scheduler_worker_last_success_unix_seconds{worker=%q} %d\n",
-				worker.Name, lastSuccess)
-			fmt.Fprintf(output, "beat_scheduler_worker_consecutive_failures{worker=%q} %d\n",
-				worker.Name, worker.ConsecutiveFails)
-			fmt.Fprintf(output, "beat_scheduler_worker_restarts_total{worker=%q} %d\n",
-				worker.Name, worker.Restarts)
-		}
-	}
-}
-
-func (operations *operability) writeNodeMetrics(output *strings.Builder, ctx context.Context) {
-	nodes, err := operations.nodes.ListNodes(ctx, "")
-	if err != nil {
-		output.WriteString("# TYPE beat_agents_query_success gauge\nbeat_agents_query_success 0\n")
-		return
-	}
-	online := 0
-	maximumAge := 0.0
-	now := time.Now().UTC()
-	for _, node := range nodes {
-		if node.Status == model.NodeStatusOnline {
-			online++
-		}
-		if !node.LastSeen.IsZero() && now.After(node.LastSeen) && now.Sub(node.LastSeen).Seconds() > maximumAge {
-			maximumAge = now.Sub(node.LastSeen).Seconds()
-		}
-	}
-	output.WriteString("# TYPE beat_agents_query_success gauge\nbeat_agents_query_success 1\n")
-	fmt.Fprintf(output, "# TYPE beat_agents_total gauge\nbeat_agents_total %d\n", len(nodes))
-	fmt.Fprintf(output, "# TYPE beat_agents_online gauge\nbeat_agents_online %d\n", online)
-	fmt.Fprintf(output, "# TYPE beat_agent_max_heartbeat_age_seconds gauge\nbeat_agent_max_heartbeat_age_seconds %g\n", maximumAge)
-}
-
-func (operations *operability) writeStorageMetrics(output *strings.Builder) {
-	sqliteBytes, sqliteErr := operations.sqlite.DiskUsage()
-	mtsBytes, mtsErr := operations.mts.DiskUsage()
-	output.WriteString("# TYPE beat_storage_bytes gauge\n")
-	fmt.Fprintf(output, "beat_storage_bytes{store=\"sqlite\"} %d\n", metricValue(sqliteBytes, sqliteErr))
-	fmt.Fprintf(output, "beat_storage_bytes{store=\"mts\"} %d\n", metricValue(mtsBytes, mtsErr))
-}
-
-func (operations *operability) writeServiceMetrics(output *strings.Builder, ctx context.Context) {
-	fmt.Fprintf(output, "# TYPE beat_backup_running gauge\nbeat_backup_running %d\n", boolMetric(operations.backups.Running()))
-	fmt.Fprintf(output, "# TYPE beat_maintenance_running gauge\nbeat_maintenance_running %d\n",
-		boolMetric(operations.maintenance.Running()))
-	stats := operations.notifications.Stats()
-	output.WriteString("# TYPE beat_notification_deliveries_total counter\n")
-	fmt.Fprintf(output, "beat_notification_deliveries_total{result=\"success\"} %d\n", stats.Success)
-	fmt.Fprintf(output, "beat_notification_deliveries_total{result=\"failed\"} %d\n", stats.Failed)
-	if operations.terminals != nil {
-		output.WriteString("# TYPE beat_terminal_sessions_active gauge\n")
-		fmt.Fprintf(output, "beat_terminal_sessions_active %d\n", operations.terminals.ActiveSessions())
-	}
-	operations.writeBackupRecordMetrics(output, ctx)
-}
-
-func (operations *operability) writeBackupRecordMetrics(output *strings.Builder, ctx context.Context) {
-	records, err := operations.backupRecords.List(ctx)
-	if err != nil {
-		return
-	}
-	counts := map[string]int{}
-	for _, record := range records {
-		counts[record.State]++
-	}
-	output.WriteString("# TYPE beat_backups_total gauge\n")
-	for _, state := range []string{
-		model.BackupStateRunning, model.BackupStateReady, model.BackupStateFailed,
-		model.BackupStateValidated, model.BackupStateStaged,
-	} {
-		fmt.Fprintf(output, "beat_backups_total{state=%q} %d\n", state, counts[state])
-	}
-}
-
 func writeStatusJSON(w http.ResponseWriter, status int, value any) {
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(status)
 	if err := json.NewEncoder(w).Encode(value); err != nil {
@@ -332,4 +265,40 @@ func metricValue(value int64, err error) int64 {
 		return 0
 	}
 	return value
+}
+
+var fixedWorkerNames = []string{"alerts", "traffic_reports", "maintenance", "metrics_fanout", "notifications", "metric_retention", "metric_erasure", "node_contacts", "remote_operations", "geoip", "node_lifecycle", "accelerators", "agent_rollouts", "agent_rollout_retention", "fleet_summaries", "application_gc"}
+
+func (operations *operability) addWorkerChecks(checks map[string]readinessCheck) {
+	for _, name := range fixedWorkerNames[:4] {
+		checks["worker_"+name] = readinessCheck{Status: "error", Detail: "stopped"}
+	}
+	for _, worker := range operations.runtime.schedulerHealth(time.Now().UTC()) {
+		if !knownWorker(worker.Name) {
+			continue
+		}
+		check := readinessCheck{Status: "ok"}
+		if worker.Reason != "" {
+			check = readinessCheck{Status: "error", Detail: worker.Reason}
+			if worker.Reason == "failed" {
+				check.Detail = "unavailable"
+			}
+		}
+		checks["worker_"+worker.Name] = check
+	}
+	if service := operations.runtime.fanout.Load(); service != nil {
+		state := service.Stats()
+		if !state.Generation.Available || state.Generation.Stale || state.Closed {
+			checks["worker_metrics_fanout"] = readinessCheck{Status: "error", Detail: "stale"}
+		}
+	}
+}
+
+func knownWorker(name string) bool {
+	for _, known := range fixedWorkerNames {
+		if name == known {
+			return true
+		}
+	}
+	return false
 }

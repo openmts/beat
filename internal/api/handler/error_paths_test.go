@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"database/sql"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -12,9 +13,11 @@ import (
 	"github.com/beat/backend/internal/api/middleware"
 	"github.com/beat/backend/internal/model"
 	"github.com/beat/backend/internal/store"
+	"github.com/beat/backend/internal/testutil"
 )
 
 type handlerTestStores struct {
+	db       *sql.DB
 	nodes    *store.NodeStore
 	groups   *store.GroupStore
 	keys     *store.SSHKeyStore
@@ -34,10 +37,19 @@ func closedHandlerStores(t *testing.T) handlerTestStores {
 	}
 
 	return handlerTestStores{
+		db:    s.DB,
 		nodes: store.NewNodeStore(s.DB), groups: store.NewGroupStore(s.DB),
 		keys: store.NewSSHKeyStore(s.DB), rules: store.NewAlertRuleStore(s.DB),
 		channels: store.NewAlertChannelStore(s.DB), events: store.NewAlertEventStore(s.DB),
 	}
+}
+
+// withJSONBody 给测试请求补上 JSON 媒体类型；服务端在请求体非空时强制该类型。
+func withJSONBody(request *http.Request) *http.Request {
+	if request.Body != nil {
+		request.Header.Set("Content-Type", "application/json")
+	}
+	return request
 }
 
 func runHandlerRequest(
@@ -49,6 +61,9 @@ func runHandlerRequest(
 ) *httptest.ResponseRecorder {
 	t.Helper()
 	req := httptest.NewRequest(method, "/", strings.NewReader(body))
+	if body != "" {
+		req.Header.Set("Content-Type", "application/json")
+	}
 	req = req.WithContext(middleware.WithAgentIdentity(req.Context(), model.AgentIdentity{
 		NodeID: "id", NodeName: "node", Mode: model.AgentCredentialActive,
 	}))
@@ -88,7 +103,8 @@ func TestGroupHandlerDatabaseErrors(t *testing.T) {
 
 func TestNodeHandlerDatabaseErrors(t *testing.T) {
 	stores := closedHandlerStores(t)
-	h := NewNodeHandler(stores.nodes, nil)
+	// 删除走 v22 异步擦除账本：注入挂在同一个已关闭库上的账本，才能验证存储故障路径。
+	h := NewNodeHandler(stores.nodes, nil).WithErasureStore(store.NewMetricErasureStore(stores.db))
 	tests := []struct {
 		name, method, body string
 		handler            http.HandlerFunc
@@ -97,8 +113,8 @@ func TestNodeHandlerDatabaseErrors(t *testing.T) {
 		{"list", http.MethodGet, "", h.HandleListNodes, nil},
 		{"get", http.MethodGet, "", h.HandleGetNode, map[string]string{"id": "id"}},
 		{"update", http.MethodPut, `{}`, h.HandleUpdateNode, map[string]string{"id": "id"}},
-		{"delete", http.MethodDelete, "", h.HandleDeleteNode, map[string]string{"id": "id"}},
-		{"report", http.MethodPost, `{"name":"node","host":"127.0.0.1","port":22}`, h.HandleNodeReport, nil},
+		{"delete", http.MethodDelete, asyncDeletionBody("node"), h.HandleDeleteNode, map[string]string{"id": "id"}},
+
 		{"metrics", http.MethodGet, "", h.HandleGetNodeMetrics, map[string]string{"id": "id"}},
 	}
 	for _, tt := range tests {
@@ -120,11 +136,10 @@ func TestNodeReportMetricsStoreUnavailable(t *testing.T) {
 	}
 	h := NewNodeHandler(nodes, nil)
 	request := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(
-		`{"name":"node","host":"127.0.0.1","port":22,"metrics":{"cpu":1}}`,
+		testutil.VersionedAgentReport(t, `{"name":"node","host":"127.0.0.1","port":22,"metrics":{"cpu":1}}`),
 	))
-	request = request.WithContext(middleware.WithAgentIdentity(request.Context(), model.AgentIdentity{
-		NodeID: node.ID, NodeName: node.Name, Mode: model.AgentCredentialActive,
-	}))
+	request.Header.Set("Content-Type", "application/json")
+	request = request.WithContext(middleware.WithAgentIdentity(request.Context(), testutil.AgentTestIdentity(*node)))
 	w := httptest.NewRecorder()
 	h.HandleNodeReport(w, request)
 	if w.Code != http.StatusServiceUnavailable {
@@ -144,6 +159,7 @@ func TestNodeHandlerAdditionalErrorAndMetricPaths(t *testing.T) {
 	}
 	malformed := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodPut, "/", strings.NewReader("{"))
+	request.Header.Set("Content-Type", "application/json")
 	NewNodeHandler(nodes, nil).HandleUpdateNode(malformed, request)
 	if malformed.Code != http.StatusBadRequest {
 		t.Fatalf("malformed update status = %d", malformed.Code)
@@ -160,12 +176,14 @@ func TestNodeHandlerAdditionalErrorAndMetricPaths(t *testing.T) {
 
 func assertUnknownAndFailedMetricReports(t *testing.T, nodes *store.NodeStore, node *model.Node) {
 	t.Helper()
-	unknown := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{"host":"127.0.0.1","port":22}`))
+	unknown := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(testutil.VersionedAgentReport(t, `{"host":"127.0.0.1","port":22,"metrics":{}}`)))
+	unknown.Header.Set("Content-Type", "application/json")
 	unknown = unknown.WithContext(middleware.WithAgentIdentity(unknown.Context(), model.AgentIdentity{
-		NodeID: "missing", NodeName: "missing", Mode: model.AgentCredentialActive,
+		NodeID: "missing", NodeName: "missing", Mode: model.AgentCredentialLegacy, CredentialFingerprint: strings.Repeat("a", 64),
 	}))
 	response := httptest.NewRecorder()
-	NewNodeHandler(nodes, nil).HandleNodeReport(response, unknown)
+	_, openMetrics := setupNodeTestDB(t)
+	NewNodeHandler(nodes, openMetrics).HandleNodeReport(response, unknown)
 	if response.Code != http.StatusUnauthorized {
 		t.Fatalf("unknown agent report status = %d", response.Code)
 	}
@@ -177,14 +195,13 @@ func assertUnknownAndFailedMetricReports(t *testing.T, nodes *store.NodeStore, n
 		t.Fatalf("close MTS: %v", err)
 	}
 	request := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(
-		`{"host":"127.0.0.1","port":22,"metrics":{"cpu":1}}`,
+		testutil.VersionedAgentReport(t, `{"host":"127.0.0.1","port":22,"metrics":{"cpu":1}}`),
 	))
-	request = request.WithContext(middleware.WithAgentIdentity(request.Context(), model.AgentIdentity{
-		NodeID: node.ID, NodeName: node.Name, Mode: model.AgentCredentialActive,
-	}))
+	request.Header.Set("Content-Type", "application/json")
+	request = request.WithContext(middleware.WithAgentIdentity(request.Context(), testutil.AgentTestIdentity(*node)))
 	response = httptest.NewRecorder()
 	NewNodeHandler(nodes, mtsStore).HandleNodeReport(response, request)
-	if response.Code != http.StatusInternalServerError {
+	if response.Code != http.StatusServiceUnavailable {
 		t.Fatalf("failed MTS report status = %d", response.Code)
 	}
 }

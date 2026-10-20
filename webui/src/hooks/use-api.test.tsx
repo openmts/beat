@@ -16,10 +16,10 @@ describe("API hooks", () => {
     vi.mocked(api.listNodes).mockResolvedValue([])
     const { result, rerender } = renderHook(({ group }) => useNodes(group), { initialProps: { group: "one" } })
     await waitFor(() => expect(result.current.loading).toBe(false))
-    expect(api.listNodes).toHaveBeenCalledWith("one")
+    expect(api.listNodes).toHaveBeenCalledWith("one", expect.any(AbortSignal))
     await act(() => result.current.refresh())
     rerender({ group: "two" })
-    await waitFor(() => expect(api.listNodes).toHaveBeenCalledWith("two"))
+    await waitFor(() => expect(api.listNodes).toHaveBeenCalledWith("two", expect.any(AbortSignal)))
   })
 
   it("applies live node snapshots and preserves group filtering", async () => {
@@ -62,7 +62,7 @@ describe("API hooks", () => {
     const { result } = renderHook(() => useNodes())
     await waitFor(() => expect(result.current.data?.[0]?.id).toBe("old"))
 
-    let refreshPromise: Promise<void> | undefined
+    let refreshPromise: Promise<number> | undefined
     act(() => { refreshPromise = result.current.refresh({ silent: true }) })
     expect(result.current.loading).toBe(false)
     expect(result.current.data?.[0]?.id).toBe("old")
@@ -129,11 +129,26 @@ describe("API hooks", () => {
     await waitFor(() => expect(failed.result.current.error).toBe("metrics failed"))
   })
 
+  it("paginates alert events through opaque server cursors", async () => {
+    vi.mocked(api.listAlertEvents)
+      .mockResolvedValueOnce({ items: [{ id: "event-1" }], next_cursor: "page-2" } as never)
+      .mockResolvedValueOnce({ items: [{ id: "event-2" }] } as never)
+    const rendered = renderHook(() => useAlertEvents("resolved"))
+    await waitFor(() => expect(rendered.result.current.loading).toBe(false))
+    expect(api.listAlertEvents).toHaveBeenCalledWith({ status: "resolved", cursor: undefined, signal: expect.any(AbortSignal) })
+    expect(rendered.result.current.nextCursor).toBe("page-2")
+
+    await act(async () => { await rendered.result.current.loadMore() })
+    expect(api.listAlertEvents).toHaveBeenLastCalledWith({ status: "resolved", cursor: "page-2", signal: expect.any(AbortSignal) })
+    expect(rendered.result.current.data?.map((event) => event.id)).toEqual(["event-1", "event-2"])
+    expect(rendered.result.current.nextCursor).toBeNull()
+  })
+
   it("loads all specialized list hooks", async () => {
     vi.mocked(api.listSSHKeys).mockResolvedValue([])
     vi.mocked(api.listAlertRules).mockResolvedValue([])
     vi.mocked(api.listAlertChannels).mockResolvedValue([])
-    vi.mocked(api.listAlertEvents).mockResolvedValue([])
+    vi.mocked(api.listAlertEvents).mockResolvedValue({ items: [] })
     vi.mocked(api.listManagedNodes).mockResolvedValue([])
     vi.mocked(api.listTrafficReportSchedules).mockResolvedValue([])
     const hooks = [

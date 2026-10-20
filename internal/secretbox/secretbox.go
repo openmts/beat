@@ -4,6 +4,7 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"io"
@@ -15,10 +16,12 @@ import (
 const keyLength = 32
 
 type Manager struct {
-	aead        cipher.AEAD
-	random      io.Reader
-	fingerprint [keyIDBytes]byte
-	mu          sync.Mutex
+	aead            cipher.AEAD
+	random          io.Reader
+	fingerprint     [keyIDBytes]byte
+	rootFingerprint [sha256.Size]byte
+	rootID          [dataKeyIDBytes]byte
+	mu              sync.Mutex
 }
 
 func New(keyPath string, randomSource io.Reader) (*Manager, error) {
@@ -48,7 +51,10 @@ func NewFromKey(key []byte, randomSource io.Reader) (*Manager, error) {
 	if err != nil {
 		return nil, fmt.Errorf("create AES-GCM: %w", err)
 	}
-	return &Manager{aead: aead, random: randomSource, fingerprint: keyFingerprint(key)}, nil
+	fingerprint := sha256.Sum256(key)
+	manager := &Manager{aead: aead, random: randomSource, fingerprint: keyFingerprint(key), rootFingerprint: fingerprint}
+	copy(manager.rootID[:], fingerprint[:dataKeyIDBytes])
+	return manager, nil
 }
 
 func (manager *Manager) Encrypt(plaintext []byte) ([]byte, error) {

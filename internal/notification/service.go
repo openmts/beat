@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"strings"
 	"sync"
@@ -49,7 +48,7 @@ type DeliveryStats struct {
 
 func NewService() *Service {
 	return &Service{
-		httpClient:      &http.Client{Timeout: 10 * time.Second},
+		httpClient:      newDeliveryHTTPClient(),
 		telegramBaseURL: "https://api.telegram.org",
 		emailSender:     deliverEmail,
 		now:             model.NowUTC,
@@ -219,43 +218,6 @@ func applyWebhookHeaders(request *http.Request, headers map[string]string) {
 	}
 }
 
-func (s *Service) sendTelegram(ctx context.Context, raw string, event *model.AlertEvent) error {
-	config, err := parseTelegramConfig(raw)
-	if err != nil {
-		return err
-	}
-	text := RenderTemplate(config.Template, event)
-	if config.ParseMode == "MarkdownV2" {
-		text = RenderTemplateWith(config.Template, event, EscapeMarkdownV2)
-	}
-	return s.sendTelegramText(ctx, raw, text, config.ParseMode)
-}
-
-func (s *Service) sendTelegramText(ctx context.Context, raw string, text string, parseMode string) error {
-	var config TelegramConfig
-	if err := json.Unmarshal([]byte(raw), &config); err != nil {
-		return fmt.Errorf("decode Telegram config: %w", err)
-	}
-	payload := map[string]any{
-		"chat_id": config.ChatID,
-		"text":    text,
-	}
-	if parseMode != "" {
-		payload["parse_mode"] = parseMode
-	}
-	encoded, err := json.Marshal(payload)
-	if err != nil {
-		return fmt.Errorf("encode Telegram payload: %w", err)
-	}
-	endpoint := strings.TrimRight(s.telegramBaseURL, "/") + "/bot" + config.BotToken + "/sendMessage"
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(encoded))
-	if err != nil {
-		return errors.New("create Telegram request failed")
-	}
-	request.Header.Set("Content-Type", "application/json")
-	return s.doHTTP(request, "Telegram")
-}
-
 func (s *Service) sendEmail(ctx context.Context, raw string, event *model.AlertEvent) error {
 	config, err := parseEmailConfig(raw)
 	if err != nil {
@@ -263,14 +225,6 @@ func (s *Service) sendEmail(ctx context.Context, raw string, event *model.AlertE
 	}
 	subject := fmt.Sprintf("[Beat] Alert %s", event.Status)
 	return s.sendEmailText(ctx, raw, subject, RenderTemplate(config.Template, event))
-}
-
-func parseTelegramConfig(raw string) (TelegramConfig, error) {
-	var config TelegramConfig
-	if err := json.Unmarshal([]byte(raw), &config); err != nil {
-		return config, fmt.Errorf("decode Telegram config: %w", err)
-	}
-	return config, nil
 }
 
 func parseEmailConfig(raw string) (EmailConfig, error) {
@@ -291,32 +245,10 @@ func (s *Service) sendEmailText(
 	if err := json.Unmarshal([]byte(raw), &config); err != nil {
 		return fmt.Errorf("decode email config: %w", err)
 	}
-	return s.emailSender(ctx, config, subject, body)
-}
-
-func (s *Service) doHTTP(request *http.Request, channelName string) error {
-	response, err := s.httpClient.Do(request)
-	if err != nil {
-		return fmt.Errorf("%s request failed: %w", channelName, err)
-	}
-	defer func() { _ = response.Body.Close() }()
-	body, _ := io.ReadAll(io.LimitReader(response.Body, 64*1024))
-	if response.StatusCode >= http.StatusBadRequest {
-		detail := strings.TrimSpace(string(body))
-		if detail != "" {
-			return fmt.Errorf("%s returned status %d: %s", channelName, response.StatusCode, truncate(detail, 512))
-		}
-		return fmt.Errorf("%s returned status %d", channelName, response.StatusCode)
+	if err := s.emailSender(ctx, config, subject, body); err != nil {
+		return safeTransportFailure("email", err)
 	}
 	return nil
-}
-
-func truncate(value string, max int) string {
-	runes := []rune(value)
-	if len(runes) <= max {
-		return value
-	}
-	return string(runes[:max]) + "..."
 }
 
 // deliveryText builds a default human-friendly message when no custom template

@@ -11,6 +11,8 @@ import (
 
 	"github.com/openmts/mts"
 	_ "modernc.org/sqlite"
+
+	"github.com/beat/backend/internal/model"
 )
 
 func TestSQLiteSnapshotCreatesIndependentDatabase(t *testing.T) {
@@ -74,6 +76,28 @@ func TestMTSExportImportRowsRoundTrip(t *testing.T) {
 		timestamp.Add(-time.Second), timestamp.Add(time.Second), "node")
 	if err != nil || len(metrics["cpu"]) != 1 || metrics["cpu"][0].Value != 25 {
 		t.Fatalf("restored metrics = %#v, %v", metrics, err)
+	}
+}
+
+func TestMTSExportQueryCarriesArchiveBudget(t *testing.T) {
+	source := setupTestMTS(t)
+	schema := measurementSchema{name: "cpu", fields: []string{"value"}}
+	query, err := source.exportQuery(schema, time.Now().UTC())
+	if err != nil {
+		t.Fatalf("build export query: %v", err)
+	}
+	if query.Budget.MaxSamples != int(model.MaximumBackupMetricRows) {
+		t.Fatalf("export query budget = %d, want %d", query.Budget.MaxSamples, model.MaximumBackupMetricRows)
+	}
+	// 引擎默认的读取保护是 100 万样本；归档契约允许的行数必须高于它，否则真实部署会在
+	// 数据量偏大时无法生成备份。这条断言把根因钉在测试里，避免以后把预算改回默认值。
+	if model.MaximumBackupMetricRows <= 1_000_000 {
+		t.Fatalf("archive ceiling %d must exceed the MTS default read protection", model.MaximumBackupMetricRows)
+	}
+	source.exportBudgetOverride = 7
+	query, err = source.exportQuery(schema, time.Now().UTC())
+	if err != nil || query.Budget.MaxSamples != 7 {
+		t.Fatalf("override export budget = %d, %v; want 7", query.Budget.MaxSamples, err)
 	}
 }
 

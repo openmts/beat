@@ -11,8 +11,8 @@ import (
 	"github.com/beat/backend/internal/adminauth"
 	"github.com/beat/backend/internal/api/middleware"
 	"github.com/beat/backend/internal/model"
-	"github.com/beat/backend/internal/secretbox"
 	"github.com/beat/backend/internal/store"
+	"github.com/beat/backend/internal/testutil"
 )
 
 func newClosedHandlerSecurity(t *testing.T) *adminauth.Service {
@@ -22,10 +22,7 @@ func newClosedHandlerSecurity(t *testing.T) *adminauth.Service {
 		t.Fatalf("new closed SQLite store: %v", err)
 	}
 	random := bytes.NewReader(bytes.Repeat([]byte{8}, 32768))
-	secrets, err := secretbox.New(filepath.Join(t.TempDir(), "admin-data.key"), random)
-	if err != nil {
-		t.Fatalf("new closed-store secret box: %v", err)
-	}
+	secrets := testutil.NewSecrets(t, sqliteStore.DB)
 	security, err := adminauth.NewService(adminauth.ServiceConfig{
 		Store: store.NewAdminStore(sqliteStore.DB), Secrets: secrets, LegacyToken: "bootstrap", Random: random,
 		Passwords: adminauth.NewPasswordHasher(adminauth.PasswordParams{
@@ -44,16 +41,13 @@ func newClosedHandlerSecurity(t *testing.T) *adminauth.Service {
 
 func newHandlerSecurity(t *testing.T) *adminauth.Service {
 	t.Helper()
-	sqliteStore, err := store.NewSQLiteStore("file:" + t.Name() + "?mode=memory&cache=shared")
+	sqliteStore, err := store.NewSQLiteStore(handlerFixturePath(t))
 	if err != nil {
 		t.Fatalf("new SQLite store: %v", err)
 	}
 	t.Cleanup(func() { _ = sqliteStore.Close() })
 	random := bytes.NewReader(bytes.Repeat([]byte{9}, 16384))
-	secrets, err := secretbox.New(filepath.Join(t.TempDir(), "admin-data.key"), random)
-	if err != nil {
-		t.Fatalf("new secret box: %v", err)
-	}
+	secrets := testutil.NewSecrets(t, sqliteStore.DB)
 	security, err := adminauth.NewService(adminauth.ServiceConfig{Store: store.NewAdminStore(sqliteStore.DB),
 		Secrets: secrets, LegacyToken: "bootstrap", Random: random,
 		Passwords: adminauth.NewPasswordHasher(adminauth.PasswordParams{MemoryKiB: 64, Iterations: 1,
@@ -88,6 +82,8 @@ func newAdminRequest(
 ) *http.Request {
 	t.Helper()
 	request := httptest.NewRequest(method, "http://example.com"+path, strings.NewReader(body))
+	// 有界 JSON 解码契约要求非空载荷声明媒体类型，测试请求与真实客户端保持一致。
+	request.Header.Set("Content-Type", "application/json")
 	request.RemoteAddr = "[::1]:1234"
 	if principal != nil {
 		request = request.WithContext(middleware.WithAdminPrincipal(request.Context(), *principal))

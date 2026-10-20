@@ -2,7 +2,7 @@
 
 Updated: 2026-07-30
 
-Status: reviewed design; implementation requires explicit approval
+Status: reviewed design; owner approved implementation on 2026-10-15 (blanket approval of all pending items)
 
 ## Goal and evidence
 
@@ -84,7 +84,7 @@ not deleted or rewritten.
 
 ## Durable state and migration
 
-Canonical SQLite migration `v17 metric-erasure` adds:
+Canonical SQLite migration `v22 metric-erasure` adds:
 
 - `metric_erasure_jobs`: random ID, scope, optional target type/ID and immutable
   display-name snapshot, state, cutoff, registered catalog digest, next
@@ -204,7 +204,7 @@ Tests cover:
 - MTS immediate query invisibility, restart persistence, partial tag matching,
   network-task isolation, fleet telemetry preserving probes, and all-history
   removal;
-- fresh `v17`, upgrade from every `v1-v16` fixture, future-version rejection,
+- fresh `v22`, upgrade from every `v1-v21` fixture, future-version rejection,
   backup `v4` create/restore, and interrupted-job reconciliation;
 - shadcn dialog accessibility, keyboard flow, responsive overflow, names rather
   than IDs, progress/error states, and browser authorization tests;
@@ -219,13 +219,74 @@ and retryable without exposing an unauthenticated or arbitrary-delete surface.
 
 ## Rollback and approval boundary
 
-Before the first erasure request, rollback may restore the pre-`v17` SQLite
+Before the first erasure request, rollback may restore the pre-`v22` SQLite
 snapshot. After any erasure has started, an old binary must not be used against
 the newer schema; rollback requires the matching pre-migration SQLite and MTS
 backup. MTS tombstones are not reversible in place.
 
-Implementation requires explicit approval for migration `v17`, the asynchronous
+Implementation requires explicit approval for migration `v22`, the asynchronous
 `202` node/task deletion behavior, owner-only/recent-auth enforcement, durable
 leases, MTS tag-scoped tombstones and compaction, lifecycle tombstones, backup
 coordination, confirmation phrases, and the absence of arbitrary measurement,
 tag, time-range, SQL, or filesystem inputs.
+
+## Implementation status, 2026-10-15
+
+The server control plane and administration surface are implemented in the
+working tree:
+
+- `internal/model/metric_erasure.go` owns the closed scope enum, the 8-state
+  machine, the fixed fleet phrases, the redacted error codes and
+  `MetricErasureCreateRequest.Validate`; UUID request ids reuse the shared shape
+  check.
+- `internal/store/sqlite_migrations_v22.go` adds `metric_erasure_jobs` (scope and
+  state checks, request-id uniqueness, one active target, one active fleet-wide
+  job per scope, recent index) plus `nodes.lifecycle_state` and
+  `network_tasks.lifecycle_state`.
+- `internal/store/metric_erasure*.go` owns create/replay/conflict handling, the
+  in-transaction entity tombstone, the read and status projections, durable
+  leases (2 minutes, 6 attempts, exponential backoff capped at 5 minutes),
+  cancel/retry/finalize administration, and the restore reconciler that returns
+  in-flight jobs to `queued`.
+- `internal/store/mts_erasure.go` takes the exclusive MTS operation lock, flushes
+  pending writes, freezes the registered-measurement inventory, the cutoff and
+  the catalog digest, and fails closed on any unregistered measurement. Entity
+  rows are only removed after MTS success; compaction is a separate phase whose
+  failure cannot make rows queryable again.
+- `internal/metricserasure` runs the leased worker loop and resumes from the
+  committed cursor after a restart.
+- `internal/backup/metric_erasure_validation.go` validates the archived ledger
+  before a restore is accepted: scope/state enums, target shape, request-id
+  shape, attempt bounds, frozen cutoff and completion-time consistency, entity
+  linkage (a node deleted by a finished job may be absent), and the
+  one-active-target/one-active-fleet-scope invariant. A pre-`v22` snapshot is
+  accepted as an empty ledger.
+- `internal/api/routes_metric_erasure.go` registers the owner-only job API with
+  recent authentication; `NodeHandler`/`NetworkHandler` `DELETE` return `202`
+  with the durable job, and `internal/store/traffic_erasure_boundary.go` makes a
+  successful erasure cutoff the calibration resolver boundary (older events stay
+  as audit history but no longer affect later totals).
+
+Administration surfaces: `/admin/settings` gains an unframed `Data and storage`
+section with `Retention` and `Erase history` tabs. The erasure tab selects a
+fixed scope and an existing named entity, states exactly which history classes
+are affected, whether the entity is removed, whether a ready backup from the
+last 24 hours exists, and that restore is the only recovery path. Fleet-wide
+scopes require `ERASE FLEET TELEMETRY` or `ERASE ALL METRIC HISTORY`; entity
+scopes require the exact display name. When no recent ready backup exists the
+dialog offers a Create backup action and requires a separate acknowledgement.
+Node and quality-task deletion dialogs reuse the same confirmation component,
+and the entity disappears from ordinary lists while the job runs.
+
+Verification in this sandbox: `go build ./...`, `go vet`, `goimports-reviser`
+and `golangci-lint` (0 issues) are clean; store, backup, model, alerter and
+`internal/metricserasure` tests pass, including new cases for replay/conflict,
+entity tombstone plus cancel restore, lease recovery with cursor continuation,
+exhausted-attempt failure with retry, the full
+deleting/compacting/finalizing/succeeded chain with entity finalization,
+status aggregation, restore reconciliation, and the shared exclusive erasure
+lock that blocks a backup snapshot. Frontend gates are green: `tsc -b`, 168
+files / 867 cases, `oxlint` (0 errors) and `vite build`.
+
+Remaining for this batch: the host-only race, coverage, browser and rollback
+drills, plus the end-to-end deletion drill against a deployed MTS directory.
