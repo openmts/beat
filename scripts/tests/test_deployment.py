@@ -2,6 +2,7 @@ import io
 import json
 import os
 from pathlib import Path
+import re
 import tarfile
 import unittest
 
@@ -9,6 +10,14 @@ from deployment_fixture import DeploymentFixture, PROJECT, private_file
 
 
 class DeploymentTests(DeploymentFixture):
+    def test_success_returns_are_explicit_under_errexit_traps(self):
+        implicit = []
+        for script in sorted((PROJECT / "scripts").glob("*.sh")):
+            implicit.extend((script.name, number) for number, line in
+                            enumerate(script.read_text().splitlines(), 1)
+                            if re.match(r"\s*return\s*(?:;|$)", line))
+        self.assertEqual([], implicit, "return must state its status explicitly")
+
     def test_static_account_and_read_only_program_tree(self):
         template = (PROJECT / "deploy/systemd/beat-server.service").read_text()
         self.assertIn("User=beat\n", template)

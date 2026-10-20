@@ -58,7 +58,7 @@ validate_paths() {
 }
 
 ensure_directory() {
-    [[ -d "$1" ]] && return
+    [[ -d "$1" ]] && return 0
     ensure_directory "$(dirname -- "$1")"
     install -d -m 0700 -- "$1"
 }
@@ -172,7 +172,7 @@ prepare_release() {
         cmp "$source/beat-server" "$selected/beat-server"
         cmp "$source/beat-agent" "$selected/beat-agent"
         diff -qr "$source/static" "$selected/static" >/dev/null
-        return
+        return 0
     fi
     stage=$(mktemp -d "$prefix/releases/.stage.XXXXXX")
     install -m 0700 "$source/beat-server" "$stage/beat-server"
@@ -222,7 +222,7 @@ publish_pointer() {
     temporary=$(mktemp "$prefix/.current.XXXXXX") || return 1
     rm -f -- "$temporary" || return 1
     ln -s -- "$1" "$temporary" || return 1
-    if mv -Tf -- "$temporary" "$prefix/current"; then return; fi
+    if mv -Tf -- "$temporary" "$prefix/current"; then return 0; fi
     rm -f -- "$temporary" || return 1
     return 1
 }
@@ -230,7 +230,7 @@ publish_pointer() {
 wait_ready() {
     local attempt
     for ((attempt=0; attempt<ready_attempts; attempt++)); do
-        if systemctl is-active --quiet "$service_name" && curl --fail --silent --show-error --max-time 2 "$(ready_url)" >/dev/null; then return; fi
+        if systemctl is-active --quiet "$service_name" && curl --fail --silent --show-error --max-time 2 "$(ready_url)" >/dev/null; then return 0; fi
         sleep 1
     done
     return 1

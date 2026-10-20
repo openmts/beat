@@ -8,6 +8,9 @@ import sys
 PROJECT = Path(__file__).resolve().parents[2]
 PUBLIC_THEME_ASSETS = ("beat-theme-sdk.js", "theme-author-guide.md",
                        "theme-sandbox-contract.md", "theme-market-publishing.md")
+RACE_HEAVY_PACKAGES = ("applicationsecrets", "agentrollout", "store", "backup",
+                       "notificationqueue", "remoteoperations", "geoip", "theme",
+                       "api", "api/handler", "adminauth")
 
 
 def write_frontend_output(arguments):
@@ -49,6 +52,10 @@ if command == "go" and "test" in arguments and os.environ.get("BEAT_THEME_BROWSE
     # 主题 fixture 用例在真实运行里打印 FIXTURE=<url>；这里给出同样的握手信号，
     # 让 run-theme-browser-gates.sh 能继续走到冒烟脚本（冒烟脚本本身由 node 假件替代）。
     print("FIXTURE=http://127.0.0.1:1/fixture")
+if command == "go" and arguments[:1] == ["list"]:
+    for package in RACE_HEAVY_PACKAGES:
+        print(PROJECT / "internal" / package)
+    print(PROJECT / "internal/testutil")
 if command == "go" and arguments[:2] == ["tool", "cover"]:
     print("total: (statements) " + os.environ.get("BEAT_GATE_COVERAGE", "95.0%"))
 if command == "docker" and arguments[0] == "run":

@@ -67,7 +67,7 @@ func (reporter *customHeartbeatReporter) errors() int {
 }
 
 func TestCustomMetricScriptsDoNotDelaySystemHeartbeats(t *testing.T) {
-	for _, command := range []string{"exec sleep 5", "printf NaN", "exit 1"} {
+	for _, command := range []string{"exec sleep 1", "printf NaN", "exit 1"} {
 		t.Run(command, func(t *testing.T) {
 			registry := NewCustomMetricRegistry()
 			replaceCustomRegistry(t, registry, []model.CustomMetric{{Name: "custom", ShellCommand: command, IntervalSeconds: 5, Enabled: true}})
@@ -103,13 +103,13 @@ func TestCustomMetricScriptsDoNotDelaySystemHeartbeats(t *testing.T) {
 }
 
 func TestCustomMetricCommandTimesOutAndIgnoresStderrValues(t *testing.T) {
-	ctx, cancel := context.WithTimeout(t.Context(), customMetricCommandTimeout+2*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
 	defer cancel()
 	started := time.Now()
-	if _, err := executeCustomMetric(ctx, registeredMetric{ShellCommand: "exec sleep 30"}); !errors.Is(err, context.DeadlineExceeded) {
+	if _, _, err := runCustomMetricCommandWithTimeout(ctx, "exec sleep 30", 50*time.Millisecond); !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("timeout error = %v", err)
 	}
-	if time.Since(started) >= customMetricCommandTimeout+time.Second {
+	if time.Since(started) >= time.Second {
 		t.Fatal("script exceeded its execution budget")
 	}
 	value, err := executeCustomMetric(t.Context(), registeredMetric{ShellCommand: "printf not-a-value >&2; printf 3"})

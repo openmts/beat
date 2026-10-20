@@ -35,6 +35,14 @@ func privateTestDir(t *testing.T) string {
 
 func testConfig(t *testing.T) Config {
 	t.Helper()
+	if os.Geteuid() != 0 {
+		t.Skip("operation process boundary requires the backend-privileged CI gate")
+	}
+	return unprivilegedTestConfig(t)
+}
+
+func unprivilegedTestConfig(t *testing.T) Config {
+	t.Helper()
 	account, err := user.Current()
 	if err != nil {
 		t.Fatal(err)
@@ -46,6 +54,16 @@ func testConfig(t *testing.T) Config {
 	}
 	weaker := false
 	return Config{Enabled: true, StateDir: filepath.Join(root, "state"), MaxConcurrency: 1, Commands: CommandConfig{Enabled: true, AllowAdHoc: true, RunAsUser: account.Username, AllowRoot: os.Geteuid() == 0, WorkingRoot: "work", MaximumTimeout: "5s", MaximumOutputBytes: 4096, RequireCgroup: &weaker}, FileRoots: []FileRoot{{ID: "work", Path: working, MaximumBytes: 4096}}}
+}
+
+func TestPrivilegedOperationsFailClosedWithoutControllerIdentity(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("non-root fail-closed assertion does not apply to the privileged gate")
+	}
+	config := unprivilegedTestConfig(t)
+	if _, err := prepareSettings(config, ""); !errors.Is(err, ErrBoundary) {
+		t.Fatalf("unprivileged process boundary error = %v, want %v", err, ErrBoundary)
+	}
 }
 
 func testLease(command string) protocol.Lease {

@@ -1,0 +1,29 @@
+name: deep-race
+
+on:
+  schedule:
+    - cron: "17 18 * * 0"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deep-race-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  full-backend-race:
+    timeout-minutes: 120
+    runs-on: ubuntu-24.04
+    env:
+      GOMAXPROCS: 2
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+      - name: Exhaustive backend race and shuffle gate
+        run: |
+          go test -race -shuffle=on -p=2 -parallel=2 -timeout=25m -count=1 ./...

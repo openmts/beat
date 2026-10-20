@@ -25,24 +25,81 @@ require_tools() {
     done
 }
 
-check_backend() {
+check_backend_static() {
     require_tools go goimports-reviser golangci-lint govulncheck
     # 只比较规范化结果，不修改开发者已有的工作区差异。
     goimports-reviser -rm-unused -format -company-prefixes github.com/beat/backend \
         -set-exit-status -output stdout ./... >"$check_dir/formatted.txt"
     go mod tidy -diff
     go mod verify
-    # race 插桩会把重包放大到 10 分钟以上（本机 internal/backup/notificationqueue/api 均超 400 s），
-    # 因此显式限制包并发并放宽包超时：命令与宿主证据一致，避免把资源争用误报成回归。
-    go test -race -shuffle=on -p 2 -timeout 20m ./...
-    go test -coverprofile="$check_dir/coverage.out" ./...
-    go tool cover -func="$check_dir/coverage.out" >"$check_dir/coverage.txt"
-    awk '/^total:/ {gsub("%", "", $3); found=1; if ($3 + 0 < 90) exit 1} END {if (!found) exit 1}' "$check_dir/coverage.txt"
     golangci-lint run ./...
     go vet ./...
     govulncheck ./...
     go build -trimpath -o "$check_dir/beat-server" ./cmd/server
     go build -trimpath -o "$check_dir/beat-agent" ./cmd/agent
+}
+
+check_backend_tests() {
+    require_tools go
+    # 覆盖率运行会执行全部测试，不再在它之前重复跑一轮普通测试。
+    go test -shuffle=on -p=2 -parallel=2 -timeout=10m -count=1 \
+        -coverprofile="$check_dir/coverage.out" ./...
+    go tool cover -func="$check_dir/coverage.out" >"$check_dir/coverage.txt"
+    awk '/^total:/ {gsub("%", "", $3); found=1; if ($3 + 0 < 90) exit 1} END {if (!found) exit 1}' "$check_dir/coverage.txt"
+}
+
+race_packages() {
+    local shard=$1 package relative listed index=0
+    local -a all heavy all_heavy selected
+    all_heavy=(internal/applicationsecrets internal/agentrollout internal/store internal/adminauth internal/backup
+        internal/notificationqueue internal/remoteoperations internal/geoip internal/theme internal/api internal/api/handler)
+    case $shard in
+        1)
+            heavy=(internal/applicationsecrets internal/agentrollout internal/store internal/backup)
+            ;;
+        2)
+            heavy=(internal/notificationqueue internal/remoteoperations internal/geoip internal/theme internal/api internal/api/handler internal/adminauth)
+            ;;
+        *) printf 'race shard must be 1 or 2\n' >&2; return 2 ;;
+    esac
+    listed=$(go list -f '{{.Dir}}' ./...)
+    mapfile -t all <<<"$listed"
+    ((${#all[@]} > 0)) || { printf 'go list returned no packages\n' >&2; return 1; }
+    for package in "${all[@]}"; do
+        relative=${package#"$project_dir/"}
+        if [[ " ${all_heavy[*]} " == *" $relative "* ]]; then
+            continue
+        fi
+        if ((index % 2 == shard - 1)); then
+            selected+=("./$relative")
+        fi
+        index=$((index + 1))
+    done
+    for package in "${heavy[@]}"; do
+        selected+=("./$package")
+    done
+    ((${#selected[@]} > 0)) || { printf 'race shard contains no packages\n' >&2; return 1; }
+    printf '%s\n' "${selected[@]}"
+}
+
+check_backend_race() {
+    require_tools go
+    local listed
+    local -a packages
+    listed=$(race_packages "$1")
+    mapfile -t packages <<<"$listed"
+    # race 只覆盖有并发、竞态、原子性或快照语义的测试；包列表按动态 go list 分组，
+    # 未来新增包不会漏入门禁。
+    go test -race -shuffle=on -p=2 -parallel=2 -timeout=8m -count=1 \
+        -run 'Concurr|Race|Atomic|Snapshot' "${packages[@]}"
+}
+
+check_backend_privileged() {
+    require_tools go
+    [[ $(id -u) == 0 ]] || { printf 'privileged backend gate requires root\n' >&2; return 1; }
+    go test -shuffle=on -p=1 -parallel=1 -timeout=5m -count=1 ./internal/agentoperations
+    go test -shuffle=on -p=1 -parallel=1 -timeout=2m -count=1 \
+        -run '^TestSystemSSHPortResolution$' ./internal/agent
 }
 
 # check_frontend 也会重新生成主题分发资产（prebuild -> scripts/build-themes.sh），
@@ -54,7 +111,6 @@ check_frontend() {
         npm ci
         npm audit --registry=https://registry.npmjs.org --omit=dev --audit-level=high
         # 前端门禁固定单 worker：本机并行 worker 会在编辑器用例上争用 CPU 而超时（见 v13 批次记录）。
-        npm test -- --maxWorkers=1
         npm run test:coverage -- --maxWorkers=1 --coverage.reportsDirectory="$check_dir/frontend-coverage"
         npm run lint
         npm run build -- --outDir "$check_dir/static"
@@ -105,20 +161,37 @@ check_container() {
     [[ $(docker exec "$check_container" id -u) == 65532 ]] || return 1
     local attempt
     for ((attempt=0; attempt<30; attempt++)); do
-        if docker exec "$check_container" curl --fail --silent --show-error --max-time 2 http://127.0.0.1:8080/readyz >/dev/null; then return; fi
+        if docker exec "$check_container" curl --fail --silent --show-error --max-time 2 http://127.0.0.1:8080/readyz >/dev/null; then return 0; fi
         sleep 1
     done
     docker logs "$check_container"
     return 1
 }
 
-[[ $# -le 1 ]] || { printf 'usage: check.sh [all|backend|frontend|scripts|themes|container]\n' >&2; exit 2; }
+[[ $# -le 2 ]] || { printf 'usage: check.sh [all|backend-static|backend-tests|backend-race <1|2>|backend-privileged|frontend|scripts|themes|container]\n' >&2; exit 2; }
 case ${1:-all} in
-    backend) check_backend ;;
+    backend-static) check_backend_static ;;
+    backend-tests) check_backend_tests ;;
+    backend-race) check_backend_race "${2:?race shard required}" ;;
+    backend-privileged) check_backend_privileged ;;
     frontend) check_frontend ;;
     scripts) check_scripts ;;
     themes) check_themes ;;
     container) check_container ;;
-    all) check_scripts; check_themes; check_backend; check_frontend; check_container ;;
+    all)
+        check_scripts
+        check_themes
+        check_backend_static
+        check_backend_tests
+        check_backend_race 1
+        check_backend_race 2
+        if [[ $(id -u) == 0 ]]; then
+            check_backend_privileged
+        else
+            printf 'skipping privileged backend gate outside root; CI runs it explicitly\n' >&2
+        fi
+        check_frontend
+        check_container
+        ;;
     *) printf 'unknown quality gate\n' >&2; exit 2 ;;
 esac

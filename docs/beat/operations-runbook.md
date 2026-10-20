@@ -611,12 +611,22 @@ CI and tag releases share `scripts/check.sh`; the complete local gate is:
 ./scripts/check.sh all
 ```
 
-Its `backend`, `frontend`, `scripts` and `container` stages are also available
-for diagnosis. Formatting and module checks are read-only, so existing local
-changes are allowed; any additional normalization difference fails the gate.
-The complete gate includes race/coverage/lint/security/build checks, isolated
-installer tests, workflow validation and a rootless container startup check.
-Partial stages do not authorize a commit or release.
+Its `backend-static`, `backend-tests`, `backend-race 1|2`,
+`backend-privileged`, `frontend`, `scripts`, `themes` and `container` stages are
+also available for diagnosis. Formatting and module checks are read-only, so
+existing local changes are allowed; any additional normalization difference
+fails the gate. The full test-and-coverage run is executed once, while race
+instrumentation is sharded and limited to tests with concurrency, race,
+atomicity or snapshot behavior. Root, cgroup and system SSH integration tests
+run only in the explicit privileged stage; `all` skips that stage when it is not
+running as root. Partial stages do not authorize a commit or release.
+
+CI runs these stages as independent jobs so a deployment regression, a race
+violation and a privileged boundary failure are reported separately. Each job
+has a finite timeout, and superseded runs on the same branch are cancelled.
+The fast race job follows the concurrency/race/atomic/snapshot test-name
+contract. A weekly `deep-race` workflow still runs the complete backend suite
+under race instrumentation outside the pull-request critical path.
 
 Release creation waits for that complete workflow. GoReleaser first prepares
 archives and SBOMs without publishing; checksums and the Sigstore signature

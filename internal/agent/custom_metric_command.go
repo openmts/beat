@@ -58,10 +58,14 @@ func executeCustomMetric(ctx context.Context, metric registeredMetric) (float64,
 // runCustomMetricCommand 执行一次采集命令，同时返回未解析的 stdout 前缀，
 // 供「试运行」把原始输出当作诊断证据回传；返回值本身仍走同一套解析规则。
 func runCustomMetricCommand(ctx context.Context, shellCommand string) (float64, string, error) {
+	return runCustomMetricCommandWithTimeout(ctx, shellCommand, customMetricCommandTimeout)
+}
+
+func runCustomMetricCommandWithTimeout(ctx context.Context, shellCommand string, timeout time.Duration) (float64, string, error) {
 	if strings.TrimSpace(shellCommand) == "" {
 		return 0, "", errCustomMetricCommand
 	}
-	commandCtx, cancel := context.WithTimeout(ctx, customMetricCommandTimeout)
+	commandCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	output := &customMetricOutput{cancel: cancel}
 	command := exec.CommandContext(commandCtx, "sh", "-c", shellCommand)
