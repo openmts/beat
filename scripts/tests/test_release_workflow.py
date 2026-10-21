@@ -26,6 +26,24 @@ class ReleaseWorkflowTests(unittest.TestCase):
         # 主题构建脚本必须接入门禁：打包/校验失败或分发资产漂移都要挡住发布。
         self.assertIn("scripts/check.sh themes", ci)
 
+    def test_release_is_reproducible_and_reuses_the_frontend_build(self):
+        ci = (PROJECT / ".github/workflows/ci.yml").read_text()
+        release = (PROJECT / ".github/workflows/release.yml").read_text()
+        goreleaser = (PROJECT / ".goreleaser.yaml").read_text()
+        self.assertIn("upload_frontend_artifact: true", release)
+        self.assertIn("BEAT_FRONTEND_STATIC_DIR", ci)
+        self.assertIn("name: beat-frontend-static", ci)
+        self.assertIn("name: beat-frontend-static", release)
+        self.assertIn("runs-on: ubuntu-24.04", release)
+        self.assertNotIn("runs-on: ubuntu-latest", release)
+        self.assertIn("version: v2.18.3", release)
+        self.assertNotIn("version: latest", release)
+        self.assertNotIn("npm run build", release)
+        self.assertNotIn("actions/setup-node", release)
+        self.assertNotIn("before:", goreleaser)
+        self.assertNotIn("npm run build", goreleaser)
+        self.assertLess(release.index("actions/download-artifact"), release.index("goreleaser-action"))
+
     def test_scheduled_deep_race_retains_exhaustive_backend_coverage(self):
         deep_race = (PROJECT / ".github/workflows/deep-race.yml").read_text()
         self.assertIn("schedule:", deep_race)

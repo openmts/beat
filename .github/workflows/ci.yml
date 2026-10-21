@@ -5,6 +5,12 @@ on:
     branches: [main]
   pull_request:
   workflow_call:
+    inputs:
+      upload_frontend_artifact:
+        description: Upload the validated frontend bundle for a release job
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -100,6 +106,17 @@ jobs:
           npx playwright install-deps chromium
       - name: Complete frontend gate
         run: scripts/check.sh frontend
+        env:
+          BEAT_FRONTEND_STATIC_DIR: ${{ runner.temp }}/beat-frontend-static
+      - name: Upload validated frontend bundle
+        if: inputs.upload_frontend_artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: beat-frontend-static
+          path: ${{ runner.temp }}/beat-frontend-static
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 1
 
   deployment:
     timeout-minutes: 10

@@ -14,10 +14,12 @@ concurrency:
 jobs:
   quality:
     uses: ./.github/workflows/ci.yml
+    with:
+      upload_frontend_artifact: true
 
   release:
     needs: quality
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: write
       id-token: write
@@ -28,17 +30,18 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
-      - uses: actions/setup-node@v5
+      - uses: actions/download-artifact@v4
         with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: webui/package-lock.json
+          name: beat-frontend-static
+          path: webui/dist
+      - name: Validate downloaded frontend bundle
+        run: test -s webui/dist/index.html
       - uses: anchore/sbom-action/download-syft@v0
       - uses: sigstore/cosign-installer@v3
       - uses: goreleaser/goreleaser-action@v6
         with:
           distribution: goreleaser
-          version: latest
+          version: v2.18.3
           args: release --clean --skip=publish
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

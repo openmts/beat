@@ -3,9 +3,11 @@ package api
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/beat/backend/internal/adminauth"
 	"github.com/beat/backend/internal/api/handler"
@@ -78,21 +80,24 @@ func createCollaborationDashboard(t *testing.T, router *Router, cookie string) s
 
 func TestAnnotationRoutesLifecycle(t *testing.T) {
 	router, _, cookie := newCollaborationRouter(t)
-	create := `{"dashboard_id":"public-default","title":"Deploy","text":"v1","tags":["deploy"],"color":"blue",` +
-		`"visibility":"public","from":"2026-10-14T00:00:00Z","to":"2026-10-14T01:00:00Z"}`
+	now := model.NowUTC().Truncate(time.Second)
+	from, to := now.Add(-time.Hour), now.Add(time.Hour)
+	create := fmt.Sprintf(`{"dashboard_id":"public-default","title":"Deploy","text":"v1","tags":["deploy"],"color":"blue",`+
+		`"visibility":"public","from":"%s","to":"%s"}`, from.Format(time.RFC3339), to.Format(time.RFC3339))
 	created := requestRouterWithCookie(router, http.MethodPost, "/api/v1/admin/metrics/annotations", create,
 		bootstrapCookie(t, cookie), "http://example.com")
 	if created.Code != http.StatusCreated {
 		t.Fatalf("create annotation status = %d, body = %s", created.Code, created.Body.String())
 	}
 	list := requestRouterWithCookie(router, http.MethodGet,
-		"/api/v1/admin/metrics/annotations?dashboard_id=public-default&from=2026-10-13T00:00:00Z&to=2026-10-15T00:00:00Z",
+		fmt.Sprintf("/api/v1/admin/metrics/annotations?dashboard_id=public-default&from=%s&to=%s",
+			now.Add(-2*time.Hour).Format(time.RFC3339), now.Add(2*time.Hour).Format(time.RFC3339)),
 		"", bootstrapCookie(t, cookie), "")
 	if list.Code != http.StatusOK || !bytes.Contains(list.Body.Bytes(), []byte(`"title":"Deploy"`)) {
 		t.Fatalf("list annotation status = %d, body = %s", list.Code, list.Body.String())
 	}
-	update := `{"dashboard_id":"public-default","title":"Deploy 2","text":"","tags":[],"color":"amber",` +
-		`"visibility":"public","from":"2026-10-14T00:00:00Z","to":"2026-10-14T02:00:00Z"}`
+	update := fmt.Sprintf(`{"dashboard_id":"public-default","title":"Deploy 2","text":"","tags":[],"color":"amber",`+
+		`"visibility":"public","from":"%s","to":"%s"}`, from.Format(time.RFC3339), now.Add(2*time.Hour).Format(time.RFC3339))
 	updated := requestRouterWithCookie(router, http.MethodPut, annotationPath(created.Body.Bytes()), update,
 		bootstrapCookie(t, cookie), "http://example.com")
 	if updated.Code != http.StatusOK || !bytes.Contains(updated.Body.Bytes(), []byte(`"title":"Deploy 2"`)) {

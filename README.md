@@ -9,7 +9,7 @@ the [delivery plan](docs/beat/commercial-delivery-plan.md) and
 
 ## Requirements
 
-- Go 1.26.9+
+- Go 1.26.10+
 - Node.js 22.12+
 - Bash and Python 3 for the Linux systemd installer and cold-backup tooling
 
@@ -466,8 +466,10 @@ replace that version with their signed release version.
 
 Release archives are produced by GoReleaser with checksums and SBOMs; every
 archive carries `beat-server`, `beat-agent`, `beat-cli` and `beat-theme`, and
-the release workflow signs the checksum manifest with Sigstore. Deployment and
-rollback commands are documented in the
+the release workflow signs the checksum manifest with Sigstore. The tagged
+release packs the validated frontend bundle from the quality workflow instead
+of rebuilding it in GoReleaser. The release runner and GoReleaser version are
+pinned. Deployment and rollback commands are documented in the
 [`operations runbook`](docs/beat/operations-runbook.md).
 
 ## SSH operations

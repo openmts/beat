@@ -32,7 +32,7 @@ describe("agent setup guide", () => {
     expect(screen.getByText(/Save the token when creating/)).toBeInTheDocument()
     expect(screen.getByLabelText("agent.json")).toHaveTextContent("REPLACE_WITH_NODE_AGENT_TOKEN")
     expect(screen.getByLabelText("Monitored node · configure and start")).toHaveTextContent("--config /etc/beat-agent/agent.json")
-    expect(screen.getByText(/Go 1.26.9/)).toBeInTheDocument()
+    expect(screen.getByText(/Go 1.26.10/)).toBeInTheDocument()
     expect(screen.getByText(/localhost and 127\.0\.0\.1 point/)).toBeInTheDocument()
   })
 

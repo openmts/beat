@@ -136,6 +136,15 @@ class QualityGateTests(unittest.TestCase):
         self.assertEqual(["scripts/theme-declarative-smoke.mjs", "scripts/theme-sandbox-smoke.mjs",
                           "scripts/theme-market-smoke.mjs"], smokes)
 
+    def test_frontend_gate_can_retain_a_release_bundle(self):
+        release_static = self.root / "release-static"
+        result = self.run_gate("frontend", BEAT_FRONTEND_STATIC_DIR=str(release_static))
+        self.assertEqual(0, result.returncode, result.stderr)
+        build = next(call for call in self.calls() if call[:3] == ["npm", "run", "build"])
+        self.assertEqual(str(release_static), build[build.index("--outDir") + 1])
+        self.assertTrue((release_static / "index.html").is_file())
+        self.assertEqual([], list(self.temporary.iterdir()))
+
     def test_missing_theme_asset_fails_the_frontend_gate(self):
         result = self.run_gate("frontend", BEAT_GATE_MISSING_THEME="slate")
         self.assertNotEqual(0, result.returncode)

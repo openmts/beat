@@ -4,6 +4,7 @@ umask 077
 
 project_dir=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 check_dir=$(mktemp -d "${TMPDIR:-/tmp}/beat-check.XXXXXX")
+frontend_static_dir=${BEAT_FRONTEND_STATIC_DIR:-"$check_dir/static"}
 check_container= check_image=
 
 finish() {
@@ -108,13 +109,13 @@ check_frontend() {
         # 前端门禁固定单 worker：本机并行 worker 会在编辑器用例上争用 CPU 而超时（见 v13 批次记录）。
         npm run test:coverage -- --maxWorkers=1 --coverage.reportsDirectory="$check_dir/frontend-coverage"
         npm run lint
-        npm run build -- --outDir "$check_dir/static"
+        npm run build -- --outDir "$frontend_static_dir"
         # B4：主题三套浏览器 smoke 进默认门禁。Playwright 来自本目录的 devDependency；
         # 浏览器装进本仓库专用目录，避免 install 顺手回收机器上其它 Playwright 版本的浏览器。
         # --only-shell 只装 headless shell（体积与系统依赖最小）。
         export PLAYWRIGHT_BROWSERS_PATH="${BEAT_PLAYWRIGHT_BROWSERS_PATH:-$HOME/.cache/beat-playwright}"
         node node_modules/playwright/cli.js install --only-shell chromium
-        BEAT_THEME_BROWSER_STATIC="$check_dir/static" \
+        BEAT_THEME_BROWSER_STATIC="$frontend_static_dir" \
             bash scripts/run-theme-browser-gates.sh "$check_dir/theme-browser-gates"
     )
     # 后台示例主题列表是唯一真源：它列出的每个 id 都必须真的出现在构建产物里。
@@ -122,11 +123,11 @@ check_frontend() {
     example_ids=$(grep -o 'id: *"[^"]*"' webui/src/lib/theme-examples.ts | sed 's/.*"\([^"]*\)"/\1/')
     [[ -n "$example_ids" ]] || { printf 'no example themes parsed from webui/src/lib/theme-examples.ts\n' >&2; return 1; }
     while read -r example_id; do
-        [[ -s "$check_dir/static/themes/$example_id.theme.zip" ]] || { printf 'missing theme archive: %s\n' "$example_id" >&2; return 1; }
-        [[ -s "$check_dir/static/themes/$example_id.preview.png" ]] || { printf 'missing theme preview: %s\n' "$example_id" >&2; return 1; }
+        [[ -s "$frontend_static_dir/themes/$example_id.theme.zip" ]] || { printf 'missing theme archive: %s\n' "$example_id" >&2; return 1; }
+        [[ -s "$frontend_static_dir/themes/$example_id.preview.png" ]] || { printf 'missing theme preview: %s\n' "$example_id" >&2; return 1; }
     done <<<"$example_ids"
     for asset in beat-theme-sdk.js theme-author-guide.md theme-sandbox-contract.md theme-market-publishing.md; do
-        [[ -s "$check_dir/static/themes/$asset" ]] || { printf 'missing theme asset: %s\n' "$asset" >&2; return 1; }
+        [[ -s "$frontend_static_dir/themes/$asset" ]] || { printf 'missing theme asset: %s\n' "$asset" >&2; return 1; }
     done
 }
 
