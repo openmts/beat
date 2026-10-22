@@ -458,6 +458,36 @@ install -m 0600 deploy/beat.env.example deploy/beat.env
 docker compose up -d --build
 ```
 
+Tagged releases publish multi-architecture `linux/amd64` and `linux/arm64`
+images to GitHub Container Registry:
+
+```text
+ghcr.io/openmts/beat:<tag>         server + agent combined image
+ghcr.io/openmts/beat-server:<tag>  server only
+ghcr.io/openmts/beat-agent:<tag>   agent only
+```
+
+The combined image starts the server by default. Select the Agent role by
+placing `agent` before its arguments:
+
+```bash
+docker run --rm ghcr.io/openmts/beat:v1.2.3 agent --version
+```
+
+The standalone Agent reads `/etc/beat-agent/agent.json` by default. Mount a
+private config owned by UID/GID `65532`; use host networking when container
+network counters must match the host. The standalone Server image keeps the
+same `/var/lib/beat` data and default port `8080` contract as the combined
+image.
+
+Build an individual target locally with Buildx; replace `server` with
+`combined` or `agent` for the other images:
+
+```bash
+docker buildx build --target server --platform linux/amd64 \
+  --tag beat-server:local --load .
+```
+
 Container state uses `/var/lib/beat/data`; the volume root retains the stable
 lifecycle lock. Existing flat-layout volumes require a stopped-service backup
 and explicit migration before startup. The [runbook](docs/beat/operations-runbook.md)

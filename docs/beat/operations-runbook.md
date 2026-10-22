@@ -500,6 +500,22 @@ docker compose up -d --build
 curl --fail http://127.0.0.1:9180/readyz
 ```
 
+Tagged GitHub releases also publish signed multi-architecture images to GHCR:
+
+```text
+ghcr.io/openmts/beat:<tag>
+ghcr.io/openmts/beat-server:<tag>
+ghcr.io/openmts/beat-agent:<tag>
+```
+
+Each tag is an OCI image index containing `linux/amd64` and `linux/arm64`.
+The combined image starts Server by default; pass `agent` as its first
+argument to run the bundled Agent. The standalone Server image exposes the
+same port and data-volume contract as the combined Server. The standalone
+Agent defaults to `/etc/beat-agent/agent.json`, runs as UID/GID `65532`, and
+requires a private mounted configuration. Use `--network host` when network
+metrics must represent the host namespace rather than an isolated container.
+
 The image runs as UID/GID `65532`, drops Linux capabilities, uses a read-only
 root filesystem under Compose, and writes only to the `beat-data` volume.
 Application state is under `/var/lib/beat/data`; the parent volume directory

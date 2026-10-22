@@ -44,6 +44,46 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertNotIn("npm run build", goreleaser)
         self.assertLess(release.index("actions/download-artifact"), release.index("goreleaser-action"))
 
+    def test_tag_release_builds_three_multi_architecture_container_images(self):
+        release = (PROJECT / ".github/workflows/release.yml").read_text()
+        self.assertIn('tags: ["v*"]', release)
+        self.assertIn("  containers:", release)
+        self.assertIn("packages: write", release)
+        self.assertIn("id-token: write", release)
+        self.assertIn("registry: ghcr.io", release)
+        self.assertIn("password: ${{ secrets.GITHUB_TOKEN }}", release)
+        self.assertIn("images: ghcr.io/${{ github.repository_owner }}/${{ matrix.package }}", release)
+        self.assertIn("push: true", release)
+        self.assertIn("platforms: linux/amd64,linux/arm64", release)
+        self.assertIn("target: ${{ matrix.target }}", release)
+        self.assertIn("package: beat\n", release)
+        self.assertIn("package: beat-server\n", release)
+        self.assertIn("package: beat-agent\n", release)
+        self.assertIn("target: combined", release)
+        self.assertIn("target: server", release)
+        self.assertIn("target: agent", release)
+        self.assertIn("needs: [quality, containers]", release)
+        self.assertIn("cosign sign --yes", release)
+
+
+class ContainerImageTests(unittest.TestCase):
+    def test_dockerfile_exposes_combined_server_and_agent_targets(self):
+        dockerfile = (PROJECT / "Dockerfile").read_text()
+        for target in ("combined", "server", "agent"):
+            self.assertIn(f" AS {target}\n", dockerfile)
+        self.assertIn("GOOS=\"${TARGETOS}\" GOARCH=\"${TARGETARCH}\"", dockerfile)
+        self.assertIn("COPY --from=backend-build --chown=65532:65532 /out/beat-server", dockerfile)
+        self.assertIn("COPY --from=backend-build --chown=65532:65532 /out/beat-agent", dockerfile)
+        self.assertIn("ENV BEAT_CONTAINER_ROLE=agent", dockerfile)
+        self.assertIn('CMD ["--config", "/etc/beat-agent/agent.json"]', dockerfile)
+
+    def test_container_entrypoint_can_select_server_or_agent_role(self):
+        entrypoint = (PROJECT / "deploy/container-entrypoint.sh").read_text()
+        self.assertIn("BEAT_CONTAINER_ROLE", entrypoint)
+        self.assertIn("server|agent", entrypoint)
+        self.assertIn('exec /usr/local/bin/beat-server "$@"', entrypoint)
+        self.assertIn('exec /usr/local/bin/beat-agent "$@"', entrypoint)
+
     def test_scheduled_deep_race_retains_exhaustive_backend_coverage(self):
         deep_race = (PROJECT / ".github/workflows/deep-race.yml").read_text()
         self.assertIn("schedule:", deep_race)
