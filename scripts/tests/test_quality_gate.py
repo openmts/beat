@@ -17,7 +17,7 @@ class QualityGateTests(unittest.TestCase):
         self.log = self.root / "calls"
         self.temporary = self.root / "temporary"
         self.temporary.mkdir(mode=0o700)
-        for command in ("go", "goimports-reviser", "golangci-lint", "govulncheck", "npm", "node", "docker", "actionlint", "python3", "sleep"):
+        for command in ("go", "goimports-reviser", "golangci-lint", "govulncheck", "npm", "node", "docker", "actionlint", "shellcheck", "python3", "sleep"):
             private_file(self.bin / command, f'#!/bin/sh\nexec /usr/bin/python3 "{PROJECT}/scripts/tests/fake_gate.py" {command} "$@"\n', True)
         self.environment = dict(os.environ, PATH=f"{self.bin}:{os.environ['PATH']}",
                                 BEAT_GATE_LOG=str(self.log), TMPDIR=str(self.temporary))
@@ -113,6 +113,8 @@ class QualityGateTests(unittest.TestCase):
         calls = self.calls()
         self.assertIn(["python3", "scripts/tests/run.py"], calls)
         self.assertIn(["actionlint"], calls)
+        check = (PROJECT / "scripts/check.sh").read_text()
+        self.assertIn("require_tools bash python3 actionlint shellcheck", check)
 
     def test_frontend_audit_failure_prevents_build(self):
         result = self.run_gate("frontend", BEAT_GATE_FAIL="npm audit")

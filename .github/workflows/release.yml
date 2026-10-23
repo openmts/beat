@@ -91,9 +91,9 @@ jobs:
         run: |
           {
             printf '### %s container\n\n' "$TARGET"
-            printf -- '- Image: `%s`\n' "$IMAGE"
+            printf -- "- Image: \`%s\`\n" "$IMAGE"
             printf -- '- Digests: %s\n' "$DIGEST"
-            printf -- '- Platforms: `linux/amd64`, `linux/arm64`\n'
+            printf -- "- Platforms: \`linux/amd64\`, \`linux/arm64\`\n"
           } >>"$GITHUB_STEP_SUMMARY"
 
   release:

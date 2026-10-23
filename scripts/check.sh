@@ -132,7 +132,7 @@ check_frontend() {
 }
 
 check_scripts() {
-    require_tools bash python3 actionlint
+    require_tools bash python3 actionlint shellcheck
     bash -n deploy/container-entrypoint.sh scripts/beatctl.sh scripts/check.sh scripts/prepare-release.sh
     PYTHONDONTWRITEBYTECODE=1 python3 scripts/tests/run.py
     actionlint
