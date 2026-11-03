@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"fmt"
+	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 
@@ -19,7 +21,12 @@ func (services *serverServices) initializeNodeLifecycle(ctx context.Context, sto
 	if external != "" && !filepath.IsAbs(external) {
 		return fmt.Errorf("BEAT_GEOIP_MMDB_PATH must be absolute")
 	}
-	location, err := geoip.NewService(geoip.Config{Database: stores.sqlite.DB, Secrets: stores.secrets, Directory: filepath.Join(dataDir, "geoip"), ExternalMMDB: external})
+	proxy := func(*http.Request) (*url.URL, error) { return nil, nil }
+	if services.egressProxy != nil {
+		proxy = services.egressProxy.Proxy
+	}
+	location, err := geoip.NewService(geoip.Config{Database: stores.sqlite.DB, Secrets: stores.secrets, Directory: filepath.Join(dataDir, "geoip"), ExternalMMDB: external,
+		Proxy: proxy})
 	if err != nil {
 		return fmt.Errorf("initialize GeoIP: %w", err)
 	}

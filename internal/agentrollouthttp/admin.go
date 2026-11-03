@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"time"
 
 	"github.com/beat/backend/internal/agentrollout"
 	"github.com/beat/backend/internal/agentrollout/protocol"
@@ -38,6 +39,11 @@ func (h *Handler) syncRemoteRelease(w http.ResponseWriter, r *http.Request) {
 	h.admin(w, r, func(a agentrollout.Actor) (any, error) {
 		if h.remote == nil {
 			return nil, agentrollout.ErrDisabled
+		}
+		// 远端同步可能需要下载多个产物，超过全局 30 秒写超时；这里显式覆盖，
+		// 否则客户端会在导入完成前收到 EOF。
+		if err := transferDeadline(w, timeNow().Add(agentrolloutremote.SyncTimeout+time.Minute), false); err != nil {
+			return nil, err
 		}
 		return h.remote.Sync(r.Context(), a, r.PathValue("tag"))
 	})

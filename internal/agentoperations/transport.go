@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/beat/backend/internal/agenttransport"
 	"github.com/beat/backend/internal/remoteoperations/protocol"
 )
 
@@ -42,7 +43,11 @@ func NewClient(config ClientConfig) (*Client, error) {
 	if err != nil || address.Host == "" || address.User != nil || address.RawQuery != "" || address.Fragment != "" || (address.Scheme != "http" && address.Scheme != "https") || config.Token == "" {
 		return nil, ErrTransport
 	}
-	client := &http.Client{Timeout: 10 * time.Second, Transport: config.Transport, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	transport := config.Transport
+	if transport == nil {
+		transport = agenttransport.NoProxyTransport()
+	}
+	client := &http.Client{Timeout: 10 * time.Second, Transport: transport, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	return &Client{base: strings.TrimRight(config.ServerURL, "/"), token: config.Token, http: client}, nil
 }
 

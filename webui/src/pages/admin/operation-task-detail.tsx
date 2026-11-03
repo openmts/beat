@@ -1,7 +1,7 @@
 import { useCallback, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { useLocale } from "@/context/locale"
 import { useOperationResource } from "@/hooks/use-operation-resource"
 import { useConfirmedOperation } from "@/hooks/use-confirmed-operation"
@@ -22,8 +22,7 @@ export function OperationTaskDetail({ id, close }: { id: string; close: () => vo
   execute: async () => { await retryOperationTarget(id, target.id, { reason: reason.trim(), acknowledge_unknown_risk: target.state === "unknown" || Boolean(target.restore_risk) }); setReason(""); setOutput(null); resource.reload() } })
  const inspect = (target: OperationTarget) => flow.request({ title: t("operations.inspect_output"), description: t("operations.output_may_contain_sensitive_content_and_is_kept"),
   execute: async () => { const value = await getOperationOutput(id, target.id); setOutput({ target: target.node_name, value }) } })
- return <Card><CardHeader className="flex-row items-center justify-between"><CardTitle>{t("operations.task_details")}</CardTitle><Button variant="ghost" onClick={close}>{t("operations.close")}</Button></CardHeader><CardContent className="space-y-4">
-  <p className="break-all text-xs text-muted-foreground">{id}</p>
+ return <Sheet open onOpenChange={open => { if (!open) close() }}><SheetContent className="w-full overflow-y-auto p-6 sm:max-w-2xl"><SheetHeader><SheetTitle>{t("operations.task_details")}</SheetTitle><SheetDescription className="break-all text-xs">{id}</SheetDescription></SheetHeader><div className="mt-5 space-y-4">
   <Button variant="outline" onClick={() => flow.request({ title: t("operations.view_task_content"), description: t("operations.task_content_may_contain_sensitive_arguments_and"), execute: async () => { const result = await getOperationTaskContent(id); setContent(result.payload.file ? `${result.payload.file.root_id}/${result.payload.file.relative_path}\n${result.payload.file.size} bytes\nSHA-256: ${result.payload.file.digest}` : operationDecode(result.payload.command)) } })}>{t("operations.view_task_content")}</Button>
   {content !== null && <section><Button size="sm" variant="ghost" onClick={() => setContent(null)}>{t("operations.clear_content")}</Button><OutputBlock title={t("operations.task_content")} value={content} /></section>}
   {resource.error && <p role="alert" className="text-destructive">{resource.error}</p>}
@@ -38,6 +37,6 @@ export function OperationTaskDetail({ id, close }: { id: string; close: () => vo
    <OutputBlock title="stdout" value={operationDecode(output.value.stdout)} /><OutputBlock title="stderr" value={operationDecode(output.value.stderr)} />
   </section>}
   <OperationConfirm flow={flow} />
- </CardContent></Card>
+ </div></SheetContent></Sheet>
 }
 function OutputBlock({ title, value }: { title: string; value: string }) { return <div><h4 className="text-xs text-muted-foreground">{title}</h4><pre className="max-h-80 overflow-auto whitespace-pre-wrap break-all rounded-md bg-muted p-3 text-xs">{value || "—"}</pre></div> }

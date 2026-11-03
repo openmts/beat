@@ -68,6 +68,11 @@ func sourcesForDatabase(ctx context.Context, database databaseReader, legacySSH 
 		return nil, err
 	}
 	sources = append(sources, geoip...)
+	egressProxy, err := egressProxySourcesForDatabase(ctx, database)
+	if err != nil {
+		return nil, err
+	}
+	sources = append(sources, egressProxy...)
 	diagnostic, err := diagnosticSourcesForDatabase(ctx, database)
 	if err != nil {
 		return nil, err

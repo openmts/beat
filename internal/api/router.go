@@ -12,6 +12,7 @@ import (
 	"github.com/beat/backend/internal/api/handler"
 	"github.com/beat/backend/internal/api/middleware"
 	"github.com/beat/backend/internal/deploymentaccess"
+	"github.com/beat/backend/internal/egressproxy"
 	"github.com/beat/backend/internal/ingress"
 	"github.com/beat/backend/internal/metricquery"
 	"github.com/beat/backend/internal/notification"
@@ -51,6 +52,7 @@ type Router struct {
 	mtsStore           *store.MTSStore
 	networkTaskStore   *store.NetworkTaskStore
 	siteSettingsStore  *store.SiteSettingsStore
+	egressProxy        *egressproxy.Service
 	publicTelemetry    *store.PublicTelemetryStore
 	trafficCalibration *store.TrafficCalibrationStore
 	metricErasure      *store.MetricErasureStore
@@ -174,6 +176,10 @@ func WithSiteSettingsStore(siteSettingsStore *store.SiteSettingsStore) RouterOpt
 	return func(router *Router) {
 		router.siteSettingsStore = siteSettingsStore
 	}
+}
+
+func WithEgressProxy(service *egressproxy.Service) RouterOption {
+	return func(router *Router) { router.egressProxy = service }
 }
 
 // WithPublicTelemetryStore 注入匿名聚合遥测策略与公共交互端点所需的存储。

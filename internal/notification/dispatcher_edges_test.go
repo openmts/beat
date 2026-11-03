@@ -5,7 +5,9 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"errors"
+	"net"
 	"net/http"
+	"net/http/httptest"
 	"net/netip"
 	"net/url"
 	"strings"
@@ -89,5 +91,60 @@ func TestPolicyChecksEncodedHostsRebindingAndBroadExceptions(t *testing.T) {
 		if err := ValidateEgressPolicy(model.NotificationEgressPolicy{Exceptions: []model.NotificationEgressException{exception}}, time.Now()); err == nil {
 			t.Fatal("unsafe exception accepted")
 		}
+	}
+}
+
+func TestNotificationTransportAllowsConfiguredProxyEndpoint(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = listener.Close() }()
+	dispatcher := NewDispatcher(DispatcherConfig{AllowProxyDial: func(_ context.Context, address string) (bool, error) {
+		return address == listener.Addr().String(), nil
+	}})
+	transport := dispatcher.transport(model.NotificationEgressPolicy{}, false)
+	defer transport.CloseIdleConnections()
+	connection, err := transport.DialContext(t.Context(), "tcp", listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	accepted, err := listener.Accept()
+	if err != nil {
+		_ = connection.Close()
+		t.Fatal(err)
+	}
+	_ = accepted.Close()
+	_ = connection.Close()
+}
+
+func TestNotificationProxyValidatesEveryRequestTarget(t *testing.T) {
+	egress := NewEgress()
+	egress.Resolver = resolvingStub{addresses: []netip.Addr{netip.MustParseAddr("8.8.8.8")}}
+	proxyCalls := 0
+	dispatcher := NewDispatcher(DispatcherConfig{
+		Egress: egress,
+		Proxy: func(*http.Request) (*url.URL, error) {
+			proxyCalls++
+			return nil, errors.New("proxy fixture")
+		},
+	})
+	transport := dispatcher.transport(model.NotificationEgressPolicy{}, false)
+	defer transport.CloseIdleConnections()
+
+	privateRequest := httptest.NewRequest(http.MethodGet, "https://169.254.169.254/latest/meta-data", nil)
+	if _, err := transport.Proxy(privateRequest); err == nil {
+		t.Fatal("private proxy target accepted")
+	}
+	if proxyCalls != 0 {
+		t.Fatal("private target reached the proxy selector")
+	}
+
+	publicRequest := httptest.NewRequest(http.MethodGet, "https://receiver.example/path", nil)
+	if _, err := transport.Proxy(publicRequest); err == nil || !strings.Contains(err.Error(), "proxy fixture") {
+		t.Fatalf("public target did not reach the proxy: %v", err)
+	}
+	if proxyCalls != 1 {
+		t.Fatalf("proxy calls = %d", proxyCalls)
 	}
 }

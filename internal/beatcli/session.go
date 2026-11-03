@@ -108,7 +108,7 @@ func (a *application) httpClient(command *cli.Command, server *url.URL) (*http.C
 	return &http.Client{
 		Transport:     transport,
 		Timeout:       timeout,
-		CheckRedirect: sameHostRedirects(server.Host),
+		CheckRedirect: sameOriginRedirects(server),
 	}, nil
 }
 

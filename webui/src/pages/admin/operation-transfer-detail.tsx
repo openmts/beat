@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { useLocale } from "@/context/locale"
 import { formatDateTime } from "@/lib/intl-format"
 import { useOperationResource } from "@/hooks/use-operation-resource"
@@ -28,8 +28,7 @@ export function OperationTransferDetail({ id, initialFile, close, task }: { id: 
   finally { controller.current = null; if (mounted.current) setBusy(false) }
  }
  const transfer = resource.data
- return <Card><CardHeader className="flex-row items-center justify-between"><CardTitle>{t("operations.transfer_details")}</CardTitle><Button variant="ghost" onClick={close}>{t("operations.close")}</Button></CardHeader><CardContent className="space-y-4">
-  <p className="break-all text-xs text-muted-foreground">{id}</p>{(resource.error || error) && <p role="alert" className="text-destructive">{resource.error || error}</p>}
+ return <Sheet open onOpenChange={open => { if (!open) close() }}><SheetContent className="w-full overflow-y-auto p-6 sm:max-w-2xl"><SheetHeader><SheetTitle>{t("operations.transfer_details")}</SheetTitle><SheetDescription className="break-all text-xs">{id}</SheetDescription></SheetHeader><div className="mt-5 space-y-4">{(resource.error || error) && <p role="alert" className="text-destructive">{resource.error || error}</p>}
   {transfer && <><div className="flex flex-wrap items-center gap-3"><OperationStatus state={transfer.state} /><span className="text-sm">{(transfer.size / 1048576).toFixed(2)} MiB</span>{transfer.task_id && <Button variant="outline" onClick={() => task(transfer.task_id!)}>{t("operations.view_node_task")}</Button>}</div>
    <p className="text-xs text-muted-foreground">{t("operations.expires")}: {formatDateTime(locale, transfer.expires_at)}</p>
    {transfer.direction === "deploy" && !transfer.task_id && !["failed", "canceled", "expired"].includes(transfer.state) && <div className="space-y-3"><Input type="file" disabled={busy} aria-label={t("operations.select_same_file_to_resume")} onChange={event => setFile(event.target.files?.[0])} />{file && <p className="text-sm">{file.name}</p>}
@@ -41,5 +40,5 @@ export function OperationTransferDetail({ id, initialFile, close, task }: { id: 
    {!transfer.task_id && !["failed", "canceled", "expired"].includes(transfer.state) && <Button variant="outline" onClick={() => flow.request({ title: t("operations.discard_draft"), description: t("operations.discard_draft_description"), execute: async () => { await discardOperationTransferDraft(id); controller.current?.abort(); resource.reload() } })}>{t("operations.discard_draft")}</Button>}
    <div className="divide-y">{transfer.targets?.map(target => <div key={target.id} className="flex items-center justify-between gap-2 py-2 text-sm"><span>{target.node_name}</span><span>{(target.progress_bytes / 1048576).toFixed(2)} MiB</span><OperationStatus state={target.state} /></div>)}</div>
   </>}<OperationConfirm flow={flow} />
- </CardContent></Card>
+ </div></SheetContent></Sheet>
 }

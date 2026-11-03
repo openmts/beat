@@ -1,5 +1,5 @@
 import { api } from "@/lib/api-client"
-import type { GeoIPSettings, GeoIPSettingsWrite, LifecycleSettings, NodeLocation, LocationWrite, NodeLifecycle, LifecycleWrite, LifecycleEvent } from "@/types/node-lifecycle"
+import type { GeoIPSettings, GeoIPSettingsWrite, LifecycleSettings, NodeLocation, LocationWrite, NodeLifecycle, LifecycleWrite, LifecycleEvent, RemoteMMDBInstall, RemoteMMDBRelease } from "@/types/node-lifecycle"
 const nodePath = (id: string) => `/admin/nodes/${encodeURIComponent(id)}`
 export async function getGeoIPSettings(signal?: AbortSignal) { return (await api.get<GeoIPSettings>("/admin/settings/geoip", { signal })).data }
 export async function saveGeoIPSettings(input: GeoIPSettingsWrite) { return (await api.put<GeoIPSettings>("/admin/settings/geoip", input)).data }
@@ -18,3 +18,5 @@ export async function uploadMMDB(file: File, revision: number) {
 export interface MMDBUpdate { account_id: string; license_key: string; edition: "GeoLite2-Country" | "GeoIP2-Country"; expected_revision: number }
 export async function updateMMDB(input: MMDBUpdate) { return (await api.post<GeoIPSettings>("/admin/settings/geoip/mmdb/update", input)).data }
 export async function rollbackMMDB(expected_revision: number) { return (await api.post<GeoIPSettings>("/admin/settings/geoip/mmdb/rollback", { expected_revision })).data }
+export async function getRemoteMMDBRelease(signal?: AbortSignal) { return (await api.get<RemoteMMDBRelease>("/admin/settings/geoip/mmdb/remote", { signal })).data }
+export async function installRemoteMMDB(input: RemoteMMDBInstall) { return (await api.post<GeoIPSettings>("/admin/settings/geoip/mmdb/remote", input)).data }

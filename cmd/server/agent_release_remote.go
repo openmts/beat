@@ -1,6 +1,8 @@
 package main
 
 import (
+	"net/http"
+
 	"github.com/beat/backend/internal/agentrollout"
 	"github.com/beat/backend/internal/agentrolloutremote"
 )
@@ -11,7 +13,9 @@ const (
 	agentReleaseTokenEnv      = "BEAT_AGENT_RELEASE_TOKEN"
 )
 
-func newAgentReleaseRemote(service *agentrollout.Service, environment func(string) string) (*agentrolloutremote.Service, error) {
+func newAgentReleaseRemote(
+	service *agentrollout.Service, environment func(string) string, clients ...*http.Client,
+) (*agentrolloutremote.Service, error) {
 	repository := environment(agentReleaseRepositoryEnv)
 	if repository == "" {
 		repository = agentrolloutremote.DefaultRepository
@@ -20,9 +24,13 @@ func newAgentReleaseRemote(service *agentrollout.Service, environment func(strin
 	if apiURL == "" {
 		apiURL = agentrolloutremote.DefaultAPIURL
 	}
-	remote, err := agentrolloutremote.New(agentrolloutremote.Config{
+	config := agentrolloutremote.Config{
 		Rollout: service, Repository: repository, APIURL: apiURL, Token: environment(agentReleaseTokenEnv),
-	})
+	}
+	if len(clients) > 0 {
+		config.HTTPClient = clients[0]
+	}
+	remote, err := agentrolloutremote.New(config)
 	if err != nil {
 		return nil, errRolloutConfiguration
 	}

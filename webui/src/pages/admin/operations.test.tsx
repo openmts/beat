@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react"
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { beforeEach, expect, it, vi } from "vitest"
 import { LocaleProvider } from "@/context/locale"
@@ -27,6 +27,17 @@ it("keeps disabled features explanatory without requesting task data",async()=>{
  render(<LocaleProvider><Operations /></LocaleProvider>)
  expect(await screen.findByText(/Remote operations are disabled/)).toBeInTheDocument()
  expect(api.getOperationTasks).not.toHaveBeenCalled()
+})
+it("opens task details in a dismissible side sheet",async()=>{
+ const user=userEvent.setup()
+ render(<LocaleProvider><Operations /></LocaleProvider>)
+ await user.click(await screen.findByRole("button",{name:"Details"}))
+ const sheet=await screen.findByRole("dialog",{name:"Task details"})
+ expect(sheet).toHaveAttribute("data-slot","sheet-content")
+ expect(within(sheet).getByText("task-one")).toBeInTheDocument()
+ expect(within(sheet).getByText("Production host")).toBeInTheDocument()
+ await user.click(within(sheet).getByRole("button",{name:"Close"}))
+ await waitFor(()=>expect(screen.queryByRole("dialog",{name:"Task details"})).not.toBeInTheDocument())
 })
 it("requires deliberate risk acceptance for unknown outcome retry",async()=>{
  const user=userEvent.setup()

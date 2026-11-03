@@ -27,7 +27,7 @@ const (
 	DefaultTimeout = 30 * time.Second
 	// maximumRetryAfter 限制 Retry-After 提示，异常头部不会造成离谱等待。
 	maximumRetryAfter = 24 * time.Hour
-	// maximumRedirects 限制同主机重定向次数。
+	// maximumRedirects 限制同源重定向次数。
 	maximumRedirects = 5
 )
 
@@ -62,10 +62,10 @@ type Client struct {
 	client *http.Client
 }
 
-// NewClient 构造数据面客户端；httpClient 为空时使用带超时与同主机重定向策略的默认客户端。
+// NewClient 构造数据面客户端；httpClient 为空时使用带超时与同源重定向策略的默认客户端。
 func NewClient(base *url.URL, token string, httpClient *http.Client) *Client {
 	if httpClient == nil {
-		httpClient = &http.Client{Timeout: DefaultTimeout, CheckRedirect: sameHostRedirects(base.Host)}
+		httpClient = &http.Client{Timeout: DefaultTimeout, CheckRedirect: sameOriginRedirects(base)}
 	}
 	return &Client{base: base, token: token, client: httpClient}
 }
@@ -246,14 +246,37 @@ func boundRetryAfter(value time.Duration) time.Duration {
 	return value
 }
 
-func sameHostRedirects(host string) func(*http.Request, []*http.Request) error {
+func sameOriginRedirects(base *url.URL) func(*http.Request, []*http.Request) error {
 	return func(request *http.Request, via []*http.Request) error {
 		if len(via) >= maximumRedirects {
 			return errors.New("too many redirects")
 		}
-		if request.URL.Host != host {
+		if !sameOrigin(base, request.URL) {
 			return fmt.Errorf("refusing redirect to another host: %s", request.URL.Host)
 		}
 		return nil
+	}
+}
+
+func sameOrigin(first, second *url.URL) bool {
+	if first == nil || second == nil {
+		return false
+	}
+	return strings.EqualFold(first.Scheme, second.Scheme) &&
+		strings.EqualFold(first.Hostname(), second.Hostname()) &&
+		effectivePort(first) == effectivePort(second)
+}
+
+func effectivePort(target *url.URL) string {
+	if port := target.Port(); port != "" {
+		return port
+	}
+	switch strings.ToLower(target.Scheme) {
+	case "https":
+		return "443"
+	case "http":
+		return "80"
+	default:
+		return ""
 	}
 }

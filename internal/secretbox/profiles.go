@@ -21,3 +21,8 @@ func OIDCTransactionAAD(transactionID, providerID string) ResourceAAD {
 	return ResourceAAD{Domain: "beat", Namespace: "oidc_transaction", RowID: transactionID,
 		Field: "pkce_verifier", Revision: providerID, PayloadVersion: "v1"}
 }
+
+func EgressProxyAAD(revision int64) ResourceAAD {
+	return ResourceAAD{Domain: "beat", Namespace: "egress_proxy", RowID: "global",
+		Field: "secret", Revision: strconv.FormatInt(revision, 10), PayloadVersion: "v1"}
+}

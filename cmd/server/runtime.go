@@ -20,6 +20,7 @@ import (
 	"github.com/beat/backend/internal/buildinfo"
 	"github.com/beat/backend/internal/deploymentaccess"
 	"github.com/beat/backend/internal/diagnostics"
+	"github.com/beat/backend/internal/egressproxy"
 	"github.com/beat/backend/internal/fleetsummary"
 	"github.com/beat/backend/internal/geoip"
 	"github.com/beat/backend/internal/maintenance"
@@ -100,6 +101,7 @@ type serverServices struct {
 	trafficReports             *trafficreport.Service
 	fleetSummaries             *fleetsummary.Service
 	applicationGc              *applicationgc.Service
+	egressProxy                *egressproxy.Service
 	oidc                       *oidc.Service
 	themes                     *theme.Service
 	themeMarkets               *theme.MarketService

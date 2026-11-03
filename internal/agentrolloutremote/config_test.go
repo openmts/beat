@@ -71,3 +71,37 @@ func TestRedirectPolicyRestrictsProtocolsAndHosts(t *testing.T) {
 		t.Fatal("Retry-After parsing is not bounded")
 	}
 }
+
+func TestDefaultClientDoesNotInheritEnvironmentProxy(t *testing.T) {
+	service, err := New(Config{Rollout: &agentrollout.Service{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	transport, ok := service.client.Transport.(*http.Transport)
+	if !ok || transport.Proxy != nil {
+		t.Fatal("default Agent release client inherited an environment proxy")
+	}
+	injected := &http.Transport{}
+	service, err = New(Config{Rollout: &agentrollout.Service{}, HTTPClient: &http.Client{Transport: injected}})
+	if err != nil || service.client.Transport != injected {
+		t.Fatalf("injected transport changed: %v", err)
+	}
+}
+
+func TestRedirectPolicyRequiresTheConfiguredOriginPort(t *testing.T) {
+	service := &Service{api: &url.URL{Scheme: "https", Host: "ghe.example:8443"}}
+	trusted, _ := url.Parse("https://ghe.example:8443/repos/openmts/beat")
+	if !service.safeDownloadURL(trusted) {
+		t.Fatal("configured origin redirect rejected")
+	}
+	for _, raw := range []string{
+		"https://ghe.example/repos/openmts/beat",
+		"https://ghe.example:443/repos/openmts/beat",
+		"https://api.github.com:8443/repos/openmts/beat",
+	} {
+		target, _ := url.Parse(raw)
+		if service.safeDownloadURL(target) {
+			t.Fatalf("cross-port redirect accepted: %s", raw)
+		}
+	}
+}

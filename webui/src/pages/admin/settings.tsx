@@ -1,16 +1,16 @@
-import { useEffect, useState, type FormEvent, type ReactNode } from "react"
-import { SaveIcon } from "lucide-react"
-import { Alert, AlertDescription } from "@/components/ui/alert"
-import { Badge } from "@/components/ui/badge"
-import { Button } from "@/components/ui/button"
+import { useEffect, useState, type FormEvent, type ReactNode } from "react";
+import { SaveIcon } from "lucide-react";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import {
   Field,
   FieldContent,
   FieldDescription,
   FieldGroup,
   FieldLabel,
-} from "@/components/ui/field"
-import { Input } from "@/components/ui/input"
+} from "@/components/ui/field";
+import { Input } from "@/components/ui/input";
 import {
   Select,
   SelectContent,
@@ -19,79 +19,103 @@ import {
   SelectTrigger,
   SelectValue,
   type SelectOption,
-} from "@/components/ui/select"
-import { Switch } from "@/components/ui/switch"
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
-import { Textarea } from "@/components/ui/textarea"
-import { useLocale } from "@/context/locale"
-import { useSiteSettings } from "@/context/site-settings"
-import { getDeploymentAccess, updateSiteSettings } from "@/lib/api"
-import type { DeploymentAccessStatus, PublicAddressMode, SiteSettings } from "@/types"
-import { PageHeader } from "@/components/page-header"
-import DataStorageSection from "@/pages/admin/data-storage-section"
-import { PublicTelemetryPanel } from "@/pages/admin/public-telemetry-panel"
-import { ThemesPanel } from "@/pages/admin/theme-panels"
+} from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import { Textarea } from "@/components/ui/textarea";
+import { useLocale } from "@/context/locale";
+import { useSiteSettings } from "@/context/site-settings";
+import { getDeploymentAccess, updateSiteSettings } from "@/lib/api";
+import type {
+  DeploymentAccessStatus,
+  PublicAddressMode,
+  SiteSettings,
+} from "@/types";
+import { PageHeader } from "@/components/page-header";
+import DataStorageSection from "@/pages/admin/data-storage-section";
+import { EgressProxyPanel } from "@/pages/admin/egress-proxy-panel";
+import { PublicTelemetryPanel } from "@/pages/admin/public-telemetry-panel";
+import { ThemesPanel } from "@/pages/admin/theme-panels";
 
 function Settings() {
-  const { t } = useLocale()
-  const { settings, loading, error: loadError, applySettings } = useSiteSettings()
-  const [form, setForm] = useState(settings)
-  const [saving, setSaving] = useState(false)
-  const [message, setMessage] = useState<string | null>(null)
-  const [saveError, setSaveError] = useState<string | null>(null)
-  const [deployment, setDeployment] = useState<DeploymentAccessStatus | null>(null)
-  const [deploymentError, setDeploymentError] = useState(false)
+  const { t } = useLocale();
+  const {
+    settings,
+    loading,
+    error: loadError,
+    applySettings,
+  } = useSiteSettings();
+  const [form, setForm] = useState(settings);
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [deployment, setDeployment] = useState<DeploymentAccessStatus | null>(
+    null,
+  );
+  const [deploymentError, setDeploymentError] = useState(false);
 
   useEffect(() => {
-    let active = true
+    let active = true;
     void (async () => {
       try {
-        const status = await getDeploymentAccess()
-        if (active) setDeployment(status)
+        const status = await getDeploymentAccess();
+        if (active) setDeployment(status);
       } catch {
-        if (active) setDeploymentError(true)
+        if (active) setDeploymentError(true);
       }
-    })()
+    })();
     return () => {
-      active = false
-    }
-  }, [])
+      active = false;
+    };
+  }, []);
 
-  useEffect(() => setForm(settings), [settings])
+  useEffect(() => setForm(settings), [settings]);
 
-  const patch = (values: Partial<SiteSettings>) => setForm((current) => ({ ...current, ...values }))
+  const patch = (values: Partial<SiteSettings>) =>
+    setForm((current) => ({ ...current, ...values }));
   const submit = async (event: FormEvent) => {
-    event.preventDefault()
-    setSaving(true)
-    setMessage(null)
-    setSaveError(null)
+    event.preventDefault();
+    setSaving(true);
+    setMessage(null);
+    setSaveError(null);
     try {
-      const updated = await updateSiteSettings(form)
-      applySettings(updated)
-      setMessage(t("settings.saved"))
+      const updated = await updateSiteSettings(form);
+      applySettings(updated);
+      setMessage(t("settings.saved"));
     } catch (reason) {
-      setSaveError(reason instanceof Error ? reason.message : t("app.error"))
+      setSaveError(reason instanceof Error ? reason.message : t("app.error"));
     } finally {
-      setSaving(false)
+      setSaving(false);
     }
-  }
+  };
 
   return (
     <div className="mx-auto w-full max-w-5xl">
-      <PageHeader title={t("settings.site")} description={t("settings.site_description")} />
+      <PageHeader
+        title={t("settings.site")}
+        description={t("settings.site_description")}
+      />
       {(loadError || saveError) && (
         <Alert variant="destructive" className="mb-5">
           <AlertDescription>{saveError || loadError}</AlertDescription>
         </Alert>
       )}
       {message && (
-        <Alert className="mb-5"><AlertDescription>{message}</AlertDescription></Alert>
+        <Alert className="mb-5">
+          <AlertDescription>{message}</AlertDescription>
+        </Alert>
       )}
-      <form onSubmit={(event) => void submit(event)} className="space-y-8" aria-busy={loading || saving}>
+      <form
+        onSubmit={(event) => void submit(event)}
+        className="space-y-8"
+        aria-busy={loading || saving}
+      >
         <SettingsSection title={t("settings.identity")}>
           <FieldGroup>
             <Field>
-              <FieldLabel htmlFor="site-title">{t("settings.site_title")}</FieldLabel>
+              <FieldLabel htmlFor="site-title">
+                {t("settings.site_title")}
+              </FieldLabel>
               <Input
                 id="site-title"
                 value={form.site_title}
@@ -100,18 +124,26 @@ function Settings() {
                 disabled={loading}
                 onChange={(event) => patch({ site_title: event.target.value })}
               />
-              <FieldDescription>{t("settings.site_title_hint")}</FieldDescription>
+              <FieldDescription>
+                {t("settings.site_title_hint")}
+              </FieldDescription>
             </Field>
             <Field>
-              <FieldLabel htmlFor="site-description">{t("settings.description")}</FieldLabel>
+              <FieldLabel htmlFor="site-description">
+                {t("settings.description")}
+              </FieldLabel>
               <Textarea
                 id="site-description"
                 value={form.site_description}
                 maxLength={240}
                 disabled={loading}
-                onChange={(event) => patch({ site_description: event.target.value })}
+                onChange={(event) =>
+                  patch({ site_description: event.target.value })
+                }
               />
-              <FieldDescription>{t("settings.description_hint")}</FieldDescription>
+              <FieldDescription>
+                {t("settings.description_hint")}
+              </FieldDescription>
             </Field>
           </FieldGroup>
         </SettingsSection>
@@ -137,7 +169,9 @@ function Settings() {
               />
             </FieldGroup>
             <div>
-              <p className="mb-2 text-sm font-medium">{t("settings.preview")}</p>
+              <p className="mb-2 text-sm font-medium">
+                {t("settings.preview")}
+              </p>
               <div className="flex h-28 items-center justify-center overflow-hidden rounded-md border bg-muted/20 p-3">
                 {form.logo_url ? (
                   <img
@@ -173,10 +207,17 @@ function Settings() {
                 spacing={0}
                 value={[form.public_address_mode]}
                 disabled={loading}
-                onValueChange={(value) => value[0] && patch({ public_address_mode: value[0] as PublicAddressMode })}
+                onValueChange={(value) =>
+                  value[0] &&
+                  patch({ public_address_mode: value[0] as PublicAddressMode })
+                }
               >
                 {addressModes.map((mode) => (
-                  <ToggleGroupItem key={mode} value={mode} aria-label={t(`settings.address_${mode}`)}>
+                  <ToggleGroupItem
+                    key={mode}
+                    value={mode}
+                    aria-label={t(`settings.address_${mode}`)}
+                  >
                     {t(`settings.address_${mode}`)}
                   </ToggleGroupItem>
                 ))}
@@ -189,7 +230,9 @@ function Settings() {
               hint={t("settings.show_network_hint")}
               checked={form.show_network_quality}
               disabled={loading}
-              onChange={(show_network_quality) => patch({ show_network_quality })}
+              onChange={(show_network_quality) =>
+                patch({ show_network_quality })
+              }
             />
             <SwitchField
               id="show-accelerators"
@@ -200,7 +243,9 @@ function Settings() {
               onChange={(show_accelerators) => patch({ show_accelerators })}
             />
             <Alert>
-              <AlertDescription>{t("settings.address_privacy_note")}</AlertDescription>
+              <AlertDescription>
+                {t("settings.address_privacy_note")}
+              </AlertDescription>
             </Alert>
           </FieldGroup>
         </SettingsSection>
@@ -208,26 +253,49 @@ function Settings() {
         <SettingsSection title={t("settings.deployment")}>
           <FieldGroup>
             <FieldDescription>{t("settings.deployment_hint")}</FieldDescription>
-            <DeploymentRow label={t("settings.external_url")} value={deployment?.public_base_url || t("settings.external_url_unset")} />
-            <DeploymentRow label={t("settings.api_origins")} value={deploymentError ? t("settings.deployment_unavailable") : originSummary(t, deployment, "api")} />
-            <DeploymentRow label={t("settings.ws_origins")} value={deploymentError ? t("settings.deployment_unavailable") : originSummary(t, deployment, "ws")} />
+            <DeploymentRow
+              label={t("settings.external_url")}
+              value={
+                deployment?.public_base_url || t("settings.external_url_unset")
+              }
+            />
+            <DeploymentRow
+              label={t("settings.api_origins")}
+              value={
+                deploymentError
+                  ? t("settings.deployment_unavailable")
+                  : originSummary(t, deployment, "api")
+              }
+            />
+            <DeploymentRow
+              label={t("settings.ws_origins")}
+              value={
+                deploymentError
+                  ? t("settings.deployment_unavailable")
+                  : originSummary(t, deployment, "ws")
+              }
+            />
           </FieldGroup>
         </SettingsSection>
 
         <div className="flex justify-end border-t pt-5">
-          <Button type="submit" disabled={loading || saving}><SaveIcon />{t("app.save")}</Button>
+          <Button type="submit" disabled={loading || saving}>
+            <SaveIcon />
+            {t("app.save")}
+          </Button>
         </div>
       </form>
+      <EgressProxyPanel />
       <PublicTelemetryPanel />
       <DataStorageSection />
       <ThemesPanel />
     </div>
-  )
+  );
 }
 
-const addressModes: PublicAddressMode[] = ["hidden", "masked", "full"]
+const addressModes: PublicAddressMode[] = ["hidden", "masked", "full"];
 
-type Translate = (key: string) => string
+type Translate = (key: string) => string;
 
 function DeploymentRow({ label, value }: { label: string; value: string }) {
   return (
@@ -235,35 +303,47 @@ function DeploymentRow({ label, value }: { label: string; value: string }) {
       <span className="text-sm text-muted-foreground">{label}</span>
       <Badge variant="outline">{value}</Badge>
     </div>
-  )
+  );
 }
 
 // originSummary 只汇总模式与数量；来源列表永远不进入浏览器。
-function originSummary(t: Translate, status: DeploymentAccessStatus | null, scope: "api" | "ws"): string {
-  if (!status) return t("settings.deployment_unavailable")
-  const mode = scope === "api" ? status.api_origin_mode : status.ws_origin_mode
-  const count = scope === "api" ? status.api_origin_count : status.ws_origin_count
-  if (mode === "all") return t("settings.origins_all")
-  if (mode === "configured") return t("settings.origins_configured").replace("{count}", String(count))
-  return t("settings.origins_same")
+function originSummary(
+  t: Translate,
+  status: DeploymentAccessStatus | null,
+  scope: "api" | "ws",
+): string {
+  if (!status) return t("settings.deployment_unavailable");
+  const mode = scope === "api" ? status.api_origin_mode : status.ws_origin_mode;
+  const count =
+    scope === "api" ? status.api_origin_count : status.ws_origin_count;
+  if (mode === "all") return t("settings.origins_all");
+  if (mode === "configured")
+    return t("settings.origins_configured").replace("{count}", String(count));
+  return t("settings.origins_same");
 }
 
-function SettingsSection({ title, children }: { title: string; children: ReactNode }) {
+function SettingsSection({
+  title,
+  children,
+}: {
+  title: string;
+  children: ReactNode;
+}) {
   return (
     <section className="grid gap-5 border-t pt-5 lg:grid-cols-[12rem_minmax(0,1fr)]">
       <h2 className="text-sm font-semibold">{title}</h2>
       <div>{children}</div>
     </section>
-  )
+  );
 }
 
 interface URLFieldProps {
-  id: string
-  label: string
-  hint: string
-  value: string
-  disabled: boolean
-  onChange: (value: string) => void
+  id: string;
+  label: string;
+  hint: string;
+  value: string;
+  disabled: boolean;
+  onChange: (value: string) => void;
 }
 
 function URLField(props: URLFieldProps) {
@@ -281,40 +361,59 @@ function URLField(props: URLFieldProps) {
       />
       <FieldDescription>{props.hint}</FieldDescription>
     </Field>
-  )
+  );
 }
 
-function ThemeField(props: { value: SiteSettings["default_theme"]; disabled: boolean; onChange: (value: SiteSettings["default_theme"]) => void }) {
-  const { t } = useLocale()
+function ThemeField(props: {
+  value: SiteSettings["default_theme"];
+  disabled: boolean;
+  onChange: (value: SiteSettings["default_theme"]) => void;
+}) {
+  const { t } = useLocale();
   const items: SelectOption[] = [
     { value: "system", label: t("settings.theme_system") },
     { value: "light", label: t("settings.theme_light") },
     { value: "dark", label: t("settings.theme_dark") },
-  ]
+  ];
   return (
     <Field>
-      <FieldLabel htmlFor="default-theme">{t("settings.default_theme")}</FieldLabel>
+      <FieldLabel htmlFor="default-theme">
+        {t("settings.default_theme")}
+      </FieldLabel>
       <Select
         items={items}
         value={props.value}
         disabled={props.disabled}
-        onValueChange={(value) => props.onChange(value as SiteSettings["default_theme"])}
+        onValueChange={(value) =>
+          props.onChange(value as SiteSettings["default_theme"])
+        }
       >
-        <SelectTrigger id="default-theme" className="w-full"><SelectValue /></SelectTrigger>
+        <SelectTrigger id="default-theme" className="w-full">
+          <SelectValue />
+        </SelectTrigger>
         <SelectContent>
           <SelectGroup>
             {items.map((item) => (
-              <SelectItem key={item.value} value={item.value}>{item.label}</SelectItem>
+              <SelectItem key={item.value} value={item.value}>
+                {item.label}
+              </SelectItem>
             ))}
           </SelectGroup>
         </SelectContent>
       </Select>
       <FieldDescription>{t("settings.default_theme_hint")}</FieldDescription>
     </Field>
-  )
+  );
 }
 
-function SwitchField(props: { id: string; label: string; hint: string; checked: boolean; disabled: boolean; onChange: (value: boolean) => void }) {
+function SwitchField(props: {
+  id: string;
+  label: string;
+  hint: string;
+  checked: boolean;
+  disabled: boolean;
+  onChange: (value: boolean) => void;
+}) {
   return (
     <Field orientation="horizontal">
       <FieldContent>
@@ -328,7 +427,7 @@ function SwitchField(props: { id: string; label: string; hint: string; checked: 
         onCheckedChange={props.onChange}
       />
     </Field>
-  )
+  );
 }
 
-export default Settings
+export default Settings;

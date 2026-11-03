@@ -41,6 +41,8 @@ func (h *AuthorizedKeySelfHealer) authorizedKeysContains(key string) bool {
 			return false
 		}
 	}
+	authorizedKeysMu.RLock()
+	defer authorizedKeysMu.RUnlock()
 	content, err := os.ReadFile(filepath.Join(home, ".ssh", "authorized_keys"))
 	if err != nil {
 		return false

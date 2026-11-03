@@ -14,12 +14,17 @@ vi.mock("@/context/locale", async () => {
   return { useLocale: () => testLocaleValue("en"), useOptionalLocale: () => testLocaleValue("en") }
 })
 vi.mock("@/context/auth", () => ({ useAuth: () => ({ principal: { user: { id: "owner", role: "owner" }, session: { id: "session", reauthenticated_until: "2099-01-01T00:00:00Z" } } }) }))
-vi.mock("@/lib/lifecycle-api", () => ({ saveLifecycle: vi.fn(), saveLocation: vi.fn(), refreshLocation: vi.fn(), saveGeoIPSettings: vi.fn(), saveLifecycleSettings: vi.fn(), uploadMMDB: vi.fn(), updateMMDB: vi.fn(), rollbackMMDB: vi.fn() }))
+vi.mock("@/lib/lifecycle-api", () => ({ saveLifecycle: vi.fn(), saveLocation: vi.fn(), refreshLocation: vi.fn(), saveGeoIPSettings: vi.fn(), saveLifecycleSettings: vi.fn(), uploadMMDB: vi.fn(), updateMMDB: vi.fn(), rollbackMMDB: vi.fn(), getRemoteMMDBRelease: vi.fn(), installRemoteMMDB: vi.fn() }))
 const lifecycle = (): NodeLifecycle => ({ node_id: "node", provider: "Provider", plan: "Plan", price_micros: "9223372036854775807", currency: "USD", interval_unit: "month", interval_count: 1, expires_on: "2027-01-01", renewal_mode: "manual", private_notes: "private", expiry_visibility: "private", price_visibility: "private", confirm_auto_advance: false, status: "active", days_remaining: 90, anchor_month: 1, anchor_day: 1, anchor_end_of_month: false, updated_at: "" })
 const location = (): NodeLocation => ({ node_id: "node", scope: "public", country_code: "JP", mode: "manual", visibility: "private", provider: "mmdb", revision: "1", stale: false, has_source: false })
 const geo = (): GeoIPSettings => ({ provider: "disabled", revision: 7, remote_consent: false, has_credential: true, mmdb: { edition: "GeoLite2-Country", source: "uploaded", build_epoch: 1, sha256: "hash", size_bytes: 100, state: "ready" } })
+const remoteRelease = { repository: "P3TERX/GeoLite.mmdb", version: "2026.10.22", published_at: "2026-10-22T05:48:01Z", asset_name: "GeoLite2-Country.mmdb", size_bytes: 3406491, sha256: "c7b73dd5e1a618c6df2d9a716cf95b939a51016de8978cd317d9ae7ebf3f0b5f", update_available: true }
 const settings: LifecycleSettings = { timezone: "UTC", lead_days: [0, 7], post_days: [1], public_country: false, public_expiry: false, public_price: false }
-beforeEach(() => vi.clearAllMocks())
+beforeEach(() => {
+  vi.clearAllMocks()
+  vi.mocked(api.getRemoteMMDBRelease).mockResolvedValue(remoteRelease)
+  vi.mocked(api.installRemoteMMDB).mockResolvedValue(geo())
+})
 async function confirm() { await userEvent.click(await screen.findByRole("button", { name: "Confirm" })) }
 describe("node lifecycle and location editors", () => {
  it("saves exact micros and requires explicit automatic-date consent", async () => {
@@ -85,5 +90,37 @@ describe("global lifecycle and GeoIP editors", () => {
   await userEvent.click(screen.getByRole("button", { name: "Download from MaxMind" })); await confirm(); await waitFor(() => expect(api.updateMMDB).toHaveBeenCalledWith({ account_id: "account", license_key: "license", edition: "GeoIP2-Country", expected_revision: 7 }))
   expect(screen.getByLabelText("MaxMind transient license key")).toHaveValue(""); await userEvent.click(screen.getByRole("button", { name: "Roll back database" })); await confirm(); await waitFor(() => expect(api.rollbackMMDB).toHaveBeenCalledWith(7))
   expect(within(screen.getByRole("button", { name: "Upload" })).queryByRole("alert")).toBeNull()
+ })
+ it("downloads and atomically installs the verified GitHub release", async () => {
+  const saved = vi.fn(); const page = render(<MMDBManager value={{ ...geo(), mmdb: { ...geo().mmdb, state: "missing" } }} saved={saved} />)
+  expect(await screen.findByText("Version 2026.10.22")).toBeInTheDocument()
+  await userEvent.click(screen.getByRole("button", { name: "Download database" })); await confirm()
+  await waitFor(() => expect(api.installRemoteMMDB).toHaveBeenCalledWith({ version: remoteRelease.version, sha256: remoteRelease.sha256, expected_revision: 7 }))
+  expect(saved).toHaveBeenCalledOnce()
+  expect(await screen.findByText("Up to date")).toBeInTheDocument()
+  page.rerender(<MMDBManager value={{ ...geo(), revision: 8 }} saved={saved} />)
+  expect(screen.getByRole("button", { name: "Install update" })).toBeDisabled()
+ })
+ it("disables remote installation when the installed digest is current", async () => {
+  vi.mocked(api.getRemoteMMDBRelease).mockResolvedValue({ ...remoteRelease, update_available: false })
+  render(<MMDBManager value={geo()} saved={vi.fn()} />)
+  expect(await screen.findByText("Up to date")).toBeInTheDocument()
+  expect(screen.getByRole("button", { name: "Install update" })).toBeDisabled()
+ })
+ it("shows remote query failures and retries", async () => {
+  vi.mocked(api.getRemoteMMDBRelease).mockRejectedValue(new Error("GitHub unavailable"))
+  render(<MMDBManager value={geo()} saved={vi.fn()} />)
+  expect(await screen.findByRole("alert")).toHaveTextContent("GitHub unavailable")
+  vi.mocked(api.getRemoteMMDBRelease).mockResolvedValue(remoteRelease)
+  await userEvent.click(screen.getByRole("button", { name: "Retry" }))
+  expect(await screen.findByText("Version 2026.10.22")).toBeInTheDocument()
+ })
+ it("uses the localized fallback and refreshes the release manually", async () => {
+  vi.mocked(api.getRemoteMMDBRelease).mockRejectedValueOnce("offline").mockResolvedValueOnce(remoteRelease)
+  render(<MMDBManager value={geo()} saved={vi.fn()} />)
+  expect(await screen.findByRole("alert")).toHaveTextContent("Unable to load the latest GitHub release")
+  await userEvent.click(screen.getByRole("button", { name: "Check again" }))
+  expect(await screen.findByText("Version 2026.10.22")).toBeInTheDocument()
+  expect(api.getRemoteMMDBRelease).toHaveBeenCalledTimes(2)
  })
 })

@@ -78,6 +78,11 @@ known GitHub asset redirect hosts are fixed at startup; arbitrary redirect
 destinations are rejected. Responses and artifact sizes are bounded, and only
 two remote synchronizations can run concurrently.
 
+The default client ignores process-level `HTTP_PROXY`/`HTTPS_PROXY` settings.
+Outbound proxying must use the owner-configured egress proxy, which is injected
+explicitly. Redirects to the configured API origin preserve scheme and effective
+port; GitHub and asset hosts are restricted to HTTPS on port 443.
+
 Without a token, public API rate limits apply. Exhaustion returns `429` with
 `Retry-After`; the UI retains the last catalog until an explicit refresh.
 Invalid repository/API settings fail server startup rather than silently

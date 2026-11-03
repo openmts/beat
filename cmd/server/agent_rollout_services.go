@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -41,7 +42,12 @@ func (services *serverServices) initializeAgentRollouts(ctx context.Context, sto
 	}
 	var releaseRemote *agentrolloutremote.Service
 	if config.Enabled {
-		releaseRemote, err = newAgentReleaseRemote(service, os.Getenv)
+		if services.egressProxy == nil {
+			releaseRemote, err = newAgentReleaseRemote(service, os.Getenv)
+		} else {
+			client := &http.Client{Transport: services.egressProxy.Transport(nil)}
+			releaseRemote, err = newAgentReleaseRemote(service, os.Getenv, client)
+		}
 		if err != nil {
 			return fmt.Errorf("initialize Agent release source: %w", err)
 		}

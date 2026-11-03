@@ -1,26 +1,327 @@
 # 当前工作区预览
 
-验证日期：2026-10-20。8081 预览实例当前运行 v233 包（`/readyz` 上报 `0.2.0-dev+worktree.20261020.10`），前端入口 `assets/index-zCGg0-u_.js`；本文件下方按时间倒序记录各批次部署与验证。
+验证日期：2026-10-27。v254 仍已部署，8081 正常监听，
+`beat-preview-server.service` 与 `beat-preview-agent.service` 均为 `active`；A16 24 小时浸泡已通过。
+下列 v253 及更早条目是历史部署/门禁证据，不代表当前运行状态。
 
 - 地址：http://192.168.1.48:8081；后台 `/admin`；指标 `/admin/metrics`。
-- systemd：`beat-preview-server.service`、`beat-preview-agent.service`（正在运行，未设置开机自启）。
+- systemd：`beat-preview-server.service`、`beat-preview-agent.service`（当前 active，未设置开机自启）。
 - 可执行程序及前端：`/opt/beat-preview/current`。
-- 当前发布目录：`/opt/beat-preview/releases/worktree-v233-20261020T150734Z`；升级包 `release/preview-v233-20261020/`；上一版目录 `worktree-v232-20261020T034140Z`。
-- 独立数据：`/var/lib/beat-preview/data`；schema v30 `accelerator_public_visibility`；SQLite integrity_check=ok、外键 0 违规。
+- 当前发布目录：`/opt/beat-preview/releases/worktree-v254-20261025T143540Z`；升级包 `release/preview-v254-20261025/`；上一版目录 `worktree-v239-20261023T163336Z`。
+- 冷备份：`/var/backups/beat-preview/pre-v254-20261025T143540Z`。
+- 独立数据：`/var/lib/beat-preview/data`；schema v31 `egress_proxy_settings`；SQLite integrity_check=ok、外键 0 违规。
 - Agent 配置：`/var/lib/beat-preview/agent-home/agent.json`，由专用 beat-preview 用户运行，每5秒上报。
 - 登录资料：`/etc/beat-preview/access.json`，root 私有文件，不入库。
 - 已安装全部十套主题（Canvas、Operations、Slate、Aurora、Graphite、Paper、Terminal、Midnight、Solar、沙箱主题 Pulse），当前启用 Slate；已创建“当前主机实时监控”六面板仪表盘，可在指标工作台下拉选择。
 - 浏览器实测公共首页和指标工作台正常渲染；Agent 在线、telemetry=fresh。MTS readiness 异常已修复，维护接口返回健康且无分片整理告警。
-- A16 浸泡：v226 需要重启后端，因此窗口继续停止，
-  未生成达标报告；日志归档为 `/var/tmp/beat-soak/a16-24h.pre-v224-20261019T174000Z.log`。
-  新窗口尚未启动，后续需要从 v226 启动时间重新计时。
-- 8080 宿主实例与数据未改动。本预览不是完整商用验收；远程操作仍默认关闭。
+- A16 浸泡：`beat-soak-a16.service` 自 2026-10-25 22:36:52 CST 起算 24 小时，已成功结束。
+  报告 `/var/tmp/beat-soak/a16-24h.json` 含 5,738 个样本 / 86,407.1 秒，6/6 断言通过、0 失败、
+  0 限流；独立逐样本复核所有 `readyz` 与五类端点均为 200。服务端 RSS 两端窗口中位数
+  632,044→617,326 KiB（-2.33%），峰值 799,384 KiB；容量证据完整。日志为 `/var/tmp/beat-soak/a16-24h.log`。
+  上一窗口日志归档为 `/var/tmp/beat-soak/a16-24h.pre-v254-20261025T143540Z.log`。
+- 8080 宿主实例与数据未改动。C01–C17 商用验收已在当前树闭合；远程操作仍默认关闭。
 - v221（2026-10-19）是**只加测试**的一批：把 10 个按包覆盖率低于 90% 的包全部补到 ≥90%，产品代码、前端、
   API 与 schema 都没有改动，因此 8081 未重新部署（`ActiveEnterTimestamp` 仍是 2026-10-19 00:43:32、
   `NRestarts=0`），A16 浸泡窗口不中断；逐包数字与门禁见 `commercial-delivery-plan.md` 的 v221 章节。
 - v221 门禁（2026-10-19 实测）：`bash scripts/check.sh backend` **exit=0**——`-race` + `-shuffle` 63 包全 `ok`/0 FAIL、
   `go tool cover -func` 总行覆盖 **92.6%** 且 63 个包全部 ≥90%、`golangci-lint` 0 issues、`go vet` 干净、
   `govulncheck` 0 可达漏洞、双端 `-trimpath` 构建通过；本批无前端改动，前端门禁沿用 v219 结果。
+
+## v254：OIDC/CLI/代理安全修复与部署（2026-10-25）
+
+- OIDC Token 交换重定向现在必须保持原始 scheme、hostname 和有效端口；真实 307 回归证明跨端口目标收不到
+  授权码、PKCE verifier 或 Basic 客户端密钥，原有三跳上限不变。授权 URL 改用 `url.Parse` + `url.Values`
+  合并提供方已有查询参数，不再生成双 `?`。OIDC 外发客户端增加 30 秒整体期限，覆盖响应体读取。
+- `beat-cli` 重定向策略同步改为完全同源，拒绝 HTTPS→HTTP 降级和有效端口变化，保留既有 `too many redirects`
+  与 `refusing redirect to another host` 错误语义。出站代理在 `enabled=1` 但密文为空时返回
+  `ErrUnavailable`；`enabled=0` 且无密文仍表示合法的初始关闭状态。
+- TDD 证据：三组定向回归先在旧实现上失败（双 `?`、无整体超时、跨源请求被放行、CLI 策略缺失、代理退化为直连），
+  修复后 `go test -race -shuffle=on ./internal/oidc ./internal/beatcli ./internal/egressproxy` 通过。
+  包覆盖率：OIDC 90.9%、beatcli 91.7%、egressproxy 98.8%；`golangci-lint` 0 issues。
+- 完整门禁 `bash scripts/check.sh all` **exit=0**（Go 1.26.10，日志 `/var/tmp/beat-check-v254.log`）：
+  66 个有测试后端包覆盖率均 ≥90%，race 两分片、scripts 74 例、themes、privileged、前端 257 文件/1570 例
+  （行覆盖 90.22%）、三套主题浏览器 smoke 和隔离容器 `/readyz` 全部通过。
+- 部署：v254 `0.2.0-dev+worktree.20261025.01`（commit `04f517c`），入口 `assets/index-Cp-bm9cw.js`；
+  发布目录与冷备份见顶部。`/readyz` 24/24 项 ok，schema 31、integrity ok、外键 0 违规；公共首页 200，
+  Agent `online`、telemetry `fresh`、版本与构建一致，启动后无 warning。
+- 部署完整性：发布目录 `SHA256SUMS` 181 项全部校验通过；运行中 Server 的可执行文件解析到该发布目录，
+  `current` 指向同一目录；180 MiB 冷备份、root 私有 `0600` 登录资料与 `0700` 浸泡目录均在位。
+- 宿主只读安全审计：首页/就绪/管理外壳带 CSP、`nosniff`、`X-Frame-Options=DENY`、`no-referrer`；
+  未授权 `/api/v1/admin/runtime` 返回 401，非法 Origin 的公开交互返回 400；公开 `/api/v1/nodes`
+  返回集合与 SQLite `is_public=1` 子集一致，管理接口仍需会话。
+- A16 24 小时浸泡已通过：5,738 个样本、86,407.1 秒、6/6 断言通过、failures=0、rate_limited=0；
+  逐样本审计确认所有 `readyz` 与五类请求均为 200，Server/Agent 全窗口未重启。
+- 最终当前树门禁：`bash scripts/check.sh all` **exit=0**，日志 `/var/tmp/beat-check-final-20261027.log`；
+  66 个有测试后端包全部 ≥90%，前端 257 文件/1,570 例、行覆盖 90.22%，三套主题浏览器与隔离容器门禁通过；
+  临时目录、容器、镜像和 Python 缓存均已回收。
+
+## v253：当前工作树全量非部署门禁复核（2026-10-25）
+
+- 后端静态与测试门禁使用项目固定的 Go 1.26.10 执行，均为 `exit=0`：lint 0 issues、
+  `go vet` 干净、0 可达漏洞、双端构建通过；所有含测试包行覆盖率 ≥90%。
+- 前端 `bash scripts/check.sh frontend` `exit=0`：257 个测试文件、1570 个用例通过，
+  行覆盖率 90.22%，`oxlint`、生产构建和三套主题浏览器门禁全部通过。
+- `scripts` 门禁 74 项通过，`beatctl.sh`、`check.sh`、`prepare-release.sh`、
+  `state_archive.py`、`soak.py` 行覆盖率分别为 97.39%、96.67%、92.50%、94.39%、97.82%。
+- `themes` 门禁、两组 `backend-race` 分片和 root `backend-privileged` 门禁均为 `exit=0`。
+  另行对 `agenttransport`、`egressproxy`、`oidc`、`agentdiagnostics`、`agentoperations`、
+  `agentrolloutremote`、`notification`、`geoip`、`theme`、`agent`、`api/handler` 与
+  `cmd/server` 整包跑通 `-race -shuffle=on`。
+- 隔离容器门禁通过：镜像可构建，容器以 UID 65532、只读根文件系统和受限 capability 启动，
+  `/readyz` 就绪探针成功。
+- 跨平台构建通过：Windows amd64 Agent、Darwin arm64 Agent、Linux arm64 Server/Agent；
+  声明式通知模板模糊测试执行 373,633 次，无崩溃或超限失败。
+- 以上是 v253 当时的源码与隔离运行证据；v254 随后已完成部署并以独立门禁复验。
+
+### 已授权的既有流程修复（v254 已实施）
+
+- OIDC 307/308 跨源重定向、授权 URL 双 `?`、缺少整体期限，`beat-cli` scheme/端口校验和代理空密文
+  退化问题均已按上文 v254 批次修复、验证并部署。
+
+## v250：HTTP 停机等待被劫持 WebSocket（2026-10-25，仅工作区实现）
+
+- `http.Server.Shutdown` 不会关闭或等待 WebSocket 等被劫持连接。此前 Server 停机只显式关闭
+  指标流和终端；Agent 长连接仍可能继续运行，而调用方随后关闭 SQLite/MTS 存储。
+- 停机现在分两阶段：先停止监听并排空普通 HTTP 请求，再关闭剩余被劫持连接并等待对应处理器
+  返回；整体继续受既有 10 秒停机上限约束，超时未退出会返回明确错误而不是静默继续关存储。
+  该机制覆盖 Agent、终端、指标流及后续新增的劫持端点。
+- 回归使用真实 WebSocket 升级，修复前稳定出现“生命周期已返回但处理器未结束”；修复后连续
+  20 次 race 运行通过，并覆盖无 Hijacker、等待超时和重复连接周期。
+- 验证：`go test -race ./cmd/server -count=1 -cover` 通过，覆盖率 93.8%，新增生命周期函数
+  均为 100%；`go vet ./cmd/server` 与 `golangci-lint run ./cmd/server` 均无问题。
+
+## v251：Agent 公钥文件并发与原子写入（2026-10-25，仅工作区实现）
+
+- 心跳自愈与 WebSocket 密钥任务会在不同 goroutine 更新同一个 `authorized_keys`。原实现
+  直接读改写，交错执行时后写者可能覆盖先写者，导致密钥轮换期间丢失公钥。
+- 同一 Agent 进程内的读取与更新现统一串行化；写入改为同目录 `0600` 临时文件、
+  `fsync` 后原子 `rename`，进程中断不会留下截断的授权文件，失败时清理临时文件。
+- 回归以 16 个并发公钥更新验证全部密钥均保留，并覆盖临时文件清理与 rename 失败路径。
+- 验证：`go test -race ./internal/agent -count=1 -cover` 通过，覆盖率 93.5%；
+  并发用例连续 20 次通过；`go vet ./internal/agent` 与 `golangci-lint run ./internal/agent`
+  均无问题。
+- 合并门禁：v250/v251 后 `bash scripts/check.sh backend-static` 与 `backend-tests` 均 exit=0；
+  全量测试 0 FAIL、所有有测试的包覆盖率 ≥90%，lint 0 issues、0 可达漏洞、双端构建通过。
+  本批未重跑前端、容器与 24h 浸泡；不得据此宣称部署或商用验收完成。
+
+## v252：Agent WebSocket 入站帧上限（2026-10-25，仅工作区实现）
+
+- Agent 通道使用 JSON Codec 接收任务结果，原先继承 `x/net/websocket` 的 32 MiB 默认
+  单帧上限。失陷节点可在每条已认证连接上制造不必要的大块内存分配。
+- 服务端入站帧现固定为 1 MiB，仍高于注册任务载荷的 256 KiB 上限及 JSON 包装余量；
+  超限帧会使该连接退出并进入既有重连流程。
+- 回归直接发送 1 MiB + 1 字节帧，验证连接被移除且不会产生任务结果。终端使用流式
+  `Read`，不会按帧整体分配，因此本批不改变其交互路径。
+- 验证：`go test -race ./internal/api/handler -count=1 -cover` 通过，覆盖率 94.4%；
+  定向用例连续 20 次通过；`go vet ./internal/api/handler` 与
+  `golangci-lint run ./internal/api/handler` 均无问题。
+
+## v249：Agent 任务结果队列退出修复（2026-10-25，仅工作区实现）
+
+- Agent 读循环向 16 项结果队列投递任务结果时原先只做阻塞发送。写连接一旦失败并退出，
+  队列如果已满，读循环仍会永久阻塞，`runOnce` 无法返回，后续重连也就不会发生；进程停止时
+  同样会遗留无法解除的 goroutine。
+- 结果投递现同时监听父 context 和写循环完成信号。写循环异常退出时读循环返回明确错误，
+  使 `Run` 进入既有退避重连；正常停止仍按 context 取消干净返回。
+- 回归先通过“填满队列 + 服务端投递任务 + 取消 context”稳定复现 1 秒超时失败；修复后两个
+  用例连续 20 次通过，分别覆盖 context 取消与写循环退出。
+- 验证：`go test -race ./internal/agent -count=1 -cover` 通过，覆盖率 93.6%；
+  `go vet ./internal/agent` 与 `golangci-lint run ./internal/agent` 均无问题。
+
+## v248：Agent WebSocket 握手阻塞修复（2026-10-25，仅工作区实现）
+
+- Agent 任务通道原使用 `websocket.DialConfig`，其内部以 `context.Background()` 拨号，无法继承
+  Agent 的停止信号。服务端接受 TCP 连接但不完成 WebSocket 升级时，Agent 会永久卡在握手，
+  既不返回错误，也进入不了重连退避。
+- 通道现改用 `DialContext` 继承父 context，并设置 10 秒握手上限；连接失败会正常上报并按
+  现有退避重连，进程停止时握手立即取消。
+- 回归用例让本地监听端接受 TCP 后不响应升级，验证 100ms 超时的父 context 能解除阻塞；
+  修复前稳定失败，修复后通过。
+- 验证：`go test -race ./internal/agent -count=1 -cover` 通过，覆盖率 93.7%；
+  `go vet ./internal/agent` 与 `golangci-lint run ./internal/agent` 均无问题。
+
+## v247：Agent 出站客户端与 MMDB 重定向收口（2026-10-25，仅工作区实现）
+
+- Agent 上报、网络探测结果、入网、远程操作和高级诊断的默认 HTTP transport 原先会继承
+  `HTTP_PROXY/HTTPS_PROXY`，可能把 Bearer 令牌交给未受控代理。现在统一使用无环境代理、
+  响应头上限 64 KiB 的 Agent transport；测试注入的 transport 保持原样。
+- 网络分配客户端不再跟随重定向，避免 307/308 把凭据带到重定向目标；分配响应改为先有界读取
+  并检查实际字节数，同时拒绝尾随 JSON。
+- Agent 入网授权响应同样改为有界读取并拒绝尾随 JSON，修复超限合法 JSON 与第二个 JSON 值
+  仍被接受的问题。
+- GitHub MMDB 下载重定向只允许 HTTPS 443；此前 `github.com:8443` 可通过 hostname 校验并
+  被实际跟随。修复后跨端口重定向直接失败。
+- 验证：五类失败回归均先复现；修复后 `internal/agent` 93.3%、`agenttransport` 100%、
+  `agentinstall` 91.2%、`agentoperations` 91.7%、`agentdiagnostics` 92.2%、`geoip` 90.1%。
+
+## v246：Agent Release 出站代理与响应边界收口（2026-10-25，仅工作区实现）
+
+- Agent Release 默认 HTTP 客户端原先直接复用 `http.DefaultTransport`，会继承进程级
+  `HTTP_PROXY/HTTPS_PROXY`，可能让 GitHub token 进入未受控代理。现在默认 transport 显式
+  禁用环境代理；owner 配置的 egress proxy 仍通过注入客户端生效。
+- 重定向校验改为同时比较配置 origin 的 scheme 与有效端口，GitHub/资产域只允许 HTTPS 443，
+  避免同主机跨端口重定向保留 Authorization。
+- API 响应改为先有界读取再检查实际字节数，修复 `maximumAPIResponseBytes + 1` 的合法 JSON
+  仍被接受的问题；尾随 JSON 继续拒绝。
+- 验证：失败回归先复现环境代理、跨端口重定向和超限 JSON；修复后包级测试通过，覆盖率 90.5%，
+  `go vet`、`golangci-lint` 0 issues、`goimports-reviser` 无差异。
+
+## v245：通知 Webhook 代理目标复核（2026-10-25，仅工作区实现）
+
+- 通知 Webhook 启用出站代理时，重定向请求不再经过 `DialChecked`，私网目标会直接交给
+  代理解析。现在每次代理请求在交给代理前都重新执行现有 `Egress.Validate`，保留同源重定向、
+  窄例外和公网地址策略。
+- 失败回归确认修复前私网目标会进入代理选择器；修复后私网目标在代理前被拒绝，公网目标仍正常
+  进入代理。`internal/notification` 全包覆盖率 91.6%，`go vet` 通过，`-race` 通过（1.3 秒）。
+
+## v244：OIDC 代理解析与拨号安全收口（2026-10-25，仅工作区实现）
+
+- OIDC 在启用 HTTP/SOCKS 代理时，目标域名原先由代理解析，`DialContext` 的公网校验不会覆盖
+  discovery 返回的 Token/JWKS URL。现在每次请求交给代理前都会重新校验 HTTPS URL 与目标地址；
+  代理端点自身保留受限拨号豁免，重定向仍受原有三跳上限和公网校验约束。
+- discovery 完成后立即校验 Authorization、Token 与 JWKS 三类端点必须为 HTTPS 公网 URL；
+  Token 兑换前再次校验，避免 `http://` 或私网端点进入 OAuth 客户端。
+- 真实 HTTP 代理回归先经代理完成 discovery，再让 discovery 返回私网 Token URL，确认请求在到达
+  代理前被拒绝。空 DNS 解析和空地址也改为失败关闭。
+- OIDC 公网判定不再只依赖 `IsGlobalUnicast`，补充拒绝 CGNAT、文档/保留网段、IPv4 映射与
+  IPv6 过渡前缀，避免 `100.100.100.200` 等元数据地址被接受。
+- 直连拨号改为只连接已校验的数字 IP，不再校验域名后重新解析拨号；保留原域名用于 TLS SNI，
+  并覆盖混合地址、空地址、IPv6 zone、地址数量上限和多地址回退。
+- 验证：`internal/oidc` 全包通过，覆盖率 92.0%；`go vet` 通过；`-race` 全包通过（234.3 秒）。
+- 后端静态门禁 `backend-static` exit 0：`golangci-lint` 0 issues、`govulncheck` 0 可达漏洞、
+  `go vet` 与双端构建通过。
+
+## v243：后台代理与远端 MMDB 面板状态收口（2026-10-25，仅工作区实现）
+
+- 后台出站代理面板拆分为表单状态、字段组件和面板容器，均回到 300 行以内；字段、默认值、
+  密码保留/清除和 revision 冲突流程保持不变。
+- GitHub MMDB 面板不再把翻译函数作为远端请求依赖，语言目录或文案更新不会重复查询
+  GitHub；卸载后的迟到响应会被丢弃。
+- 远端 MMDB 安装成功后立即把当前 Release 标记为已是最新，父级刷新后更新按钮保持禁用，
+  不再显示可重复安装的陈旧状态。新增安装成功、已是最新和失败重试回归用例。
+- 验证：定向 2 文件 / 22 例通过，代理面板、表单字段和 MMDB 面板的新增代码行覆盖 100%；
+  `bash scripts/check.sh frontend` exit 0，257 个文件 / 1570 例通过、行覆盖 90.22%、
+  `oxlint` 0 error、生产构建和三套主题浏览器 smoke 全通过。
+- 本批只改前端，后端与 schema 未变；尚未部署，8081 仍无监听，A16 浸泡窗口未启动。
+
+## v242：长请求写超时与代理 URL 校验收口（2026-10-25，仅工作区实现）
+
+- Agent Release 远端同步原先允许 15 分钟，但入口全局写超时只有 30 秒，下载多个产物时
+  客户端可能在导入完成前收到 EOF。同步响应现使用 16 分钟写截止时间，并对截止时间设置
+  失败返回 503；真实 `httptest.Server` 的 10ms 写超时回归用例通过。
+- GitHub MMDB 安装同样可能超过 30 秒；服务端现为安装请求设置 2 分钟写截止时间，覆盖
+  Release 查询、60 秒下载、校验和发布。截止时间不可用时不安装并返回 503，回归用例先失败
+  后通过。
+- 后台出站代理 URL 现拒绝 `http://:8080` 这类缺少主机的输入，仍要求显式端口和受支持
+  的 HTTP/HTTPS/SOCKS5/SOCKS5H scheme。
+- 主题市场先前在启用 HTTP 代理后会跳过目标域名的本地 DNS 公网校验；现在交给代理前
+  会解析并拒绝私网、保留、混合或异常地址集合。真实 HTTP 代理回归用例确认目标未到达
+  代理；直连模式继续把连接固定到已校验的数字 IP。
+- 验证：`backend-static` exit 0（Go 1.26.10，0 issues、0 可达漏洞、双端构建通过）；
+  `backend-tests` exit 0，所有含测试包均 ≥90%（egressproxy 98.7%、api/handler 94.4%、
+  geoip 90.1%、agentrolloutremote 90.2%、agentrollouthttp 98.7%、theme 91.0%）。
+- 本批尚未部署到 8081；预览服务仍为 inactive，A16 浸泡窗口需在部署当前构建后重新计时。
+
+## v241：主题分发包跨工具链可复现（2026-10-25，仅工作区实现）
+
+- 修复 `cmd/theme` 分发资产校验的工具链耦合：此前 ZIP 使用 Go 标准库 Deflate，
+  `go1.26.10` 与 `go1.27.2` 对相同源码生成不同压缩字节，导致 CI 对齐测试按工具链
+  误报“分发资产过期”；shuffle 只是恰好暴露该问题，并非测试顺序污染。
+- 打包改为 Store 条目并保留标准 ZIP 校验、清单摘要和文件权限；十套主题在
+  `go1.26.10` 与 `go1.27.2` 下生成字节完全一致，固定失败 seed 加 9 个额外 seed
+  均通过 `go test -shuffle=on ./cmd/theme`。
+- 重建十套 ZIP 与文档副本，更新指南摘要；README 的主题数量由旧值修正为九套
+  声明式加一套沙箱主题。
+- 验证：`backend-tests`、`backend-static`、两个 race 分片、`backend-privileged`、
+  `scripts`、`themes`、`frontend`、`container` 全部通过。前端 257 文件 / 1564 例、
+  行覆盖 90.15%，三套主题浏览器 smoke 通过；容器内十套 ZIP 摘要与本地一致。
+- 本批尚未部署到 8081；预览服务仍为 inactive，A16 浸泡窗口需在部署当前构建后
+  重新计时。
+
+## v240：后台出站代理连接测试（2026-10-25，仅工作区实现）
+
+- 站点设置新增“测试已保存代理”，由 owner 通过近期认证确认后执行。后端只访问固定的
+  `https://example.com/`，禁止重定向，校验响应正文标记；12 秒总超时，8 秒 TLS/响应头超时，
+  正文上限 64 KiB。接口不接收调用方目标，不返回代理地址或凭据。
+- 代理未启用返回 409，超时返回 504，传输、状态码或正文异常返回 502；保存配置的响应直接
+  使用事务提交结果，避免请求上下文取消时出现“返回失败但配置已生效”。
+- 验证：`internal/egressproxy` 覆盖率 98.7%，`internal/api/handler` 94.4%，
+  `internal/api` 99.4%；`golangci-lint` 0 issues，`go vet` 通过，
+  `backend-tests`、两个 race 分片、`backend-privileged`、`scripts`、`themes`
+  与 `container` 门禁通过，Go 1.27.3 下 `backend-static` 无漏洞。
+  前端全量 257 个文件、1564 例通过，总行覆盖率 90.15%，lint、构建与三套
+  主题浏览器 smoke 通过。
+- 新增真实应用浏览器 smoke（`webui/scripts/app-browser-smoke.mjs` /
+  `run-app-browser-gates.sh`）：使用独立临时 Server、SQLite、MTS 与 Chromium，
+  覆盖首次创建 owner、代理配置保存/重载/密钥不回显、`HttpOnly` +
+  `SameSite=Strict` 会话、节点创建与一次性凭据、公开首页可见性切换、备份
+  创建/下载/暂存恢复、TOTP 绑定与动态码登录，并断言无页面异常或 5xx。
+  未带动态码的登录先返回 428，浏览器显示验证码输入后才继续登录。
+- 可选传入真实 `beat-agent`：smoke 写入 0600 一次性 Agent 配置，等待节点
+  `online`、`telemetry_state=fresh` 且指标非空；Agent 启动失败会立即报告
+  spawn 原因，退出时先 SIGTERM、5 秒后 SIGKILL，并删除配置。
+- 可选 `BEAT_APP_BROWSER_SSH=1`：脚本在临时目录启动仅监听回环的隔离 sshd，
+  使用临时 host key、动态端口和独立 authorized_keys；浏览器创建应用托管
+  Ed25519 密钥并分配给节点，验证 TOFU、交互式 PTY WebSocket 输出，以及
+  批量命令的真实 SSH 结果。
+- 应用 smoke 以当前源码重新构建前端、Server 与 Agent 后连续 3 轮通过，
+  真实 Agent 与真实终端链路各连续 3 轮通过；公共图
+  gzip 230,573 B + 最大语言分片 14,383 B = 244,956 B / 256,000 B。
+  公共节点快照按 5 秒生产周期替换，因此创建或隐藏后最多需等待一个快照
+  周期才反映到公共首页；smoke 显式等待下一代快照后再断言结果。
+- 本地化浏览器门禁已从英文基线 + 伪语言扩展为 `en`、`zh-CN`、`zh-TW`、`ja`、
+  `id` 五个真实语言再加伪语言。当前源码的隔离 Server 上实测 6 个 pass ×
+  15 个页面 × 3 个视口，共 270 个样本、1591/1591 断言通过、0 页面错误；
+  真实语言每页硬断言 200、语言目录生效、无裸键、无横向溢出和本地化标题/外壳。
+  脚本同时移除了不存在的 `/admin/backup`、`/admin/themes`，改测
+  `/admin/terminal`、`/admin/groups`。`webui/scripts/run-locale-gates.sh`
+  封装了临时 Server、owner 初始化、近期认证、公开节点与清理流程。
+- 已观察但未改既有交互：启用 TOTP 后的身份刷新会让“账号安全”页回到默认
+  Account 标签，smoke 需重新选择 Two-factor 才能看到成功状态。是否改为保留
+  当前标签属于交互流程变更，待确认后再实施。
+- 覆盖率复核补齐了 `accelerators` 的可见性包装、缺失节点与默认时钟分支，以及
+  `sshclient` 的会话创建失败与终端桥接三个确定性分支。`accelerators` 为 92.0%，
+  `sshclient` 连续 40 次为 94.0%（并行全量运行 93.4%）；全量 `go test -cover ./...`
+  所有含测试的包均 ≥90%，定向 `golangci-lint` 0 issues，`go vet`、`race` 与
+  `goimports-reviser` 通过。本批只改测试，不改变产品行为。
+- 本批尚未部署到 8081；8081 在 2026-10-25 不可连接，需恢复后另行执行宿主
+  验收、恢复演练与长时间浸泡，不能以本地门禁代替。
+
+## v239：GitHub MMDB 代理下载超时修复（2026-10-24）
+
+- 修复 GitHub MMDB 安装的响应头超时：普通 GeoIP 查询仍使用 10 秒，安装下载的 `http.Client.Timeout` 和底层 `http.Transport.ResponseHeaderTimeout` 均使用 60 秒。此前代理经 GitHub 跳转到文件存储域名时，即使总超时已提高，仍会被底层 10 秒响应头超时中断并返回 `geoip_unavailable`。
+- 实测时确认“后台出站代理”地址已保存，但开关原先为关闭；保存地址不会隐式启用代理。启用经过近期认证的代理配置后，Release 查询耗时 0.497 秒，MMDB 下载与安装耗时 2.038 秒，成功安装 `2026.10.22`、3,406,491 字节，来源为 `github:P3TERX/GeoLite.mmdb@2026.10.22`。
+- 验证：定向 GeoIP/Handler 测试通过；使用 Go 1.27.3 运行 `backend-static`，格式、lint、vet、漏洞扫描及双端构建通过。`internal/geoip` 全包测试通过。
+- 8081：v239 `0.2.0-dev+worktree.20261024.02`，入口 `assets/index-BA8n1XV9.js`；冷备份 `/var/backups/beat-preview/pre-v239-20261023T163336Z`，发布目录 `/opt/beat-preview/releases/worktree-v239-20261023T163336Z`，无数据库迁移。
+
+## v238：后台出站代理（2026-10-24）
+
+- “站点设置”新增“后台出站代理”，支持 HTTP、HTTPS、SOCKS5、SOCKS5H、用户名和密码；密码使用应用密钥加密保存，读取接口仅返回 `has_password`。代理地址和凭据保存后，新请求即时生效，无需重启。
+- MMDB 远端下载、MaxMind、Agent Release、主题市场、Webhook 和 OIDC 出站请求已接入代理；SMTP 与 SSH 保持原连接方式。私网或回环代理端点可以配置，最终目标 URL、重定向和公开地址策略继续校验。
+- 配置仅 owner 可查看和编辑；保存要求近期认证，并通过 revision 防止覆盖其他会话刚保存的配置。代理凭据纳入应用密钥轮换和备份快照校验。
+- 验证：`internal/egressproxy` 行覆盖率 91.5%；后端全量测试、`golangci-lint` 0 issues、`go vet`、`govulncheck` 和双端构建通过。前端 257 个文件、1562 例测试通过，总行覆盖率 90.16%，`npm run build` 通过。8081 owner 会话 GET 成功；未近期认证的保存返回 428，重新认证后进入参数校验；响应不含密码。
+- 8081：v238 `0.2.0-dev+worktree.20261024.01`，入口 `assets/index-BA8n1XV9.js`；冷备份 `/var/backups/beat-preview/pre-v238-20261023T160835Z`，发布目录 `/opt/beat-preview/releases/worktree-v238-20261023T160835Z`，迁移 schema v30 → v31。
+
+## v237：远端 MMDB 版本与安全更新（2026-10-23）
+
+- “定位与生命周期”保留 MMDB 上传、MaxMind 下载和回滚，并新增固定远端源 `P3TERX/GeoLite.mmdb`。页面展示最新 Release 的版本、发布时间、文件大小和 SHA-256；未有数据库时提供“下载数据库”，已有不同版本时提供“安装更新”，当前摘要一致时禁用操作。
+- 安装请求携带 Release 版本、asset digest 和配置 revision。后端重新查询固定 Release 并校验版本与摘要，限制下载重定向到 GitHub 可信主机，再验证下载 SHA-256 与 MMDB 元数据；成功后来源记录为 `github:P3TERX/GeoLite.mmdb@<version>`。
+- 验证：`internal/geoip` 90.0%、`internal/api/handler` 94.4%、`internal/api` 99.4% 覆盖率，`golangci-lint` 0 issues，全量 Go 测试通过；前端定向 13 例通过、`npm run build` 通过。实机接口返回 `2026.10.22` / `c7b73d…0b5f`；1280px 与 390px Chromium 下下载/更新入口、确认对话框和响应式布局通过，无横向溢出或控制台错误。
+- 8081：v237 `0.2.0-dev+worktree.20261023.04`，入口 `assets/index-C71IF5Tx.js`；冷备份 `/var/backups/beat-preview/pre-v237-20261023T145927Z`，发布目录 `/opt/beat-preview/releases/worktree-v237-20261023T145927Z`，无数据库迁移。
+
+## v236：终端页面节点优先布局（2026-10-23）
+
+- 终端页改为移动优先 DOM 顺序：节点选择卡片先出现，终端与批量命令工作区随后；390px 视口下无需先滚到页底选择节点再回到顶部操作。
+- 桌面端改为两列布局：左侧节点选择卡片，右侧终端与批量命令工作区；节点卡片仅在桌面端吸顶。
+- 验证：终端定向测试 8 例通过，覆盖节点选择先于终端工作区的 DOM 顺序；`oxlint` 定向检查 0 问题；`npm run build` 通过。8081 真实 Chromium 几何核验：桌面节点卡 `x=304`、终端区 `x=612`；390px 移动端节点卡 `y=156`、终端区 `y=330`。
+- 8081：v236 `0.2.0-dev+worktree.20261023.03`，入口 `assets/index-ChkSbA4f.js`；冷备份 `/var/backups/beat-preview/pre-v236-20261023T132142Z`，发布目录 `/opt/beat-preview/releases/worktree-v236-20261023T132142Z`，无数据库迁移。
+
+## v234：远程操作详情改为侧边抽屉（2026-10-23）
+
+- 远程操作任务详情和文件传输详情从页面底部的内嵌卡片改为 shadcn/ui 右侧 `Sheet`；标题、资源 ID、输出、重试、取消、上传和下载等既有内容与操作保持不变。
+- 详情支持关闭按钮、ESC 和点击遮罩返回列表，不再拉伸任务表格或文件列表页面。
+- 验证：2 个定向测试文件 / 13 例通过，覆盖任务与传输详情打开、侧边抽屉标记和关闭；`oxlint` 定向检查 0 问题；`npm run build` 通过。
+- 8081：v234 `0.2.0-dev+worktree.20261023.01`，入口 `assets/index-Dv8drht9.js`；冷备份 `/var/backups/beat-preview/pre-v234-20261023T120902Z`，发布目录 `/opt/beat-preview/releases/worktree-v234-20261023T120902Z`，无数据库迁移。
 
 ## v233：GitHub Release 优先的 Agent 版本管理（2026-10-20）
 

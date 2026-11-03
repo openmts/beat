@@ -1,8 +1,8 @@
 # Localization parity
 
-Updated: 2026-10-15
+Updated: 2026-10-25
 
-Status: owner approved implementation on 2026-10-15 (blanket approval of all pending items); 语言解析/回退、存储拒绝容错、语言菜单、目录完整性门禁、`Intl` 数字/日期/单位统一与 `zh-TW`、`ja`、`id` 三套目录（含公共外壳按语言懒加载，`shippedLocales` 已是五语言）均已实现；仍待补齐的是管理端目录按语言拆分（下一门语言的前置条件，待批准）与伪语言溢出检查/五语言浏览器 E2E（需要宿主机），见本文第十批与 commercial-delivery-plan.md 对应章节
+Status: owner approved implementation on 2026-10-15 (blanket approval of all pending items); 语言解析/回退、存储拒绝容错、语言菜单、目录完整性门禁、`Intl` 数字/日期/单位统一、`zh-TW`/`ja`/`id` 三套目录、公共与管理端目录按语言懒加载、伪语言溢出检查和五语言浏览器门禁均已实现。`shippedLocales` 已发布五语言；当前源码的隔离 Server 浏览器门禁为 6 个 pass × 15 个页面 × 3 个视口，1591/1591 断言通过。宿主 8081 的部署验收不在本文范围。
 
 ## Goal and evidence
 
@@ -341,7 +341,7 @@ kredensial／retensi／rotasi／siklus hidup／ruang kerja），模板变量（`
 - 测试改为在 `src/test/setup.ts` 一次性登记 4 个语言分片，`catalog-integrity` 门禁继续保证
   5 种语言的键集完整；3 份直接读取目录的测试改为从语言分片读取。
 
-仍缺：伪语言溢出检查需要在真实浏览器里加载伪语言目录后测量。
+已补：伪语言溢出检查需要在真实浏览器里加载伪语言目录后测量。
 
 已补：五语言浏览器 E2E 于 2026-10-17 在宿主机 8081 实例上跑通——
 `en`/`zh-CN`/`zh-TW`/`ja`/`id` × `/`、`/wallboard`、`/node/:id` × 390/768/1440 视口，
@@ -353,6 +353,19 @@ kredensial／retensi／rotasi／siklus hidup／ruang kerja），模板变量（`
 首轮即发现四处真实溢出，根因都在共享基础组件（`SidebarInset` 缺 `min-w-0`、`TabsList` 的 `w-fit` 撑宽
 父级 `min-content`、`PageHeader` 操作区 `shrink-0`、壁板页脚不换行），修复后 90 个样本全部不溢出，
 180/180 断言通过（见 `commercial-delivery-plan.md` 的 v169 章节）。
+
+已补（2026-10-25，可重复门禁）：同一脚本不再只跑英文基线与伪语言，而是依次跑
+`en`、`zh-CN`、`zh-TW`、`ja`、`id` 和伪语言 6 个 pass。每个真实语言 pass 都硬断言
+200、选中语言已生效、共享外壳已本地化、对应管理页面标题使用目标语言、无裸目录键、
+无横向溢出和该页无页面错误；伪语言 pass 额外断言 `⟦…⟧` 标记。页面集覆盖公共首页、
+公开兜底页、节点详情与 12 个实际管理路由；已移除不存在的 `/admin/backup`、
+`/admin/themes`，改为覆盖 `/admin/terminal`、`/admin/groups`。
+
+当前源码在隔离 Server、SQLite、MTS 与 `webui/dist` 上的实测结果为 270 个
+页面/视口样本、1591/1591 断言通过、0 失败、0 页面错误；其中每个 pass 为 15 个页面
+× 390/768/1440 三视口。该结果不替代 8081 宿主验收、恢复演练或浸泡测试。
+同一流程已封装为 `webui/scripts/run-locale-gates.sh`：脚本自行启动临时 Server，
+完成 owner 初始化、近期认证和公开节点创建，结束后清理临时数据与进程。
 
 门禁的第二种判据（v171）：伪语言只证明「目录接上了」，证明不了「页面里没有硬编码文案」。
 `webui/scripts/locale-pseudo-smoke.mjs` 新增 `BEAT_SMOKE_ENGLISH_LEAKS=1`：剥掉伪语言界定符 `⟦…⟧`

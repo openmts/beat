@@ -17,7 +17,7 @@ func MigrateAdvancedDiagnostics(ctx context.Context, db schemaExecutor) error {
 		`CREATE TABLE application_secret_state (
  id INTEGER PRIMARY KEY CHECK(id=1),phase TEXT NOT NULL CHECK(phase IN('pending','backfill','sanitize','ready','rotating')),
  generation INTEGER NOT NULL CHECK(generation>=0),root_generation INTEGER NOT NULL CHECK(root_generation>=0),
- root_fingerprint TEXT NOT NULL,active_key_id TEXT NOT NULL,cursor_source INTEGER NOT NULL CHECK(cursor_source BETWEEN 0 AND 15),
+ root_fingerprint TEXT NOT NULL,active_key_id TEXT NOT NULL,cursor_source INTEGER NOT NULL CHECK(cursor_source BETWEEN 0 AND 16),
  cursor_id TEXT NOT NULL,rotation_id TEXT NOT NULL DEFAULT '' CHECK(rotation_id='' OR length(rotation_id)=36),updated_at INTEGER NOT NULL)`,
 		`INSERT INTO application_secret_state SELECT * FROM application_secret_state_v18`,
 		`DROP TABLE application_secret_state_v18`,

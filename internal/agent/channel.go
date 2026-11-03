@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -15,14 +16,17 @@ import (
 )
 
 const (
-	channelPath       = "/api/v1/agents/ws"
-	channelBackoffMax = 30 * time.Second
-	channelBackoffMin = time.Second
+	channelPath             = "/api/v1/agents/ws"
+	channelBackoffMax       = 30 * time.Second
+	channelBackoffMin       = time.Second
+	channelHandshakeTimeout = 10 * time.Second
 
 	// 服务端每 30s 发送 ping；读超时取其 3 倍以容忍网络抖动。
 	channelReadTimeout  = 90 * time.Second
 	channelWriteTimeout = 30 * time.Second
 )
+
+var errChannelWriterStopped = errors.New("agent channel writer stopped")
 
 // TaskExecutor runs a single agent task and reports its outcome.
 type TaskExecutor interface {
@@ -95,13 +99,15 @@ type outgoing struct{ payload any }
 func (c *Channel) runOnce(ctx context.Context) error {
 	header := http.Header{}
 	header.Set("Authorization", "Bearer "+c.token)
-	conn, err := websocket.DialConfig(&websocket.Config{
+	handshakeCtx, cancel := context.WithTimeout(ctx, channelHandshakeTimeout)
+	conn, err := (&websocket.Config{
 		Location: c.location,
 		Origin:   c.origin,
 		Header:   header,
 		Version:  websocket.ProtocolVersionHybi13,
 		Dialer:   &net.Dialer{Timeout: 10 * time.Second},
-	})
+	}).DialContext(handshakeCtx)
+	cancel()
 	if err != nil {
 		return fmt.Errorf("connect agent channel: %w", err)
 	}
@@ -123,7 +129,7 @@ func (c *Channel) runOnce(ctx context.Context) error {
 		c.writeLoop(ctx, conn, out)
 	}()
 
-	err = c.readLoop(ctx, conn, out)
+	err = c.readLoop(ctx, conn, out, writeDone)
 	close(out) // 通知写循环退出；conn 由 defer 关闭解除其阻塞
 	<-writeDone
 	if err != nil && ctx.Err() != nil {
@@ -136,6 +142,7 @@ func (c *Channel) readLoop(
 	ctx context.Context,
 	conn *websocket.Conn,
 	out chan<- outgoing,
+	writeDone <-chan struct{},
 ) error {
 	for {
 		if err := conn.SetReadDeadline(time.Now().Add(channelReadTimeout)); err != nil {
@@ -157,7 +164,13 @@ func (c *Channel) readLoop(
 			}
 		case message.Type == "task" && message.Task != nil:
 			result := c.executor.ExecuteTask(ctx, *message.Task)
-			out <- outgoing{payload: taskResultMessage{Type: "task_result", Result: result}}
+			select {
+			case out <- outgoing{payload: taskResultMessage{Type: "task_result", Result: result}}:
+			case <-ctx.Done():
+				return nil
+			case <-writeDone:
+				return errChannelWriterStopped
+			}
 		}
 	}
 }

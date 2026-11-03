@@ -90,6 +90,9 @@ func (client *ProviderClient) discoverUncached(ctx context.Context, issuer strin
 	if err != nil {
 		return nil, fmt.Errorf("oidc: discover provider: %w", err)
 	}
+	if err := client.policy.validateProviderEndpoints(provider); err != nil {
+		return nil, err
+	}
 	return &ProviderInfo{
 		Issuer:   normalizeIssuer(issuer),
 		AuthURL:  provider.Endpoint().AuthURL,
@@ -105,6 +108,16 @@ func (client *ProviderClient) ExchangeCode(
 	clientID, clientSecret, redirectURI, code, codeVerifier string,
 	scopes []string,
 ) (string, error) {
+	if info == nil {
+		return "", errors.New("oidc: provider info is missing")
+	}
+	tokenURL, err := url.Parse(info.TokenURL)
+	if err != nil {
+		return "", fmt.Errorf("oidc: parse token endpoint: %w", err)
+	}
+	if err := client.policy.ValidateRequestURL(tokenURL); err != nil {
+		return "", fmt.Errorf("oidc: validate token endpoint: %w", err)
+	}
 	config := &oauth2.Config{
 		ClientID:     clientID,
 		ClientSecret: clientSecret,
@@ -125,6 +138,33 @@ func (client *ProviderClient) ExchangeCode(
 	return rawIDToken, nil
 }
 
+func (policy EndpointPolicy) validateProviderEndpoints(provider *oidc.Provider) error {
+	if provider == nil {
+		return errors.New("oidc: provider discovery is missing")
+	}
+	endpoint := provider.Endpoint()
+	var metadata struct {
+		JWKSURL string `json:"jwks_uri"`
+	}
+	if err := provider.Claims(&metadata); err != nil {
+		return fmt.Errorf("oidc: read provider endpoints: %w", err)
+	}
+	for name, raw := range map[string]string{
+		"authorization endpoint": endpoint.AuthURL,
+		"token endpoint":         endpoint.TokenURL,
+		"jwks endpoint":          metadata.JWKSURL,
+	} {
+		target, err := url.Parse(raw)
+		if err != nil {
+			return fmt.Errorf("oidc: parse %s: %w", name, err)
+		}
+		if err := policy.ValidateRequestURL(target); err != nil {
+			return fmt.Errorf("oidc: invalid %s: %w", name, err)
+		}
+	}
+	return nil
+}
+
 // Verifier 构造 ID 令牌验证器；签名算法默认取提供方声明集合。
 func (client *ProviderClient) Verifier(
 	ctx context.Context, info *ProviderInfo, clientID string,
@@ -137,6 +177,11 @@ func (client *ProviderClient) Verifier(
 func (client *ProviderClient) AuthorizationURL(
 	info *ProviderInfo, clientID, redirectURI, scopesJoined, state, nonce, codeChallenge string,
 ) string {
+	target, err := url.Parse(info.AuthURL)
+	if err != nil {
+		return ""
+	}
+	query := target.Query()
 	values := map[string]string{
 		"response_type":         "code",
 		"client_id":             clientID,
@@ -147,16 +192,11 @@ func (client *ProviderClient) AuthorizationURL(
 		"code_challenge":        codeChallenge,
 		"code_challenge_method": "S256",
 	}
-	built := info.AuthURL + "?"
-	first := true
 	for key, value := range values {
-		if !first {
-			built += "&"
-		}
-		first = false
-		built += key + "=" + url.QueryEscape(value)
+		query.Set(key, value)
 	}
-	return built
+	target.RawQuery = query.Encode()
+	return target.String()
 }
 
 // AllowPrivateForTest 返回允许回环/私有地址的测试策略。

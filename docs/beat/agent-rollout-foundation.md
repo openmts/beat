@@ -1,9 +1,13 @@
-# Agent rollout foundation
+# Agent rollout
 
-Status: implemented library foundation and backup integration; migration v15
-remains unregistered. Central runtime, authenticated route registration and
-end-to-end updater acceptance remain pending. `agentrollout.Config.Enabled`
-defaults to false.
+Status: implemented and integrated. SQLite migration v15 registers signed
+releases, target snapshots, waves and attempts; authenticated owner and Agent
+routes, the Agent update poller, recovery/readiness/metrics workers, the owner
+console and v29 retention are present. Rollout stays disabled until
+`BEAT_AGENT_ROLLOUT_CONFIG` supplies the out-of-band trust and Sigstore policy.
+C13 host acceptance, including the signed upgrade, rollback, health-gate and
+uninstall drills, is recorded in the commercial delivery plan. Current preview
+availability is tracked separately in `local-preview.md`.
 
 ## Trust and portable protocol
 
@@ -60,12 +64,14 @@ revision. Proposed next keys are validated but are not automatically installed.
   including campaigns that were already manually paused. Resuming uncertainty
   requires an explicit acknowledgment. No recovery path auto-promotes a wave.
 
-## Integration still required
+## Runtime integration
 
-Register `store.MigrateAgentRollout` only through the central v15 migration after
-v14 acceptance. Then wire authenticated routes, body/concurrency limits, current
-actor/Agent identity propagation, startup/periodic recovery, readiness and
-bounded operational metrics. Ordinary library calls are not HTTP authorization.
+The central v15 migration owns the rollout tables. HTTP admission limits, owner
+and Agent identity propagation, authenticated release/campaign routes,
+startup/periodic recovery, readiness and bounded operational metrics are wired
+in the Server. The Agent uses the pure protocol verifier and polls the leased
+assignment through its per-node credential. Ordinary library calls are not HTTP
+authorization.
 
 The production backup/restore path now calls `agentrollout.ReconcileRestore` on
 the private staged SQLite database before replacement. It pauses unfinished
@@ -89,14 +95,8 @@ individual signed payloads at 1 MiB, signature bundles at 4 MiB, and cumulative
 payload scanning at 16 MiB. Oversized archives fail before
 publication instead of producing an unreadable ready backup.
 
-Integration tests perform a real archive/ApplyPending roundtrip using the
-pending DDL on private fixtures. They verify pause/nonce/cache state, one restore
-audit on repeated ApplyPending, unchanged source state, and preservation of live
-database/key/MTS files on reconciliation failure. This does not substitute for
-the still-pending registered-v15 deployment and end-to-end rollout gate.
-
-The Agent helper/poller and owner release UI are implemented in separate
-batches. Runtime integration, signed initial installation, full rollout/rollback,
-notifications and native platform acceptance remain open. Agent integration must
-use the pure protocol verifier and respect the campaign observation/freshness
-policy. This foundation is not a completed self-update or platform-support claim.
+Integration tests perform a real archive/ApplyPending roundtrip using private
+fixtures. They verify pause/nonce/cache state, one restore audit on repeated
+ApplyPending, unchanged source state, and preservation of live database/key/MTS
+files on reconciliation failure. Host acceptance separately exercised signed
+upgrade, rollback, health-gate failure and Agent service uninstall.

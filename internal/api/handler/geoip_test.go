@@ -45,6 +45,14 @@ func (s geoIPStub) RollbackMMDB(context.Context, geoip.Actor, int64) (model.GeoI
 	return model.GeoIPSettings{}, s.err
 }
 
+func (s geoIPStub) RemoteMMDBRelease(context.Context, geoip.Actor) (geoip.RemoteMMDBRelease, error) {
+	return geoip.RemoteMMDBRelease{Repository: "P3TERX/GeoLite.mmdb"}, s.err
+}
+
+func (s geoIPStub) InstallRemoteMMDB(context.Context, geoip.Actor, geoip.RemoteMMDBInstall) (model.GeoIPSettings, error) {
+	return model.GeoIPSettings{}, s.err
+}
+
 func geoIPRequest(body string) *http.Request {
 	request := httptest.NewRequest(http.MethodPut, "/api/v1/admin/settings/geoip", strings.NewReader(body))
 	request.SetPathValue("id", "node")
@@ -55,7 +63,7 @@ func geoIPRequest(body string) *http.Request {
 
 func TestGeoIPEndpointsRequireSessionAndReturnSafeResponses(t *testing.T) {
 	handler := NewGeoIPHandler(geoIPStub{})
-	actions := []http.HandlerFunc{handler.HandleSettings, handler.HandleSaveSettings, handler.HandleLocation, handler.HandleSaveLocation, handler.HandleRefresh, handler.HandleMMDBUpload, handler.HandleMMDBUpdate, handler.HandleMMDBRollback}
+	actions := []http.HandlerFunc{handler.HandleSettings, handler.HandleSaveSettings, handler.HandleLocation, handler.HandleSaveLocation, handler.HandleRefresh, handler.HandleMMDBUpload, handler.HandleMMDBUpdate, handler.HandleMMDBRollback, handler.HandleRemoteMMDBRelease, handler.HandleRemoteMMDBInstall}
 	for _, action := range actions {
 		anonymous := httptest.NewRequest(http.MethodPut, "/", strings.NewReader(`{}`))
 		response := httptest.NewRecorder()
@@ -83,7 +91,7 @@ func TestGeoIPFailureCodesAndStrictBodies(t *testing.T) {
 		}
 	}
 	handler := NewGeoIPHandler(geoIPStub{})
-	for _, action := range []http.HandlerFunc{handler.HandleSaveSettings, handler.HandleSaveLocation, handler.HandleMMDBUpdate, handler.HandleMMDBRollback} {
+	for _, action := range []http.HandlerFunc{handler.HandleSaveSettings, handler.HandleSaveLocation, handler.HandleMMDBUpdate, handler.HandleMMDBRollback, handler.HandleRemoteMMDBInstall} {
 		for _, body := range []string{`{"unknown":1}`, `{} {}`, `{`, strings.Repeat(" ", 16385)} {
 			response := httptest.NewRecorder()
 			action(response, geoIPRequest(body))
@@ -112,7 +120,7 @@ type geoIPNoUpdater struct{ GeoIPService }
 
 func TestGeoIPMissingOptionalUpdater(t *testing.T) {
 	handler := NewGeoIPHandler(geoIPNoUpdater{GeoIPService: geoIPStub{}})
-	for _, action := range []http.HandlerFunc{handler.HandleMMDBUpdate, handler.HandleMMDBRollback} {
+	for _, action := range []http.HandlerFunc{handler.HandleMMDBUpdate, handler.HandleMMDBRollback, handler.HandleRemoteMMDBRelease, handler.HandleRemoteMMDBInstall} {
 		response := httptest.NewRecorder()
 		action(response, geoIPRequest(`{}`))
 		if response.Code != 503 {

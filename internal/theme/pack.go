@@ -142,7 +142,9 @@ func zipFiles(files map[string][]byte) ([]byte, error) {
 	var output bytes.Buffer
 	writer := zip.NewWriter(&output)
 	for _, name := range sortedFileNames(files) {
-		header := &zip.FileHeader{Name: name, Method: zip.Deflate}
+		// Go 标准库的 Deflate 输出会随工具链版本变化；主题包要求跨环境逐字节一致，
+		// 因此使用 Store，避免签名摘要依赖构建机的 Go 版本。
+		header := &zip.FileHeader{Name: name, Method: zip.Store}
 		header.SetMode(0o600)
 		entry, err := writer.CreateHeader(header)
 		if err != nil {

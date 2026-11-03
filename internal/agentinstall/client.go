@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/beat/backend/internal/agentjoin"
+	"github.com/beat/backend/internal/agenttransport"
 )
 
 const requestTimeout = 20 * time.Second
@@ -18,6 +19,7 @@ const requestTimeout = 20 * time.Second
 func newHTTPClient() *http.Client {
 	return &http.Client{
 		Timeout:       requestTimeout,
+		Transport:     agenttransport.NoProxyTransport(),
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 	}
 }

@@ -229,8 +229,17 @@ func grantResponseError(response *http.Response) error {
 func decodeGrantEnvelope[T any](response *http.Response) (T, error) {
 	var target T
 	envelope := grantEnvelope[T]{}
-	if err := json.NewDecoder(io.LimitReader(response.Body, grantResponseLimit)).Decode(&envelope); err != nil {
+	data, err := io.ReadAll(io.LimitReader(response.Body, grantResponseLimit+1))
+	if err != nil || len(data) > grantResponseLimit {
 		return target, errors.New("invalid enrollment response: expected a bounded JSON envelope")
+	}
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	if err = decoder.Decode(&envelope); err != nil {
+		return target, errors.New("invalid enrollment response: expected a bounded JSON envelope")
+	}
+	var trailing any
+	if err = decoder.Decode(&trailing); err != io.EOF {
+		return target, errors.New("invalid enrollment response: expected exactly one JSON value")
 	}
 	if envelope.Code < 200 || envelope.Code > 299 {
 		return target, errors.New("server rejected enrollment operation")

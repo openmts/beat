@@ -4,6 +4,8 @@ export interface LocationWrite { mode: NodeLocation["mode"]; scope: string; coun
 export interface MMDBMetadata { edition: string; source: string; build_epoch: number; sha256: string; size_bytes: number; state: string; error_code?: string }
 export interface GeoIPSettings { provider: string; revision: number; remote_consent: boolean; has_credential: boolean; mmdb: MMDBMetadata }
 export interface GeoIPSettingsWrite { provider: string; remote_consent: boolean; credential?: string; expected_revision: number; purge: boolean }
+export interface RemoteMMDBRelease { repository: string; version: string; published_at: string; asset_name: string; size_bytes: number; sha256: string; update_available: boolean }
+export interface RemoteMMDBInstall { version: string; sha256: string; expected_revision: number }
 export interface LifecycleSettings { timezone: string; lead_days: number[]; post_days: number[]; public_country: boolean; public_expiry: boolean; public_price: boolean }
 export interface LifecycleWrite { provider: string; plan: string; price_micros: string | null; currency: string; interval_unit: "day" | "month" | "year"; interval_count: number; expires_on: string; renewal_mode: "manual" | "calendar_auto_advance"; private_notes: string; expiry_visibility: "inherit" | "public" | "private"; price_visibility: "inherit" | "public" | "private"; confirm_auto_advance: boolean }
 export interface NodeLifecycle extends LifecycleWrite { node_id: string; status: string; days_remaining: number | null; anchor_month: number; anchor_day: number; anchor_end_of_month: boolean; updated_at: string }

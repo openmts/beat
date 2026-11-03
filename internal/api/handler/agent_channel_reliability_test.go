@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
 	"time"
 
@@ -118,4 +119,26 @@ func TestAgentChannelIgnoresNonResultFrames(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	t.Fatal("result after pong/unknown frames was not processed")
+}
+
+func TestAgentChannelRejectsOversizedFrames(t *testing.T) {
+	ops := &fakeChannelOps{}
+	hub := service.NewAgentHub()
+	handler := NewAgentChannelHandler(ops, hub)
+	conn := dialAgentChannel(t, handler)
+	deadline := time.Now().Add(time.Second)
+	for !hub.Online("node-1") && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if !hub.Online("node-1") {
+		t.Fatal("agent channel did not register")
+	}
+
+	_ = websocket.Message.Send(conn, strings.Repeat("x", agentChannelMaximumPayload+1))
+	awaitAgentOffline(t, hub)
+	ops.mu.Lock()
+	defer ops.mu.Unlock()
+	if len(ops.completed) != 0 {
+		t.Fatalf("oversized frame produced %d results", len(ops.completed))
+	}
 }

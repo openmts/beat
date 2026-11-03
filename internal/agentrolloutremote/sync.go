@@ -11,7 +11,8 @@ import (
 	"github.com/beat/backend/internal/agentrollout/protocol"
 )
 
-const syncTimeout = 15 * time.Minute
+// SyncTimeout bounds one remote catalog import, including every artifact download.
+const SyncTimeout = 15 * time.Minute
 
 func (s *Service) Sync(ctx context.Context, actor agentrollout.Actor, tag string) (agentrollout.ReleaseDetail, error) {
 	if _, valid := versionFromTag(tag); !valid {
@@ -21,7 +22,7 @@ func (s *Service) Sync(ctx context.Context, actor agentrollout.Actor, tag string
 		return agentrollout.ReleaseDetail{}, err
 	}
 	defer func() { <-s.slots }()
-	syncContext, cancel := context.WithTimeout(ctx, syncTimeout)
+	syncContext, cancel := context.WithTimeout(ctx, SyncTimeout)
 	defer cancel()
 	remote, err := s.releaseByTag(syncContext, tag)
 	if err != nil {

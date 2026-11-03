@@ -130,6 +130,78 @@ func TestConnectorOpenTerminalRejectsPTY(t *testing.T) {
 	}
 }
 
+func TestConnectorOpenTerminalReportsDialFailure(t *testing.T) {
+	privateKey, _ := generatePrivateKey(t)
+	connector, err := New(filepathForTest(t))
+	if err != nil {
+		t.Fatalf("create connector: %v", err)
+	}
+	serverSide, clientSide := net.Pipe()
+	defer func() { _ = serverSide.Close(); _ = clientSide.Close() }()
+	request := Request{Node: model.Node{Port: 22}, PrivateKey: privateKey}
+	if err := connector.OpenTerminal(context.Background(), request, serverSide); err == nil ||
+		!strings.Contains(err.Error(), "invalid ssh target") {
+		t.Fatalf("error = %v, want invalid target", err)
+	}
+}
+
+func TestConnectorReportsSessionCreationFailure(t *testing.T) {
+	privateKey, _ := generatePrivateKey(t)
+	_, hostSigner := generatePrivateKey(t)
+	listener := startSessionRejectingServer(t, hostSigner)
+	connector, err := New(filepathForTest(t))
+	if err != nil {
+		t.Fatalf("create connector: %v", err)
+	}
+	request := Request{Node: testNode(t, listener.Addr().String()), PrivateKey: privateKey}
+	if _, err = connector.Execute(context.Background(), request, "true"); err == nil ||
+		!strings.Contains(err.Error(), "create ssh session") {
+		t.Fatalf("execute error = %v, want session failure", err)
+	}
+	serverSide, clientSide := net.Pipe()
+	defer func() { _ = serverSide.Close(); _ = clientSide.Close() }()
+	if err = connector.OpenTerminal(context.Background(), request, serverSide); err == nil ||
+		!strings.Contains(err.Error(), "create ssh session") {
+		t.Fatalf("terminal error = %v, want session failure", err)
+	}
+}
+
+func startSessionRejectingServer(t *testing.T, hostSigner ssh.Signer) net.Listener {
+	t.Helper()
+	config := &ssh.ServerConfig{
+		PublicKeyCallback: func(_ ssh.ConnMetadata, _ ssh.PublicKey) (*ssh.Permissions, error) {
+			return nil, nil
+		},
+	}
+	config.AddHostKey(hostSigner)
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	t.Cleanup(func() { _ = listener.Close() })
+	go func() {
+		for {
+			connection, acceptErr := listener.Accept()
+			if acceptErr != nil {
+				return
+			}
+			go func() {
+				serverConn, channels, requests, handshakeErr := ssh.NewServerConn(connection, config)
+				if handshakeErr != nil {
+					_ = connection.Close()
+					return
+				}
+				go ssh.DiscardRequests(requests)
+				for channelRequest := range channels {
+					_ = channelRequest.Reject(ssh.Prohibited, "sessions disabled")
+				}
+				_ = serverConn.Close()
+			}()
+		}
+	}()
+	return listener
+}
+
 func TestConnectorOpenTerminalRejectsShell(t *testing.T) {
 	privateKey, _ := generatePrivateKey(t)
 	_, hostSigner := generatePrivateKey(t)

@@ -17,13 +17,53 @@ type marketNetwork struct {
 	dial   func(context.Context, string, string) (net.Conn, error)
 }
 
-func marketDialContext(dialer *net.Dialer, allowPrivate bool) func(context.Context, string, string) (net.Conn, error) {
-	return checkedMarketDial(marketNetwork{lookup: net.DefaultResolver.LookupIPAddr, dial: dialer.DialContext}, allowPrivate)
+type marketLookup func(context.Context, string) ([]net.IPAddr, error)
+
+// validateProxiedMarketTarget 在 HTTP 代理接管 DNS 之前复核目标域名。
+// 代理链路无法像直接拨号那样把连接固定到已校验的 IP，因此这里仍拒绝
+// 已知的私网、保留、混合或异常地址集合。
+func validateProxiedMarketTarget(ctx context.Context, target *url.URL, allowPrivate bool, lookup marketLookup) error {
+	if err := validateMarketURL(target, allowPrivate); err != nil {
+		return err
+	}
+	if allowPrivate || net.ParseIP(target.Hostname()) != nil {
+		return nil
+	}
+	addresses, err := lookup(ctx, target.Hostname())
+	if err != nil {
+		return errors.Join(ErrMarketUnavailable, err)
+	}
+	if len(addresses) == 0 || len(addresses) > maximumMarketAddresses {
+		return ErrMarketInvalid
+	}
+	for _, address := range addresses {
+		if address.Zone != "" || address.IP == nil || !publicMarketIP(address.IP) {
+			return ErrMarketInvalid
+		}
+	}
+	return nil
+}
+
+func marketDialContext(dialer *net.Dialer, allowPrivate bool, allowProxyDial ...func(context.Context, string) (bool, error)) func(context.Context, string, string) (net.Conn, error) {
+	return checkedMarketDialWithProxy(marketNetwork{lookup: net.DefaultResolver.LookupIPAddr, dial: dialer.DialContext}, allowPrivate, allowProxyDial...)
 }
 
 // DNS 校验后的地址直接用于拨号，禁止再用原域名解析一次。
 func checkedMarketDial(policy marketNetwork, allowPrivate bool) func(context.Context, string, string) (net.Conn, error) {
+	return checkedMarketDialWithProxy(policy, allowPrivate)
+}
+
+func checkedMarketDialWithProxy(policy marketNetwork, allowPrivate bool, allowProxyDial ...func(context.Context, string) (bool, error)) func(context.Context, string, string) (net.Conn, error) {
 	return func(ctx context.Context, network, address string) (net.Conn, error) {
+		if len(allowProxyDial) > 0 && allowProxyDial[0] != nil {
+			allowed, err := allowProxyDial[0](ctx, address)
+			if err != nil {
+				return nil, errors.Join(ErrMarketUnavailable, err)
+			}
+			if allowed {
+				return policy.dial(ctx, network, address)
+			}
+		}
 		host, port, err := net.SplitHostPort(address)
 		if err != nil {
 			return nil, ErrMarketInvalid

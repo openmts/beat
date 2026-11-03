@@ -60,14 +60,29 @@ func New(config Config) (*Service, error) {
 	if config.Now == nil {
 		config.Now = func() time.Time { return time.Now().UTC() }
 	}
-	client := &http.Client{Transport: http.DefaultTransport}
-	if config.HTTPClient != nil {
-		copy := *config.HTTPClient
-		client = &copy
-	}
+	client := newHTTPClient(config.HTTPClient)
 	service := &Service{rollout: config.Rollout, repository: config.Repository, api: api, token: config.Token, client: client, now: config.Now, slots: make(chan struct{}, 2)}
 	client.CheckRedirect = service.allowRedirect
 	return service, nil
+}
+
+func newHTTPClient(injected *http.Client) *http.Client {
+	client := &http.Client{}
+	if injected != nil {
+		copy := *injected
+		client = &copy
+	}
+	if client.Transport == nil {
+		transport := &http.Transport{}
+		if base, ok := http.DefaultTransport.(*http.Transport); ok {
+			transport = base.Clone()
+		}
+		// Release tokens must not follow unrelated process-level proxy settings.
+		// The owner-configured egress proxy is injected as an explicit client.
+		transport.Proxy = nil
+		client.Transport = transport
+	}
+	return client
 }
 
 func parseAPIURL(value string) (*url.URL, error) {
@@ -114,15 +129,30 @@ func (s *Service) allowRedirect(request *http.Request, via []*http.Request) erro
 }
 
 func (s *Service) safeDownloadURL(target *url.URL) bool {
-	if target == nil || target.User != nil || target.Fragment != "" {
-		return false
-	}
-	secure := target.Scheme == "https" || target.Scheme == "http" && loopbackHost(target.Hostname())
-	if !secure {
+	if s == nil || s.api == nil || target == nil || target.User != nil || target.Fragment != "" {
 		return false
 	}
 	host := strings.ToLower(target.Hostname())
-	return host == strings.ToLower(s.api.Hostname()) || host == "github.com" || strings.HasSuffix(host, ".githubusercontent.com")
+	if host == strings.ToLower(s.api.Hostname()) {
+		return strings.EqualFold(target.Scheme, s.api.Scheme) && effectivePort(target) == effectivePort(s.api)
+	}
+	if target.Scheme != "https" {
+		return false
+	}
+	if host != "github.com" && !strings.HasSuffix(host, ".githubusercontent.com") {
+		return false
+	}
+	return target.Port() == "" || target.Port() == "443"
+}
+
+func effectivePort(target *url.URL) string {
+	if port := target.Port(); port != "" {
+		return port
+	}
+	if strings.EqualFold(target.Scheme, "https") {
+		return "443"
+	}
+	return "80"
 }
 
 func (s *Service) apiURL(parts ...string) (*url.URL, error) {

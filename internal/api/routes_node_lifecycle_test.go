@@ -96,6 +96,8 @@ func TestNodeLifecycleRoutesRegisterAdminSurface(t *testing.T) {
 		{http.MethodPost, "/api/v1/admin/settings/geoip/mmdb", "POST /api/v1/admin/settings/geoip/mmdb"},
 		{http.MethodPost, "/api/v1/admin/settings/geoip/mmdb/update", "POST /api/v1/admin/settings/geoip/mmdb/update"},
 		{http.MethodPost, "/api/v1/admin/settings/geoip/mmdb/rollback", "POST /api/v1/admin/settings/geoip/mmdb/rollback"},
+		{http.MethodGet, "/api/v1/admin/settings/geoip/mmdb/remote", "GET /api/v1/admin/settings/geoip/mmdb/remote"},
+		{http.MethodPost, "/api/v1/admin/settings/geoip/mmdb/remote", "POST /api/v1/admin/settings/geoip/mmdb/remote"},
 		{http.MethodGet, "/api/v1/admin/settings/lifecycle", "GET /api/v1/admin/settings/lifecycle"},
 		{http.MethodPut, "/api/v1/admin/settings/lifecycle", "PUT /api/v1/admin/settings/lifecycle"},
 		{http.MethodGet, "/api/v1/admin/nodes/node-1/lifecycle", "GET /api/v1/admin/nodes/{id}/lifecycle"},

@@ -57,7 +57,7 @@ func testBase(t *testing.T) *url.URL {
 func testClient(t *testing.T, transport http.RoundTripper) *Client {
 	t.Helper()
 	base := testBase(t)
-	return NewClient(base, "beat_service_v1_test", &http.Client{Transport: transport, CheckRedirect: sameHostRedirects(base.Host)})
+	return NewClient(base, "beat_service_v1_test", &http.Client{Transport: transport, CheckRedirect: sameOriginRedirects(base)})
 }
 
 func TestClientSendsBearerTokenAndQuery(t *testing.T) {
@@ -186,6 +186,61 @@ func TestClientRefusesCrossHostRedirects(t *testing.T) {
 	_, err := testClient(t, transport).Get(t.Context(), runtimePath, nil)
 	if err == nil || !strings.Contains(err.Error(), "refusing redirect to another host") {
 		t.Fatalf("expected a refused redirect, got %v", err)
+	}
+}
+
+func TestClientRefusesCrossOriginRedirects(t *testing.T) {
+	for _, scenario := range []struct {
+		name     string
+		base     string
+		location string
+	}{
+		{name: "scheme downgrade", base: "https://beat.example", location: "http://beat.example/api/v1/admin/runtime"},
+		{name: "different effective port", base: "https://beat.example", location: "https://beat.example:8443/api/v1/admin/runtime"},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			base, err := ResolveServer(scenario.base)
+			if err != nil {
+				t.Fatal(err)
+			}
+			transport := &stubTransport{handler: func(*http.Request) (*http.Response, error) {
+				return redirectResponse(scenario.location), nil
+			}}
+			client := NewClient(base, "beat_service_v1_test", &http.Client{
+				Transport: transport, CheckRedirect: sameOriginRedirects(base),
+			})
+			_, err = client.Get(t.Context(), runtimePath, nil)
+			if err == nil || !strings.Contains(err.Error(), "refusing redirect to another host") {
+				t.Fatalf("expected a refused cross-origin redirect, got %v", err)
+			}
+			if len(transport.requests) != 1 {
+				t.Fatalf("cross-origin target was requested: attempts=%d", len(transport.requests))
+			}
+		})
+	}
+}
+
+func TestClientAllowsExplicitDefaultPortRedirect(t *testing.T) {
+	base, err := ResolveServer("https://beat.example")
+	if err != nil {
+		t.Fatal(err)
+	}
+	attempts := 0
+	transport := &stubTransport{handler: func(*http.Request) (*http.Response, error) {
+		attempts++
+		if attempts == 1 {
+			return redirectResponse("https://beat.example:443/api/v1/admin/runtime"), nil
+		}
+		return jsonResponse(http.StatusOK, `{"code":200,"message":"success","data":{"status":"ok"}}`), nil
+	}}
+	client := NewClient(base, "beat_service_v1_test", &http.Client{
+		Transport: transport, CheckRedirect: sameOriginRedirects(base),
+	})
+	if _, err = client.Get(t.Context(), runtimePath, nil); err != nil {
+		t.Fatalf("default-port same-origin redirect rejected: %v", err)
+	}
+	if attempts != 2 {
+		t.Fatalf("redirect attempts = %d, want 2", attempts)
 	}
 }
 

@@ -443,7 +443,7 @@ agent Token、会话、脚本采集命令和探测目标不会提供给主题。
 （`dist/themes/`）始终带着十套可安装主题、预览图、SDK 和三份下载版文档；构建前端因此需要 Go 工具链。
 容器与 CI 走同一条路径：`Dockerfile` 的前端阶段复用后端阶段构建好的 packer 并设置
 `BEAT_THEME_BIN`，`scripts/check.sh frontend` 会读 `webui/src/lib/theme-examples.ts` 的后台示例列表，在构建后逐一确认每套 ZIP 与预览图（外加 SDK 与三份文档）确实进入静态目录。
-十套分发 ZIP 的当前摘要（可由源码逐字节复现）：`slate` `5e3056f1…24b472`、`operations` `8198b705…53525a38`、`canvas` `05a92365…5bf749`、`graphite` `f2d44ef9…457c52a`、`aurora` `ba3979fb…4bd8a5`、`terminal` `5724fdbc…d67326`、`paper` `8aa69ce7…6125dc`、`midnight` `880b19d2…b5ff84`、`solar` `70a0ad70…8d96797`、`pulse` `a3508c0a…c69712`。`go test ./cmd/theme/` 会在十套源码上重新执行 `pack` 与 `validate`，核对声明式九套彼此不同、十套预览图都是可解码且不小于 320x180 的 PNG，并额外校验沙箱包只有一个 HTML 入口、入口引用包内的 `theme.css`/`theme.js`、包内 `beat-sdk.js` 与 `themes/sdk/bridge.js` 逐字节一致；分发资产存在时还会逐字节比对 ZIP、预览图、SDK 和下载版文档，源码改动后忘记重建会直接失败，资产缺失时只记录提示。
+十套分发 ZIP 的当前摘要（可由源码逐字节复现）：`slate` `b0479e01…a6713f`、`operations` `a6ed289f…ead748`、`canvas` `40fd67b4…cc4575`、`graphite` `4b87ff94…e3f567`、`aurora` `8d423bb3…bf88e5`、`terminal` `a0cbfaa9…381c26`、`paper` `202b239f…72b2de`、`midnight` `a3558cbc…e70880`、`solar` `8e6abdc0…b11973`、`pulse` `9123ab37…2c26d5`。归档条目使用 Store，避免 Go 标准库 Deflate 随工具链版本变化；`go1.26.10` 与 `go1.27.2` 已验证生成字节一致。`go test ./cmd/theme/` 会在十套源码上重新执行 `pack` 与 `validate`，核对声明式九套彼此不同、十套预览图都是可解码且不小于 320x180 的 PNG，并额外校验沙箱包只有一个 HTML 入口、入口引用包内的 `theme.css`/`theme.js`、包内 `beat-sdk.js` 与 `themes/sdk/bridge.js` 逐字节一致；分发资产存在时还会逐字节比对 ZIP、预览图、SDK 和下载版文档，源码改动后忘记重建会直接失败，资产缺失时只记录提示。
 源码与 `themes/LICENSE` 是维护入口；ZIP 和 `webui/public/themes/` 是生成的分发资产。
 示例和 SDK 使用 MIT，归档中的 `license.json` 携带完整许可。不要把 Beat 应用或第三方依赖的许可视为自动相同。
 

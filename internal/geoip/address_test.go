@@ -61,6 +61,23 @@ type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 
+func TestGitHubDownloadClientUsesSeparateLongTimeout(t *testing.T) {
+	base := providerClient()
+	download := githubDownloadClient(base)
+
+	baseTransport := base.Transport.(*http.Transport)
+	downloadTransport := download.Transport.(*http.Transport)
+	if download.Timeout != githubDownloadLimit || downloadTransport.ResponseHeaderTimeout != githubDownloadLimit {
+		t.Fatalf("download timeout = %s, header timeout = %s", download.Timeout, downloadTransport.ResponseHeaderTimeout)
+	}
+	if base.Timeout != providerTimeout || baseTransport.ResponseHeaderTimeout != providerTimeout {
+		t.Fatal("short provider timeout was modified")
+	}
+	if downloadTransport == baseTransport {
+		t.Fatal("download transport was not cloned")
+	}
+}
+
 func TestRemoteFailuresAndTransportPolicy(t *testing.T) {
 	client := providerClient()
 	transport := client.Transport.(*http.Transport)

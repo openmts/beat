@@ -2,15 +2,21 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/beat/backend/internal/model"
 )
 
 const authorizedKeysFileMode = 0o600
+
+// authorizedKeysMu 串行化同一 Agent 进程内的读改写；自愈与 WebSocket 任务
+// 会并发更新同一个文件，缺少串行化时后写者可能覆盖先写者的公钥。
+var authorizedKeysMu sync.RWMutex
 
 // TaskExecutor dispatches agent tasks to their handlers.
 type AuthorizedKeyExecutor struct {
@@ -59,10 +65,12 @@ func installAuthorizedKey(homeDir, publicKey string) error {
 		return fmt.Errorf("secure ssh directory: %w", err)
 	}
 	authorizedPath := filepath.Join(sshDir, "authorized_keys")
+	authorizedKeysMu.Lock()
+	defer authorizedKeysMu.Unlock()
 	if err := appendAuthorizedKey(authorizedPath, key); err != nil {
 		return err
 	}
-	return os.Chmod(authorizedPath, authorizedKeysFileMode)
+	return nil
 }
 
 func appendAuthorizedKey(path, key string) error {
@@ -79,8 +87,39 @@ func appendAuthorizedKey(path, key string) error {
 		content = append(content, '\n')
 	}
 	content = append(content, []byte(key+"\n")...)
-	if err := os.WriteFile(path, content, authorizedKeysFileMode); err != nil {
-		return fmt.Errorf("write authorized_keys: %w", err)
+	return replaceAuthorizedKeys(path, content)
+}
+
+// replaceAuthorizedKeys 使用同目录临时文件原子替换，避免进程中断留下截断文件。
+func replaceAuthorizedKeys(path string, content []byte) (resultErr error) {
+	file, err := os.CreateTemp(filepath.Dir(path), ".authorized_keys-*")
+	if err != nil {
+		return fmt.Errorf("create authorized_keys temporary file: %w", err)
+	}
+	temporary := file.Name()
+	defer func() {
+		if resultErr != nil {
+			_ = os.Remove(temporary)
+		}
+	}()
+	if err := file.Chmod(authorizedKeysFileMode); err != nil {
+		return errors.Join(fmt.Errorf("secure temporary authorized_keys: %w", err), file.Close())
+	}
+	if _, err := file.Write(content); err != nil {
+		return errors.Join(fmt.Errorf("write temporary authorized_keys: %w", err), file.Close())
+	}
+	if err := file.Sync(); err != nil {
+		return errors.Join(fmt.Errorf("sync temporary authorized_keys: %w", err), file.Close())
+	}
+	if err := file.Close(); err != nil {
+		return fmt.Errorf("close temporary authorized_keys: %w", err)
+	}
+	if err := os.Rename(temporary, path); err != nil {
+		return fmt.Errorf("replace authorized_keys: %w", err)
+	}
+	if directory, err := os.Open(filepath.Dir(path)); err == nil {
+		_ = directory.Sync()
+		_ = directory.Close()
 	}
 	return nil
 }

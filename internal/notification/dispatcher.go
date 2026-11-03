@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"strconv"
 	"time"
 
@@ -15,15 +16,19 @@ import (
 )
 
 type DispatcherConfig struct {
-	Egress    *Egress
-	TLSConfig *tls.Config
-	Now       func() time.Time
+	Egress         *Egress
+	TLSConfig      *tls.Config
+	Now            func() time.Time
+	Proxy          func(*http.Request) (*url.URL, error)
+	AllowProxyDial func(context.Context, string) (bool, error)
 }
 
 type Dispatcher struct {
-	egress *Egress
-	tls    *tls.Config
-	now    func() time.Time
+	egress         *Egress
+	tls            *tls.Config
+	now            func() time.Time
+	proxy          func(*http.Request) (*url.URL, error)
+	allowProxyDial func(context.Context, string) (bool, error)
 }
 
 func NewDispatcher(options ...DispatcherConfig) *Dispatcher {
@@ -44,7 +49,7 @@ func NewDispatcher(options ...DispatcherConfig) *Dispatcher {
 	if secureTLS.MinVersion < tls.VersionTLS12 {
 		secureTLS.MinVersion = tls.VersionTLS12
 	}
-	return &Dispatcher{egress: config.Egress, tls: secureTLS, now: config.Now}
+	return &Dispatcher{egress: config.Egress, tls: secureTLS, now: config.Now, proxy: config.Proxy, allowProxyDial: config.AllowProxyDial}
 }
 
 func (dispatcher *Dispatcher) Send(ctx context.Context, dispatch model.NotificationDispatch) model.NotificationSendResult {
@@ -93,8 +98,32 @@ func (dispatcher *Dispatcher) Send(ctx context.Context, dispatch model.Notificat
 }
 
 func (dispatcher *Dispatcher) transport(policy model.NotificationEgressPolicy, loopbackOnly bool) *http.Transport {
-	return &http.Transport{Proxy: nil, DisableKeepAlives: true, DisableCompression: true, TLSClientConfig: dispatcher.tls.Clone(),
+	proxy := dispatcher.proxy
+	if proxy != nil {
+		baseProxy := proxy
+		proxy = func(request *http.Request) (*url.URL, error) {
+			if request == nil || request.URL == nil {
+				return nil, transportFailure{code: "endpoint_invalid", stage: "validation"}
+			}
+			// 代理解析目标域名，不会调用 DialChecked；重定向和 DNS 重绑定必须在
+			// 交给代理前重新执行同一套地址策略。
+			if err := dispatcher.egress.Validate(request.Context(), request.URL.String(), policy); err != nil {
+				return nil, err
+			}
+			return baseProxy(request)
+		}
+	}
+	return &http.Transport{Proxy: proxy, DisableKeepAlives: true, DisableCompression: true, TLSClientConfig: dispatcher.tls.Clone(),
 		DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
+			if dispatcher.allowProxyDial != nil {
+				allowed, err := dispatcher.allowProxyDial(ctx, address)
+				if err != nil {
+					return nil, err
+				}
+				if allowed {
+					return (&net.Dialer{Timeout: 5 * time.Second}).DialContext(ctx, network, address)
+				}
+			}
 			return dispatcher.egress.DialChecked(ctx, DialTarget{Network: network, Address: address, Policy: policy, LoopbackOnly: loopbackOnly})
 		},
 		TLSHandshakeTimeout: 5 * time.Second, ResponseHeaderTimeout: 10 * time.Second, MaxResponseHeaderBytes: 64 * 1024}

@@ -92,6 +92,14 @@ describe("admin terminal", () => {
     expect(screen.getByText("No online nodes are available")).toBeInTheDocument()
   })
 
+  it("places node selection before the terminal workspace for mobile stacking", () => {
+    view()
+    const selector = screen.getByRole("complementary", { name: "Select Node" })
+    const workspace = screen.getByRole("region", { name: "SSH Terminal" })
+    expect(selector.compareDocumentPosition(workspace)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
+    expect(selector.parentElement).toHaveClass("grid-cols-1")
+  })
+
   it("executes a batch command and reports per-node failures", async () => {
     vi.mocked(executeBatchCommand).mockResolvedValue([
       { node_id: "n1", node_name: "Node One", output: "up" },

@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -14,6 +16,7 @@ import (
 	"github.com/beat/backend/internal/applicationsecrets"
 	"github.com/beat/backend/internal/backup"
 	"github.com/beat/backend/internal/buildinfo"
+	"github.com/beat/backend/internal/egressproxy"
 	"github.com/beat/backend/internal/fleetsummary"
 	"github.com/beat/backend/internal/maintenance"
 	"github.com/beat/backend/internal/metricserasure"
@@ -33,7 +36,14 @@ func newServerServices(
 	if err := openServerSecrets(ctx, dataDir, stores); err != nil {
 		return nil, err
 	}
-	delivery, err := notificationqueue.NewService(notificationqueue.Config{Database: stores.sqlite.DB, Secrets: stores.secrets, Sender: notification.NewDispatcher()})
+	proxyService, err := egressproxy.NewService(store.NewEgressProxyStore(stores.sqlite.DB), stores.secrets)
+	if err != nil {
+		return nil, fmt.Errorf("initialize egress proxy: %w", err)
+	}
+	delivery, err := notificationqueue.NewService(notificationqueue.Config{
+		Database: stores.sqlite.DB, Secrets: stores.secrets,
+		Sender: notification.NewDispatcher(notification.DispatcherConfig{Proxy: proxyService.Proxy, AllowProxyDial: proxyService.IsProxyAddress}),
+	})
 	if err != nil {
 		return nil, fmt.Errorf("initialize notification queue: %w", err)
 	}
@@ -45,8 +55,8 @@ func newServerServices(
 	if err != nil {
 		return nil, fmt.Errorf("initialize ssh client: %w", err)
 	}
-	oidcService := newOIDCService(ctx, stores, security, dataDir)
-	themeService, themeMarkets, err := newThemeServices(ctx, stores, dataDir)
+	oidcService := newOIDCServiceWithProxy(ctx, stores, security, dataDir, proxyService.Proxy, proxyService.IsProxyAddress)
+	themeService, themeMarkets, err := newThemeServicesWithProxy(ctx, stores, dataDir, theme.MarketOptions{Proxy: proxyService.Proxy, AllowProxyDial: proxyService.IsProxyAddress})
 	if err != nil {
 		return nil, err
 	}
@@ -55,7 +65,7 @@ func newServerServices(
 	if err := stores.applicationGc.RecoverInterrupted(recoveryCtx); err != nil {
 		return nil, fmt.Errorf("recover application history cleanup: %w", err)
 	}
-	services := &serverServices{security: security, maintenance: maintenanceService, backups: backupService, metricRetention: serverMetricRetention(stores),
+	services := &serverServices{egressProxy: proxyService, security: security, maintenance: maintenanceService, backups: backupService, metricRetention: serverMetricRetention(stores),
 		metricErasure: metricserasure.NewService(stores.metricErasure, stores.mts),
 		terminal:      service.NewTerminalService(stores.nodes, stores.sshKeys, sshConnector), delivery: delivery,
 		trafficReports: trafficreport.NewService(trafficreport.Config{Schedules: stores.trafficReports, Nodes: stores.nodes, Metrics: stores.mts, Queue: delivery}),
@@ -73,7 +83,17 @@ func newServerServices(
 
 // newThemeServices 构造主题与市场服务。
 func newThemeServices(
-	ctx context.Context, stores *serverStores, dataDir string,
+	ctx context.Context, stores *serverStores, dataDir string, proxies ...func(*http.Request) (*url.URL, error),
+) (*theme.Service, *theme.MarketService, error) {
+	options := theme.MarketOptions{}
+	if len(proxies) > 0 {
+		options.Proxy = proxies[0]
+	}
+	return newThemeServicesWithProxy(ctx, stores, dataDir, options)
+}
+
+func newThemeServicesWithProxy(
+	ctx context.Context, stores *serverStores, dataDir string, options theme.MarketOptions,
 ) (*theme.Service, *theme.MarketService, error) {
 	themeService, err := theme.NewService(stores.themes, stores.admins,
 		filepath.Join(dataDir, "themes"), buildinfo.Version, time.Now)
@@ -87,7 +107,7 @@ func newThemeServices(
 	if allowPrivate {
 		slog.WarnContext(ctx, "theme market private sources are allowed", "reason", "operator_opt_in")
 	}
-	marketClient := theme.NewMarketClient(allowPrivate, time.Now)
+	marketClient := theme.NewMarketClientWithOptions(allowPrivate, time.Now, options)
 	marketService := theme.NewMarketService(stores.themes, marketClient, themeService, time.Now)
 	return themeService, marketService, nil
 }
@@ -106,9 +126,11 @@ func themeMarketAllowPrivate() (bool, error) {
 	return allowed, nil
 }
 
-// newOIDCService 构造带生产 SSRF 策略的 OIDC 服务。
-func newOIDCService(ctx context.Context, stores *serverStores, security *adminauth.Service, dataDir string) *oidc.Service {
-	policy := oidc.EndpointPolicy{}
+// newOIDCServiceWithProxy 构造带生产 SSRF 策略的 OIDC 服务，并仅放通显式配置的代理端点。
+func newOIDCServiceWithProxy(ctx context.Context, stores *serverStores, security *adminauth.Service, dataDir string,
+	proxy func(*http.Request) (*url.URL, error), allowProxyDial func(context.Context, string) (bool, error),
+) *oidc.Service {
+	policy := oidc.EndpointPolicy{Proxy: proxy, AllowProxyDial: allowProxyDial}
 	client := oidc.NewProviderClient(policy, 15*time.Minute, time.Now)
 	return oidc.NewService(stores.oidc, stores.admins, stores.secrets, security, client, time.Now, nil)
 }

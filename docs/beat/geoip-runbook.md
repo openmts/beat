@@ -5,6 +5,20 @@ GeoIP 使用 SQLite v13；运行时与 backup v4 接线应随本批一起交付�
 
 - 推荐上传自有许可的 Country MMDB。上传为原始 `application/octet-stream`，
   最大 128 MiB，`If-Match` 为当前配置 revision。
+- 托管 MMDB 也支持固定远端源 `P3TERX/GeoLite.mmdb` 的
+  `GeoLite2-Country.mmdb`。`GET /api/v1/admin/settings/geoip/mmdb/remote`
+  返回最新 Release 的版本、发布时间、文件大小和 GitHub asset digest；
+  `POST` 同一路径携带 `version`、`sha256`、`expected_revision` 下载或更新已有数据库。
+  安装会重新确认 Release 元数据与下载摘要，并校验数据库类型，成功后来源记录为
+  `github:P3TERX/GeoLite.mmdb@<version>`；上传、MaxMind 下载和回滚入口保持不变。
+- 若 GitHub 或 MaxMind 的直连速度较差，可在 `/admin/settings` 的“后台出站代理”
+  配置 HTTP、HTTPS、SOCKS5 或 SOCKS5H 代理，保存后无需重启。代理凭据加密保存且
+  不会回传明文；MMDB 下载与 GeoIP 查询的新请求会立即使用该设置。地址可以保存，但只有打开
+  “启用代理”并保存后才会生效。GitHub MMDB 安装允许 60 秒等待响应头和完成传输，普通
+  GeoIP 查询仍限制为 10 秒；安装请求另有 2 分钟响应写截止时间，覆盖元数据查询、下载、
+  校验和发布。GitHub 下载重定向只允许固定的 HTTPS 主机和 443 端口。保存后可点击
+  “测试已保存代理”，服务端会通过该代理访问固定的
+  `https://example.com/` 并校验响应内容；测试不接收自定义目标，也不返回代理地址或凭据。
 - 固定管理入口为 `/api/v1/admin/settings/geoip`；其 `/mmdb`、
   `/mmdb/update`、`/mmdb/rollback` 操作要求 owner 与近期重新认证。
 - 官方更新只访问 MaxMind 固定 HTTPS origin，核对 SHA-256 后验证归档和数据库；

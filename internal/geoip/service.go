@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"net/http"
+	"net/url"
 	"sync"
 	"time"
 
@@ -21,6 +22,7 @@ type Config struct {
 	Directory    string
 	ExternalMMDB string
 	Now          func() time.Time
+	Proxy        func(*http.Request) (*url.URL, error)
 }
 
 type Service struct {
@@ -44,7 +46,7 @@ func NewService(config Config) (*Service, error) {
 	if config.Now == nil {
 		config.Now = func() time.Time { return time.Now().UTC() }
 	}
-	return &Service{db: config.Database, secrets: config.Secrets, now: config.Now, directory: config.Directory, external: config.ExternalMMDB, mmdb: &Database{}, client: providerClient()}, nil
+	return &Service{db: config.Database, secrets: config.Secrets, now: config.Now, directory: config.Directory, external: config.ExternalMMDB, mmdb: &Database{}, client: providerClient(config.Proxy)}, nil
 }
 
 type transaction struct {

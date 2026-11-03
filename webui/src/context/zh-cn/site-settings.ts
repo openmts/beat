@@ -25,9 +25,11 @@ export const zhCNSiteSettings: Record<string, string> = {
   "settings.address_hidden": "隐藏",
   "settings.address_masked": "掩码",
   "settings.address_full": "完整",
-  "settings.address_hint": "隐藏会移除地址；掩码只保留网络前缀（IPv4 首个八位组，IPv6 前 32 位）；完整会公开存储值。",
+  "settings.address_hint":
+    "隐藏会移除地址；掩码只保留网络前缀（IPv4 首个八位组，IPv6 前 32 位）；完整会公开存储值。",
   "settings.deployment": "部署访问策略",
-  "settings.deployment_hint": "这些值来自服务端环境变量，不能在此修改，来源列表也不会下发到浏览器。",
+  "settings.deployment_hint":
+    "这些值来自服务端环境变量，不能在此修改，来源列表也不会下发到浏览器。",
   "settings.deployment_unavailable": "不可用",
   "settings.external_url": "外部访问地址",
   "settings.external_url_unset": "未配置",
@@ -36,22 +38,29 @@ export const zhCNSiteSettings: Record<string, string> = {
   "settings.origins_all": "允许所有公共来源",
   "settings.origins_same": "同源",
   "settings.origins_configured": "已配置 {count} 个来源",
-  "settings.address_privacy_note": "不会记录访客身份与行为。公共遥测只保存聚合计数，SQLite 中不会写入任何访客样本。",
+  "settings.address_privacy_note":
+    "不会记录访客身份与行为。公共遥测只保存聚合计数，SQLite 中不会写入任何访客样本。",
   "settings.show_network": "展示网络质量",
   "settings.show_network_hint": "控制前台仪表盘是否显示网络质量区域。",
   "settings.show_accelerators": "展示 GPU 与加速",
-  "settings.show_accelerators_hint": "总开关优先级最高。关闭后，所有节点的指标页都不显示 GPU 与加速区域。",
+  "settings.show_accelerators_hint":
+    "总开关优先级最高。关闭后，所有节点的指标页都不显示 GPU 与加速区域。",
   "settings.accelerator_node_visibility": "在指标页展示此节点",
-  "settings.accelerator_node_visibility_hint": "总开关开启时，控制此节点是否显示 GPU 与加速区域。",
-  "settings.accelerator_node_global_off": "全局总开关已关闭。节点设置会保留，并在总开关重新开启后生效。",
+  "settings.accelerator_node_visibility_hint":
+    "总开关开启时，控制此节点是否显示 GPU 与加速区域。",
+  "settings.accelerator_node_global_off":
+    "全局总开关已关闭。节点设置会保留，并在总开关重新开启后生效。",
   "settings.public_telemetry": "匿名聚合遥测",
-  "settings.public_telemetry_hint": "只统计固定的粗粒度页面事件，不采集身份、地址、URL 或任何自由文本。",
+  "settings.public_telemetry_hint":
+    "只统计固定的粗粒度页面事件，不采集身份、地址、URL 或任何自由文本。",
   "settings.telemetry_enabled": "接受匿名交互计数",
   "settings.telemetry_ceiling": "单会话采样上限",
-  "settings.telemetry_ceiling_hint": "按浏览器会话生效；服务端另外对单一来源限流。",
+  "settings.telemetry_ceiling_hint":
+    "按浏览器会话生效；服务端另外对单一来源限流。",
   "settings.telemetry_retention": "聚合保留天数",
   "settings.telemetry_retention_hint": "聚合计数在超过该天数后被清理。",
-  "settings.telemetry_proof_hint": "修改遥测策略前请用当前密码与验证码确认身份。",
+  "settings.telemetry_proof_hint":
+    "修改遥测策略前请用当前密码与验证码确认身份。",
   "settings.telemetry_password": "当前密码",
   "settings.telemetry_code": "验证码",
   "settings.telemetry_cancel": "取消",
@@ -59,6 +68,44 @@ export const zhCNSiteSettings: Record<string, string> = {
   "settings.telemetry_save": "保存公共遥测策略",
   "settings.telemetry_saved": "公共遥测策略已保存",
   "settings.telemetry_unavailable": "公共遥测策略不可用",
+  "settings.proxy_title": "后台出站代理",
+  "settings.proxy_description":
+    "让服务端下载和外部集成统一通过 HTTP、HTTPS、SOCKS5 或 SOCKS5H 代理。保存后新请求立即生效。",
+  "settings.proxy_enabled_badge": "已启用",
+  "settings.proxy_disabled_badge": "未启用",
+  "settings.proxy_enable": "启用出站代理",
+  "settings.proxy_enable_hint":
+    "无需重启服务端，新的后台请求会使用已保存的代理设置。",
+  "settings.proxy_url": "代理地址",
+  "settings.proxy_url_hint":
+    "需要包含协议和端口，例如 http://127.0.0.1:7890 或 socks5h://proxy.example:1080。",
+  "settings.proxy_username": "用户名",
+  "settings.proxy_username_hint": "可选。凭据会使用服务端应用密钥加密保存。",
+  "settings.proxy_password": "密码",
+  "settings.proxy_password_saved": "已保存密码。留空可保持不变。",
+  "settings.proxy_password_hint": "可选。代理无需认证时请留空。",
+  "settings.proxy_clear_password": "清除已保存密码",
+  "settings.proxy_clear_password_hint":
+    "用户名会继续保留。代理不再需要认证时使用。",
+  "settings.proxy_scope":
+    "适用于 MMDB 与 MaxMind 下载、GeoIP 查询、Agent 发布、主题市场、Webhook 和 OIDC。SMTP 与 SSH 连接仍使用各自的原生传输。",
+  "settings.proxy_revision": "配置修订号 {revision}",
+  "settings.proxy_save": "保存代理设置",
+  "settings.proxy_saved": "后台出站代理设置已保存",
+  "settings.proxy_conflict":
+    "设置已在其他会话中变更，已重新加载最新值，请检查后再次保存。",
+  "settings.proxy_save_failed": "无法保存后台出站代理设置",
+  "settings.proxy_unavailable": "后台出站代理设置不可用",
+  "settings.proxy_confirm_title": "保存后台出站代理",
+  "settings.proxy_confirm_description":
+    "此网络路由变更仅限所有者，请确认身份后继续。",
+  "settings.proxy_test": "测试已保存代理",
+  "settings.proxy_test_hint": "测试已保存的配置，请先保存尚未提交的修改。",
+  "settings.proxy_test_title": "测试后台出站代理",
+  "settings.proxy_test_description":
+    "Beat 将通过已保存的代理访问固定的 example.com 公共页面，不会返回代理凭据。",
+  "settings.proxy_test_success": "代理连接成功，耗时 {latency} 毫秒",
+  "settings.proxy_test_failed": "无法测试后台出站代理",
   "settings.saved": "站点设置已保存",
   "settings.preview": "品牌预览",
-}
+};

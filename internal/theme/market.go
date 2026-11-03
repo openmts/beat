@@ -29,9 +29,15 @@ const (
 )
 
 // MarketClient 以 SSRF 安全的方式获取并校验市场目录与包。
+type MarketOptions struct {
+	Proxy          func(*http.Request) (*url.URL, error)
+	AllowProxyDial func(context.Context, string) (bool, error)
+}
+
 type MarketClient struct {
 	client          *http.Client
 	allowPrivate    bool
+	allowProxyDial  func(context.Context, string) (bool, error)
 	now             func() time.Time
 	catalogGate     operationGate
 	catalogs        map[string]*catalogCacheEntry
@@ -40,13 +46,38 @@ type MarketClient struct {
 
 // NewMarketClient 构造市场客户端；allowPrivate 放通私网来源，由运维开关显式开启，
 // 测试注入的 loopback 源同样复用该开关。
-func NewMarketClient(allowPrivate bool, now func() time.Time) *MarketClient {
+func NewMarketClient(allowPrivate bool, now func() time.Time, proxies ...func(*http.Request) (*url.URL, error)) *MarketClient {
+	options := MarketOptions{}
+	if len(proxies) > 0 {
+		options.Proxy = proxies[0]
+	}
+	return NewMarketClientWithOptions(allowPrivate, now, options)
+}
+
+// NewMarketClientWithOptions adds the trusted proxy endpoint exemption while
+// retaining public-address checks for every directly dialed destination.
+func NewMarketClientWithOptions(allowPrivate bool, now func() time.Time, options MarketOptions) *MarketClient {
 	if now == nil {
 		now = time.Now
 	}
+	proxy := options.Proxy
+	if proxy != nil {
+		proxy = func(request *http.Request) (*url.URL, error) {
+			target, err := options.Proxy(request)
+			if err != nil || target == nil {
+				return target, err
+			}
+			// HTTP 代理会自行解析目标域名，不会经过 DialContext；在交给代理前
+			// 仍按本机的公网地址策略校验，避免私网域名绕过直接拨号检查。
+			if err := validateProxiedMarketTarget(request.Context(), request.URL, allowPrivate, net.DefaultResolver.LookupIPAddr); err != nil {
+				return nil, err
+			}
+			return target, nil
+		}
+	}
 	dialer := &net.Dialer{Timeout: marketDialTimeout, KeepAlive: 30 * time.Second}
 	transport := &http.Transport{
-		Proxy: nil, DialContext: marketDialContext(dialer, allowPrivate),
+		Proxy: proxy, DialContext: marketDialContext(dialer, allowPrivate, options.AllowProxyDial),
 		TLSHandshakeTimeout: marketDialTimeout, ResponseHeaderTimeout: marketHeaderTimeout,
 		DisableKeepAlives: true, TLSNextProto: map[string]func(string, *tls.Conn) http.RoundTripper{},
 	}
@@ -58,7 +89,7 @@ func NewMarketClient(allowPrivate bool, now func() time.Time) *MarketClient {
 			}
 			return validateMarketURL(request.URL, allowPrivate)
 		},
-	}, allowPrivate: allowPrivate, now: now}
+	}, allowPrivate: allowPrivate, allowProxyDial: options.AllowProxyDial, now: now}
 }
 
 // SetRootCAs 设置自定义根证书池；仅测试注入的 loopback TLS 源使用。

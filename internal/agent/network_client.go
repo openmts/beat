@@ -50,7 +50,7 @@ func NewNetworkHTTPClient(config Config) (*NetworkHTTPClient, error) {
 	results.RawQuery = ""
 	return &NetworkHTTPClient{
 		assignmentsURL: assignments.String(), resultsURL: results.String(),
-		token: config.AgentToken, client: &http.Client{Timeout: httpClientTimeout},
+		token: config.AgentToken, client: newAgentHTTPClient(httpClientTimeout),
 	}, nil
 }
 
@@ -68,15 +68,23 @@ func (client *NetworkHTTPClient) FetchAssignments(ctx context.Context) (NetworkA
 	if response.StatusCode != http.StatusOK {
 		return NetworkAssignmentSet{}, networkResponseError(response, "network assignments")
 	}
+	body, err := io.ReadAll(io.LimitReader(response.Body, maxNetworkResponseBody+1))
+	if err != nil || len(body) > maxNetworkResponseBody {
+		return NetworkAssignmentSet{}, fmt.Errorf("read network assignments: response exceeds %d bytes", maxNetworkResponseBody)
+	}
 	var envelope struct {
 		Data struct {
 			ExpiresAt time.Time                 `json:"expires_at"`
 			Tasks     []model.NetworkAssignment `json:"tasks"`
 		} `json:"data"`
 	}
-	decoder := json.NewDecoder(io.LimitReader(response.Body, maxNetworkResponseBody))
+	decoder := json.NewDecoder(bytes.NewReader(body))
 	if err := decoder.Decode(&envelope); err != nil {
 		return NetworkAssignmentSet{}, fmt.Errorf("decode network assignments: %w", err)
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		return NetworkAssignmentSet{}, fmt.Errorf("decode network assignments: trailing JSON")
 	}
 	return NetworkAssignmentSet{ExpiresAt: envelope.Data.ExpiresAt, Tasks: envelope.Data.Tasks}, nil
 }

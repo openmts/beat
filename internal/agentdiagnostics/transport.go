@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/beat/backend/internal/agenttransport"
 	"github.com/beat/backend/internal/diagnosticprotocol"
 )
 
@@ -45,7 +46,11 @@ func NewClient(config ClientConfig) (*Client, error) {
 		(address.Scheme != "http" && address.Scheme != "https") || config.Token == "" {
 		return nil, ErrTransport
 	}
-	client := &http.Client{Timeout: requestTimeout, Transport: config.Transport,
+	transport := config.Transport
+	if transport == nil {
+		transport = agenttransport.NoProxyTransport()
+	}
+	client := &http.Client{Timeout: requestTimeout, Transport: transport,
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	return &Client{base: strings.TrimRight(config.ServerURL, "/"), token: config.Token, http: client}, nil
 }

@@ -188,9 +188,57 @@ function TerminalPage() {
     <div className="flex flex-col gap-5">
       <PageHeader title={t("terminal.title")} description={t("terminal.description")} />
 
-      <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
-        {/* Terminal window */}
-        <div className="lg:col-span-2">
+      <div className="grid grid-cols-1 items-start gap-5 lg:grid-cols-[minmax(15rem,18rem)_minmax(0,1fr)]">
+        <aside aria-label={t("terminal.select_node")} className="lg:sticky lg:top-5">
+          <Card>
+            <CardHeader className="py-3">
+              <CardTitle className="flex items-center gap-2 text-base">
+                <ServerIcon className="size-4 text-muted-foreground" />
+                {t("terminal.select_node")}
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              {loading ? (
+                <Skeleton className="h-10 w-full" />
+              ) : (
+                <div className="flex flex-col gap-2.5">
+                  <Select
+                    items={nodeOptions}
+                    value={selectedNodeId}
+                    onValueChange={(v) => { if (v) setSelectedNodeId(v) }}
+                    disabled={connected}
+                  >
+                    <SelectTrigger aria-label={t("terminal.select_node")}>
+                      <SelectValue placeholder={t("terminal.select_placeholder")} />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectGroup>
+                        {nodeOptions.map((option) => (
+                          <SelectItem key={option.value} value={option.value}>
+                            {option.label}
+                          </SelectItem>
+                        ))}
+                      </SelectGroup>
+                    </SelectContent>
+                  </Select>
+                  {selectedNode && !connected && (
+                    <div className="flex items-center gap-2 rounded-md bg-muted/50 px-3 py-2 text-xs text-muted-foreground">
+                      <ShieldCheckIcon className="size-3.5 shrink-0" />
+                      <span className="truncate">
+                        {t("terminal.ready_connect")} {selectedNode.host}
+                      </span>
+                    </div>
+                  )}
+                  {!selectedNodeId && onlineNodes.length === 0 && (
+                    <p className="text-xs text-muted-foreground">{t("terminal.no_online_nodes")}</p>
+                  )}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </aside>
+
+        <section aria-label={t("terminal.ssh")} className="min-w-0 space-y-5">
           <div className="overflow-hidden rounded-xl bg-card ring-1 ring-foreground/10 shadow-sm">
             {/* Title bar */}
             <div className="flex items-center gap-3 border-b border-foreground/10 bg-muted/40 px-4 py-2.5">
@@ -253,56 +301,6 @@ function TerminalPage() {
               )}
             </div>
           </div>
-        </div>
-
-        {/* Side panel */}
-        <div className="flex flex-col gap-5">
-          <Card>
-            <CardHeader className="py-3">
-              <CardTitle className="flex items-center gap-2 text-base">
-                <ServerIcon className="size-4 text-muted-foreground" />
-                {t("terminal.select_node")}
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              {loading ? (
-                <Skeleton className="h-10 w-full" />
-              ) : (
-                <div className="flex flex-col gap-2.5">
-                  <Select
-                    items={nodeOptions}
-                    value={selectedNodeId}
-                    onValueChange={(v) => { if (v) setSelectedNodeId(v) }}
-                    disabled={connected}
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder={t("terminal.select_placeholder")} />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectGroup>
-                        {nodeOptions.map((option) => (
-                          <SelectItem key={option.value} value={option.value}>
-                            {option.label}
-                          </SelectItem>
-                        ))}
-                      </SelectGroup>
-                    </SelectContent>
-                  </Select>
-                  {selectedNode && !connected && (
-                    <div className="flex items-center gap-2 rounded-md bg-muted/50 px-3 py-2 text-xs text-muted-foreground">
-                      <ShieldCheckIcon className="size-3.5 shrink-0" />
-                      <span className="truncate">
-                        {t("terminal.ready_connect")} {selectedNode.host}
-                      </span>
-                    </div>
-                  )}
-                  {!selectedNodeId && (
-                    <p className="text-xs text-muted-foreground">{t("terminal.no_online_nodes")}</p>
-                  )}
-                </div>
-              )}
-            </CardContent>
-          </Card>
 
           <Card>
             <CardHeader className="py-3">
@@ -360,7 +358,7 @@ function TerminalPage() {
               )}
             </CardContent>
           </Card>
-        </div>
+        </section>
       </div>
     </div>
   )

@@ -18,6 +18,7 @@ func (router *Router) registerNodeLifecycleRoutes(mux *http.ServeMux) {
 	if router.geoIP != nil {
 		h := handler.NewGeoIPHandler(router.geoIP)
 		mux.Handle("GET /api/v1/admin/settings/geoip", router.ownerAdmin(http.HandlerFunc(h.HandleSettings)))
+		mux.Handle("GET /api/v1/admin/settings/geoip/mmdb/remote", router.ownerAdmin(http.HandlerFunc(h.HandleRemoteMMDBRelease)))
 		mux.Handle("GET /api/v1/admin/nodes/{id}/location", router.admin(http.HandlerFunc(h.HandleLocation)))
 		for path, handle := range map[string]http.HandlerFunc{
 			"PUT /api/v1/admin/settings/geoip":                h.HandleSaveSettings,
@@ -26,6 +27,7 @@ func (router *Router) registerNodeLifecycleRoutes(mux *http.ServeMux) {
 			"POST /api/v1/admin/settings/geoip/mmdb":          h.HandleMMDBUpload,
 			"POST /api/v1/admin/settings/geoip/mmdb/update":   h.HandleMMDBUpdate,
 			"POST /api/v1/admin/settings/geoip/mmdb/rollback": h.HandleMMDBRollback,
+			"POST /api/v1/admin/settings/geoip/mmdb/remote":   h.HandleRemoteMMDBInstall,
 		} {
 			mux.Handle(path, router.recentAuthOwnerAdmin(handle))
 		}

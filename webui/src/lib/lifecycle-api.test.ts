@@ -26,6 +26,15 @@ describe("lifecycle API contracts", () => {
   await expect(lifecycle.uploadMMDB({ size: 128 * 1024 * 1024 + 1 } as File, 7)).rejects.toThrow("128 MiB")
   mock.onPost("/admin/settings/geoip/mmdb/update").reply(200, { revision: 9 }); await lifecycle.updateMMDB({ account_id: "a", license_key: "l", edition: "GeoLite2-Country", expected_revision: 8 })
   mock.onPost("/admin/settings/geoip/mmdb/rollback").reply(200, { revision: 10 }); await lifecycle.rollbackMMDB(9)
+  const signal = new AbortController().signal
+  mock.onGet("/admin/settings/geoip/mmdb/remote").reply(200, { repository: "P3TERX/GeoLite.mmdb", version: "2026.10.22", update_available: true })
+  expect(await lifecycle.getRemoteMMDBRelease(signal)).toMatchObject({ version: "2026.10.22", update_available: true })
+  expect(mock.history.get.at(-1)?.signal).toBe(signal)
+  mock.onPost("/admin/settings/geoip/mmdb/remote").reply(config => {
+   expect(JSON.parse(config.data)).toEqual({ version: "2026.10.22", sha256: "c7b73d", expected_revision: 7 })
+   return [200, { revision: 8 }]
+  })
+  expect(await lifecycle.installRemoteMMDB({ version: "2026.10.22", sha256: "c7b73d", expected_revision: 7 })).toEqual({ revision: 8 })
  })
  it("keeps v23 adapters independent and reports unavailable backend errors", async () => {
   const base = "/alerts/fleet-summaries"

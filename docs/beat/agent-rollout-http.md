@@ -1,18 +1,24 @@
-# Agent rollout HTTP contract (v15, not registered)
+# Agent rollout HTTP contract
 
-`internal/agentrollouthttp.New(service).Register(mux)` registers only the isolated
-handler. Runtime/router/schema registration and trusted signing configuration
-remain separate integration work; rollout is disabled by default. Wrap owner
-routes with the existing session and CSRF middleware and Agent routes with the
-active per-node authentication middleware. The service independently rechecks
-current credentials/owner authority inside its transactions.
+Status: implemented and centrally registered. SQLite migration v15 creates the
+rollout tables, and the authenticated server routes below are mounted by the
+central router. Rollout remains disabled until `BEAT_AGENT_ROLLOUT_CONFIG`
+provides the out-of-band signing trust and Sigstore policy. Deployment state is
+tracked separately in [local preview](./local-preview.md).
+
+The central router wraps owner routes with session, recent-proof and CSRF
+middleware and Agent routes with active per-node authentication. The service
+independently rechecks current credentials and owner authority inside its
+transactions.
 
 All JSON responses use `{code,message,data}`. Success is HTTP 200, including
 `data:null` for no assignment or completed commands. Errors use fixed redacted
-messages: 400 invalid payload/signature, 403 authority denied, 404 unavailable
-resource or disabled module, 409 conflicting state, 428 recent proof required,
-503 dependency or concurrency capacity failure. Busy responses include
-`Retry-After: 1`. Responses set no-store, nosniff and no-referrer.
+messages: 400 invalid payload/signature, 401 missing or invalid identity,
+403 authority denied, 404 unavailable resource or disabled module, 409
+conflicting state, 413 oversized request, 428 recent proof required, 429
+admission or upstream rate limit, and 503 dependency or concurrency capacity
+failure. Busy responses and both rate-limit paths include `Retry-After`.
+Responses set no-store, nosniff and no-referrer.
 
 ## Owner routes
 
@@ -23,14 +29,18 @@ session; writes additionally require recent proof, rechecked before commit.
 | --- | --- | --- |
 | GET | `agent-rollout-status` | `Status`, also readable when disabled |
 | GET | `agent-releases` | Pagination / `Page<Release>` |
+| GET | `agent-releases/remote` | Remote catalog page / `Page<RemoteRelease>` |
+| POST | `agent-releases/remote/{tag}/sync` | Empty / `ReleaseDetail` |
 | GET | `agent-releases/{release_id}` | `ReleaseDetail` |
 | POST | `agent-releases/import` | `SignedManifest` / `Release` |
 | PUT | `agent-releases/{release_id}/artifacts/{artifact_id}` | Raw `application/octet-stream` / null |
 | POST | `agent-releases/{release_id}/revoke` | Empty / null |
+| DELETE | `agent-releases/{release_id}` | Empty / null |
 | GET | `agent-rollouts` | Pagination / `Page<Rollout>` |
 | POST | `agent-rollouts` | `CreateInput` / `Rollout` |
 | GET | `agent-rollouts/{rollout_id}` | `Rollout` |
 | GET | `agent-rollouts/{rollout_id}/targets` | Pagination / `Page<Target>` |
+| DELETE | `agent-rollouts/{rollout_id}` | Empty / null |
 | POST | `agent-rollouts/{rollout_id}/promote` | Empty / null |
 | POST | `agent-rollouts/{rollout_id}/pause` | Empty / null |
 | POST | `agent-rollouts/{rollout_id}/resume` | `{acknowledge_uncertainty:boolean}` / null |
@@ -41,6 +51,20 @@ Pagination accepts `limit` (default 50, 1–100) and opaque `cursor`. Data is
 Ordering is stable by ID. Targets use their immutable snapshot metadata. Target
 pages and rollout details also return `server_time` (RFC3339), sampled by the
 service for that read. Other pages do not include this field.
+
+The remote catalog accepts only an optional `page` (1–100) and returns the fixed
+repository, releases, readiness reasons and an optional `next_page`. Its sync
+endpoint requires a canonical `v`-prefixed semantic-version tag and imports each
+manifest and artifact through the same signature, digest and platform checks.
+GitHub rate limits are returned as 429 with `Retry-After`. Remote discovery is
+disabled when the signed-release module is disabled. The sync response overrides
+the 30-second global write timeout with a 16-minute deadline aligned to the
+import budget; failure to set that deadline returns 503.
+
+A rollout can be deleted only after it reaches `completed` or `aborted` and no
+target is `offered` or `observing`. A release can be deleted only after it is
+revoked and no rollout references it. Artifact files are removed only when no
+remaining release references their digest.
 
 `CreateInput` fields: `name`, `release_id`, `node_ids`, `group_ids`, `tags`,
 `policy`, `action` (`upgrade`, default, or `rollback`), `acknowledge_rollback`.
@@ -64,17 +88,18 @@ signature bundles, nonce values/hashes and internal filesystem paths.
 
 `Status` contains `enabled`, `configured`, `ready`, and fixed `reason`:
 `disabled`, `unconfigured`, `unavailable`, or `ready`. A disabled instance can
-answer without the pending v15 tables. Configured means the service has loaded
+answer without reading rollout tables. Configured means the service has loaded
 its signing policy, verifier and keys; ready additionally requires the current
 persisted policy and at least one valid, unrevoked matching key. Owner/session
 query failures return the usual 403/503 instead of claiming disabled. Reads need
-no recent proof. Initialization still rejects invalid enabled configuration;
-this endpoint does not change the existing service startup contract.
+no recent proof. Initialization rejects invalid enabled configuration.
 
 SignedManifest binary fields use standard JSON base64: `payload`, `signature`,
 `sigstore_bundle`. Payload itself is the canonical protocol manifest JSON.
 Request JSON is capped at 2 MiB; unknown fields, extra JSON values and compressed
-request bodies are rejected.
+request bodies are rejected. Artifact uploads use the same JSON-envelope
+response but accept a bounded `application/octet-stream` body of at most
+512 MiB.
 
 ## Agent routes
 
@@ -114,30 +139,21 @@ not a claimed cross-filesystem/database rollback.
 
 ## Integration boundaries
 
-The pending v15 DDL adds `agent_rollouts.action` and the assignment's selected
-`agent_rollout_targets.artifact_id`. Do not centrally register or deploy it before
-the coordinated v15 integration gate. Root signing/trust policy and backup
-reconciliation stay under the runtime owner. Route logs must never capture
-nonce headers, Authorization headers or observation/lease bodies.
+Migration v15 owns the release, artifact, rollout, target, attempt and event
+tables, including `agent_rollouts.action` and the assignment's selected
+`agent_rollout_targets.artifact_id`. The central runtime registers startup and
+periodic recovery, readiness, metrics, retention and backup reconciliation.
+Root signing/trust policy is still supplied out of band through
+`BEAT_AGENT_ROLLOUT_CONFIG`; archived trust is metadata, not authority. Route
+logs must never capture nonce headers, Authorization headers or
+observation/lease bodies.
 
-## Isolated verification (2026-10-08)
+## Verification
 
-- `GOMAXPROCS=4 go test -race -shuffle=20261008 -count=1 -timeout=10m`
-  for `internal/agentrollout` and `protocol`: passed, **90.8% / 99.4%**;
-  service elapsed 158.619 seconds.
-- The same fixed-seed race run for `internal/agentrollouthttp`: passed,
-  **99.5%**, 8.051 seconds.
-- The subsequently added initial lease/observation/expiry-boundary regression
-  passed its own fixed-seed race run (2.811 seconds).
-- `go vet`, `golangci-lint` (zero issues), `goimports-reviser`, production
-  function length/complexity and diff checks passed. Commands unset the stale
-  environment `GOROOT` before invoking the toolchain.
-
-These are package checks; central runtime/router/backup integration and the
-complete CI gate remain required before registration or deployment.
-
-The owner status and stored target-time additions passed fixed-seed targeted
-race tests (service 5.888s, HTTP 2.717s), both full package regressions (6.617s /
-0.353s), and zero-issue lint on the same date. Disabled status without v15 tables,
-owner/no-recent authorization, unavailable trust, nullable times and server time
-are explicitly covered.
+On 2026-10-25 the CI-aligned gates passed for the current work tree:
+`backend-tests`, `backend-static`, both `backend-race` shards,
+`backend-privileged`, `scripts`, `themes`, `frontend` and `container`. Backend
+tests met the per-package >=90% coverage requirement; static analysis reported
+zero lint issues and no reachable vulnerabilities. The frontend ran 1,564 tests
+at 90.15% line coverage. This is source-level and isolated-host verification;
+the current work tree has not been deployed to the preview instance.

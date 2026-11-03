@@ -117,7 +117,8 @@ retry successor, and its next dead successor may itself be retried.
 
 Transport never inherits environment proxies, follows unchecked redirects,
 disables certificate checks, or returns upstream body/credential-bearing errors.
-Every connection resolves and validates its pinned socket address. Owner
+Every direct connection resolves and validates its pinned socket address; every
+request handed to the owner-configured egress proxy is validated first. Owner
 exceptions are exact host/port or narrow CIDR with purpose, author and expiry.
 Metadata and unsafe ranges remain denied. Stable delivery identifiers accompany
 supported provider requests. Recovery remains at least once across external

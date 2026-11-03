@@ -47,7 +47,7 @@ func NewHTTPReporter(config Config) (*HTTPReporter, error) {
 	return &HTTPReporter{endpoint: serverURL.String(), token: config.AgentToken,
 		report: NodeReport{ProtocolVersion: model.AgentReportProtocol, ReportIntervalMS: interval.Milliseconds(),
 			Name: config.NodeName, Host: config.AdvertisedHost, Port: config.SSHPort},
-		client: &http.Client{Timeout: httpClientTimeout, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}, nil
+		client: newAgentHTTPClient(httpClientTimeout)}, nil
 }
 
 func (r *HTTPReporter) Report(ctx context.Context, sample ReportSample) (key string, resultErr error) {

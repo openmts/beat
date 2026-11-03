@@ -1,6 +1,7 @@
 package agentrolloutremote
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -100,7 +101,11 @@ func (s *Service) readAPI(ctx context.Context, target interface{ String() string
 	if response.StatusCode != http.StatusOK {
 		return githubHTTPError(response)
 	}
-	decoder := json.NewDecoder(io.LimitReader(response.Body, maximumAPIResponseBytes+1))
+	body, err := io.ReadAll(io.LimitReader(response.Body, maximumAPIResponseBytes+1))
+	if err != nil || len(body) > maximumAPIResponseBytes {
+		return ErrUnavailable
+	}
+	decoder := json.NewDecoder(bytes.NewReader(body))
 	if err := decoder.Decode(output); err != nil {
 		return ErrUnavailable
 	}

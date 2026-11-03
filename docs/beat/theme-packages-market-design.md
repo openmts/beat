@@ -284,16 +284,19 @@ Catalog schema 1 requires a future `expires_at` no more than seven days away, at
 most 200 unique theme IDs, exact archive/manifest digests and valid compatibility
 ranges. Signatures cover the exact downloaded bytes, including whitespace.
 
-The dedicated client ignores proxies, resolves every hop once, rejects any private
-or special-use address in the entire DNS answer, and dials only validated numeric
-IPs. `BEAT_THEME_MARKET_ALLOW_PRIVATE=true` at server startup turns that address
+The dedicated client ignores proxy environment variables. Direct connections
+resolve every hop once, reject any private or special-use address in the entire
+DNS answer, and dial only validated numeric IPs. When an owner enables the saved
+outbound proxy, the target hostname is first checked against local DNS and
+rejected if any answer is private; the trusted proxy then resolves the target
+itself, so its network access must be restricted independently.
+`BEAT_THEME_MARKET_ALLOW_PRIVATE=true` at server startup turns that address
 policy off for self-hosted markets inside offline networks: literal private or
 loopback URLs then pass validation and DNS answers are no longer required to be
 public. It is an explicit operator opt-in, defaults to off, fails startup on a
-non-boolean value, and only relaxes address policy - HTTPS-only, single
-resolution, preserved Host/SNI, the three-redirect bound, and the 2 MiB/25 MiB
-size limits still apply. Every other security property in this section is
-unchanged. It preserves the original Host and TLS/SNI identity. At most three HTTPS
+non-boolean value, and only relaxes address policy - HTTPS-only, preserved
+Host/SNI, the three-redirect bound, and the 2 MiB/25 MiB size limits still apply.
+Every other security property in this section is unchanged. At most three HTTPS
 redirects are allowed. Connections, TLS and headers have 10-second bounds; each
 request has a 30-second total bound. Catalogs are limited to 2 MiB and archives to
 25 MiB. The browser does not load remote catalog preview URLs.

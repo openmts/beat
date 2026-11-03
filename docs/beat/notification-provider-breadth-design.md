@@ -259,6 +259,9 @@ Default policy:
 - redirects are disabled by default; an owner may allow at most three
   same-origin redirects, with full validation on every hop;
 - proxy environment variables are not inherited by the notification client;
+  when the owner-configured egress proxy is enabled, every request target is
+  revalidated before it is handed to the proxy, while only the proxy endpoint
+  itself is exempt from the destination-address rule;
 - connect, TLS handshake, response-header, and whole-request deadlines are
   bounded, and response bodies are capped at 64 KiB;
 - TLS verification cannot be disabled.

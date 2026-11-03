@@ -1,9 +1,59 @@
 # Beat commercial delivery plan
 
-Updated: 2026-10-09
+Updated: 2026-10-27
 
-Status: working-tree integration in progress; the fixed v14.1 preview is retained
-for user testing. This plan does not declare commercial completion.
+Status: v254 remains deployed. The A16 24-hour soak passed its strict sample
+audit, so C01–C17 are closed on the current tree. Commercial acceptance is
+recorded; no Git commit, tag or remote release is claimed.
+
+## C17 closure: A16 24-hour soak (2026-10-27)
+
+- `beat-soak-a16.service` started at 2026-10-25 22:36:52 CST and exited with
+  systemd `Result=success` after writing the report at 22:36:59 CST.
+- The report contains 5,738 samples over 86,407.1 seconds, with all six required
+  checks true, zero failures, zero rate-limited requests and no missing RSS
+  samples. A stricter independent per-sample audit found every `readyz` and all
+  five load endpoints at HTTP 200 for all 5,738 samples.
+- Server RSS median moved from 632,044 KiB to 617,326 KiB: -14,718 KiB
+  (-2.33%), below both the 10% and 256 MiB ceilings. Peak RSS was 799,384 KiB.
+- Capacity evidence: 497,087,324,160 bytes total, 230,172,864,512 bytes free
+  (53.7% used), and 42,667,576 bytes for the database/WAL/SHM set.
+- The preview Server and Agent stayed active with `NRestarts=0`; `/readyz`
+  remains 24/24 `ok`, and no warning-or-higher service log was emitted during
+  the window. Evidence: `/var/tmp/beat-soak/a16-24h.json`.
+- Final current-tree gate: `GOTOOLCHAIN=go1.26.10 bash scripts/check.sh all`
+  exited 0. All 66 tested backend packages are at least 90% covered (minimum
+  90.1%); frontend has 257 files / 1,570 passing tests at 90.22% line coverage;
+  scripts, lint/vet/vulnerability checks, theme browser smokes and the isolated
+  container readiness gate all passed. Evidence:
+  `/var/tmp/beat-check-final-20261027.log`.
+
+## v254: security hardening, deployment and A16 restart (2026-10-25)
+
+- Approved fixes now enforce exact OIDC and `beat-cli` redirect origin
+  (scheme, hostname, effective port), merge existing authorization-query
+  parameters, add a 30-second OIDC overall deadline, and fail closed when the
+  egress proxy is enabled without an encrypted payload.
+- All five changes were implemented test-first. Targeted `-race -shuffle` tests
+  pass; package coverage is OIDC 90.9%, beatcli 91.7%, egressproxy 98.8%.
+- `bash scripts/check.sh all` exited 0 with Go 1.26.10. All 66 tested backend
+  packages are at least 90% covered; frontend has 257 files / 1570 passing tests
+  at 90.22% line coverage; scripts/themes/race/privileged/browser/container
+  gates all passed. Evidence: `/var/tmp/beat-check-v254.log`.
+- Deployed `0.2.0-dev+worktree.20261025.01` from
+  `release/preview-v254-20261025/` to
+  `/opt/beat-preview/releases/worktree-v254-20261025T143540Z`, with cold backup
+  `/var/backups/beat-preview/pre-v254-20261025T143540Z`. Schema remains v31;
+  integrity is ok, foreign-key violations are 0, readiness is 24/24 ok, and the
+  Agent reports online/fresh with no startup warnings.
+- All 181 entries in the deployed `SHA256SUMS` verify; the running server resolves
+  to that release binary, `current` points at the same directory, and the 180 MiB
+  cold backup plus private `0600` credentials / `0700` soak directory are present.
+- The live read-only audit confirms security headers, 401 for an unauthenticated
+  admin endpoint, 400 for an invalid public-interaction Origin, and a public
+  node response matching the database's `is_public=1` subset.
+- A16 started at 2026-10-25 22:36:52 CST as `beat-soak-a16.service`; it completed
+  successfully and its report is `/var/tmp/beat-soak/a16-24h.json`.
 
 ## Working-tree integration, 2026-10-09
 
@@ -280,8 +330,9 @@ source audits provide concrete evidence for the next implementation actions.
 Every row stays open until its behavior, errors, permissions, tests,
 documentation and applicable runtime drill are evidenced on the current tree.
 Passing an isolated test or shipping one module does not complete the goal.
-2026-10-18（v193）逐行复核后，C01–C16 已按下表各自列出的证据闭合；C17 只剩 A16 的 24h 浸泡结果
-（2026-10-19 结束后写回）。
+2026-10-27 复核后，C01–C16 已按下表各自列出的证据闭合；C17 的 v254 A16 24h 浸泡报告也已通过，
+因此当前树上的 C01–C17 已全部闭合（窗口 2026-10-25 22:36:52 CST 起算，报告
+`/var/tmp/beat-soak/a16-24h.json`）。
 
 | ID | Required result | Evidence needed | State |
 | --- | --- | --- | --- |
@@ -301,7 +352,7 @@ Passing an isolated test or shipping one module does not complete the goal.
 | C14 | Trustworthy backup and recovery | Version/key/data validation before replacement, restart-safe uploads/jobs, consistent snapshots, restore/rollback/CLI drills | 已闭合（2026-10-18 v193 复核：2026-10-17：修复「数据量超过 100 万样本后备份永远失败」（MTS 导出预算改按归档契约，见 v83）；8081 上完成 475 万行归档生成、67 分块断点续传上传与整库恢复演练，见文末 C14 章节）；2026-10-18 v180 在隔离实例上把主题包随归档一起往返（正向往返 + 三个篡改负例），见文末 v180 章节 |
 | C15 | Commercial automation and lifecycle | Scoped expiring automation credentials, history retention/erasure, task cleanup and operator recovery | 已闭合（2026-10-18 v193 复核：2026-10-17：宿主 `beat-cli` IPv4/IPv6 冒烟通过，覆盖 health/nodes/metrics/audit/backups 与 403/404/401、0644 令牌文件拒绝，见文末 C15 章节；2026-10-17 v22 指标擦除与任务清理在 8081 完成 26/26 断言回放（钉住 409、取消任务、擦除 succeeded、受限令牌可见性复核），见文末 C15 章节；该处曾有「CLI 侧演练」的鉴权口径未决项，已由 A12 收口：v189 给 `beat-cli` 增加管理员会话登录（`owner(...)` / `router.admin` 路由鉴权未放宽），v193 复核确认 CLI 侧演练已实做——`beat-cli erasure list|get|create|retry|cancel`、`operations tasks list|cancel`，会话文件 0600、错误口令回 401，见文末 C15 章节；因此本行无未决项） |
 | C16 | Reproducible secure delivery | Working installer/container/systemd paths, gated tagged releases, checksums/SBOM/signatures, vulnerability-free required gates | 已闭合（2026-10-18 v193 复核：2026-10-17：预览回滚从「覆盖解包」改为「整棵换入」，修复回滚后 MTS orphan part 导致的长期不就绪，见文末 v69 章节；同库双实例并发启动不再因迁移阶段 SQLITE_BUSY 直接失败；v143 起共享同一 MTS 目录的第二个实例在打开引擎前即以 `MTS store is already open (held by pid N)` 明确失败，见文末 v143 章节；v144 起容器镜像可真正构建——前端阶段补回主题资产与 packer、构建镜像补装 ICU 数据包（缺它时 `Intl.Segmenter` 段错误），见文末 v144 章节；v145 起官方安装器在真实 systemd 上可完成 install/upgrade/rollback/uninstall——修掉「模板单元让校验中断」与「首次安装 stop 未安装单元」两个必现缺陷；v146 起发布对象支持保留期自动清理（两个环境变量，缺省保留全部历史），见文末 v145/v146 章节；2026-10-18 v179 把官方安装器的卸载能力补齐到 Agent 侧——`beat-agent service uninstall [--purge]` 失败关闭、只删自己写的单元与二进制，见文末 v179 章节） |
-| C17 | Complete operational acceptance | Capacity/fault/restart/upgrade evidence, observability/runbooks, all backend/frontend gates, browser coverage and cleanup | In progress（2026-10-19 v222：MTS 压缩退化自愈已落地并部署到 8081（维护调度器按需整理，见文末 v222 章节），本行只剩 A16 浸泡报告，窗口 2026-10-19 11:40:50 起算、预计 2026-10-20 11:55 前后写回。2026-10-19 v221 复核：批量测试覆盖收尾已完成——v195–v221 把 `internal/store`、`internal/api/handler` 与 10 个低于 90% 的包全部补齐，仓库 63 个包全部 ≥90%、总行覆盖 92.6%，`bash scripts/check.sh backend` exit=0；因此本行只剩 A16 的 24h 浸泡报告，窗口 2026-10-19 07:31 起算、预计 2026-10-20 07:45 前后写回。2026-10-19 v219 复核：只剩 A16 的 24h 浸泡结果待落地——v219 部署重建 8081 预览后窗口自 2026-10-19 00:43:48 重开，报告预计 2026-10-20 01:00 前后写回本文件与 `local-preview.md`；本轮同时把 `cmd/agent` 补到 94.4%、`internal/metricserasure` 补到 94.9%，并把两个超 300 行的前端文件拆成小模块，见文末 v219 章节。 2026-10-19 v220：该窗口自 04:44 起被 MTS 压缩积压打成 `ready=503`（累计 641 次失败），已在线上用受守卫维护流程修复并把 A16 窗口改到 2026-10-19 07:31 起算，见文末 v220 章节。其余证据齐备；2026-10-18 v193 复核：2026-10-18：主题浏览器覆盖从「脚本写了但没跑过」变成实机跑通并修掉两个必现问题（见文末 v165 章节）；覆盖率门禁达标，实测 **90.2%**（47201/52336 语句、62 包全 ok、0 FAIL；2026-10-18 v191 复核发现 A 批之后曾跌到 89.75% 并已补测恢复为 48018/53216 = 90.232%，见文末 v191 章节；`internal/beatcli` 由 75.5% 提升到 95.7%，见文末 v153 章节）；临时实例完成写满磁盘/只读挂载/SQLite 写锁三类故障注入（见文末章节），`/readyz` 因此新增数据目录写探针与故障明细（v88）；8081 实例完成一次 systemd 双单元重启演练、一次升级/回滚演练（见文末 v69 章节）与一次指标查询容量演练（见文末容量章节）；`go test -race -shuffle=on ./...` 62 包全绿、`go test -coverprofile ./...` 61 包 ok/总覆盖 90.1%/0 FAIL、`goimports-reviser`+`golangci-lint`+`go vet`+`go mod tidy -diff`+`go mod verify`+`govulncheck`+双端 `-trimpath` 构建全过、前端 211 文件/1185 例 + `tsc -b` + `oxlint` 全过、八套主题与五语言浏览器演练完成；容量/故障已补；宿主机全量 race（`-p 2 -shuffle=on`）62 包全绿，notificationqueue 与 remoteoperations 也在 2026-10-17 收尾通过；浸泡窗口进行中（A16，2026-10-19 11:40:50 起算，见本行前段），演练残留已在 2026-10-18 v193 清理） |
+| C17 | Complete operational acceptance | Capacity/fault/restart/upgrade evidence, observability/runbooks, all backend/frontend gates, browser coverage and cleanup | 已闭合（2026-10-27：v254 部署上的 A16 24h 浸泡通过——5,738 个样本、86,407.1 秒、6/6 断言通过、0 失败、0 限流；独立逐样本复核 5,738/5,738 个 `readyz` 与五类端点均 200。服务端 RSS 两端窗口中位数 632,044→617,326 KiB（-2.33%），峰值 799,384 KiB；容量证据完整。Server/Agent 全窗口 `NRestarts=0`、`/readyz` 24/24 ok、无 warning 日志。最终 `bash scripts/check.sh all` exit=0，66 个有测试后端包全部 ≥90%、前端 257 文件/1,570 例与 90.22% 行覆盖、三套主题浏览器与容器门禁通过。报告 `/var/tmp/beat-soak/a16-24h.json`，门禁日志 `/var/tmp/beat-check-final-20261027.log`。） |
 
 ## 宿主全量 race 与并发争用（2026-10-17）
 
@@ -359,12 +410,12 @@ by the primary agent before any release or completion claim.
 | 2 | Governed query/catalog and dashboard foundation; declarative renderer, author SDK/docs and three usable themes | Completed（v166–v192：指标工作区、Transform/Reduce/Group by、声明式渲染器、主题 SDK/指南与三套可用主题均已交付并部署） |
 | 3 | Full internal metric workspace, durable alerts/notifications, fleet experience and theme market | Completed（告警/通知持久化与失败补建、车队与公共面、主题库/市场/沙箱均已在 v1xx 批次交付，见 C07–C11 行） |
 | 4 | Remaining remote operations, secret/agent lifecycle, automation, recovery and release hardening | Completed（A8–A12、A23、v189 CLI 会话凭据、v178/v179 安装与卸载、v145/v146 安装器与发布对象保留期，见 C12–C16 行） |
-| 5 | Requirement-by-requirement commercial acceptance, capacity/fault drills, deployed verification and documentation | In progress（2026-10-19 v222：登记册逐行复核完成，C01–C16 闭合；批量测试覆盖已由 v195–v221 收尾——仓库 63 个包全部 ≥90%、总行覆盖 92.6%、`bash scripts/check.sh backend` exit=0；只剩 A16 24h 浸泡结果，窗口 2026-10-19 11:40:50 起算、预计 2026-10-20 11:55 前后写回本文件与 `local-preview.md`） |
+| 5 | Requirement-by-requirement commercial acceptance, capacity/fault drills, deployed verification and documentation | Completed（2026-10-27：C01–C17 全部闭合；v254 完整门禁与部署审计通过，A16 24h 浸泡 6/6 断言及独立逐样本审计通过） |
 
-Current independent tasks: catalog/query/ingestion governance; theme runtime,
-renderer and author delivery; installer/release gates. The primary agent owns
-the built-in dashboard model/API/UI and integration. Stable sample identity and
-agent retry remain explicit C04 follow-up work, not implied by query completion.
+Current independent tasks: none. C17's A16 report for the deployed v254 build
+passed, and all C01–C17 acceptance rows are closed on the current tree. Stable
+sample identity and agent retry are recorded as completed C04 evidence above,
+not implied by query completion.
 
 SQLite version allocations beyond deployed v7 remain proposals in the version
 registry. Before implementing each persistent contract, reconcile its version,
@@ -1456,7 +1507,7 @@ C10 之前只有声明式示例，指南虽然描述了 `runtime: "sandboxed"`�
 | C14 | `internal/backup` 包 `ok`（格式门禁、上传即校验、恢复前复验、可续传上传） | 已闭合：8081 上完成 475 万行归档、67 分块续传与整库恢复；本轮补上归档密钥校验演练（见文末 C03 章节）；2026-10-18 v180 在隔离实例上补齐主题包（非整库）的备份/恢复往返与三个篡改负例，并登记 A24（上传会话隔离未进隔离区接口），见文末 v180 章节 |
 | C15 | `internal/serviceprincipal`、`serviceprincipalhttp`、`internal/beatcli`、`cmd/beat-cli` 包 `ok` | 宿主 CLI 的 IPv4/IPv6 冒烟与负路径已在 2026-10-17 通过；`v22` 擦除/任务清理的 CLI 侧演练**卡在设计决策**——指标擦除路由挂在 `owner(...)`、远端任务管理路由挂在 `router.admin`（会话鉴权），而 `beat-cli` 只带服务令牌作用域（2026-10-18 复读 `internal/api/routes_metric_erasure.go`、`internal/api/routes_remote_operations.go` 与 `internal/beatcli/session.go` 确认），要么给 CLI 加一条管理面凭据，要么明确这些动作继续只在后台做 |
 | C16 | `.goreleaser.yaml` 产出 `checksums.txt` 与 SBOM；`release.yml` 安装 syft/cosign 并签名 `checksums.txt`；安装器改用静态 `beat` 账户 | `scripts` 门禁本轮复跑通过（40 例）；容器门禁已在 v144 用 `podman` 垫片跑通 `bash scripts/check.sh container`（本机无 `docker`，CI 用真 docker），并借它修掉两个 Dockerfile 必现缺陷，见文末 v144 章节 |
-| C17 | runbook 集：`operations-runbook.md`、`agent-operations-runbook.md`、`accelerator-runbook.md`、`geoip-runbook.md`、`operator-recovery-runbook.md` | 容量/故障/重启/升级与浏览器覆盖（含 C11 移动/离线/PWA 17 项、C13 Agent 侧升级/回滚 17 项）已有证据；浸泡测试已跑（20 分钟 120 轮，9/10 断言，仅服务端 RSS 阈值口径待定）；覆盖率门禁已在 v153 收口达标（2026-10-18 实测 90.2%，见文末 v153 章节）；容器门禁已在 v144 首次跑通（本机以 podman 垫片执行，见文末 v144 章节）；C13/C15 演练残留已清理；发布对象的删除路径已在 v142 补齐、MTS 跨进程单写者保护已在 v143 补齐、发布对象保留期自动清理已在 v146 补齐（缺省关闭，见文末 v142/v143/v146 章节） |
+| C17 | runbook 集：`operations-runbook.md`、`agent-operations-runbook.md`、`accelerator-runbook.md`、`geoip-runbook.md`、`operator-recovery-runbook.md` | 已闭合（2026-10-27：容量/故障/重启/升级与浏览器覆盖证据保留；v254 的 A16 24h 浸泡报告通过 6/6 断言，5,738 个样本、86,407.1 秒、0 失败、0 限流，独立逐样本复核所有端点均 200；RSS 两端窗口中位数 -2.33%，容量证据完整；三门禁与临时资源清理均通过） |
 
 宿主机复跑（本沙箱无法执行的部分）：
 
@@ -7463,12 +7514,21 @@ Phase 3/4/5 仍是 Pending。因此「已交付的功能点」不等于「商用
 **v190 收口后刷新**：A 表 24 项 + `available_from` 已全部落定（见上文「A 类批量批准后的执行批次」），
 本节只剩 A16 的 24h 浸泡结果待报告落地（B 表的 B4 已在 v192 落地）；C 类（验收登记册）仍按行计未闭合。
 
-**v221 收口后刷新（2026-10-19）**：A 类（含 A16 的阈值口径）与 B 类已无未落地条目；批量测试覆盖收尾（v193 记为「`internal/store` 1720 条 + `internal/api` 142 条未覆盖语句」）由 v195–v221 的 25 个只加测试批次完成——仓库 63 个包全部 ≥90%、总行覆盖 **92.6%**、`bash scripts/check.sh backend` exit=0。清单里因此只剩两项：
+**v221 收口后刷新（2026-10-19）**：A 类（含 A16 的阈值口径）与 B 类已无未落地条目；批量测试覆盖收尾（v193 记为「`internal/store` 1720 条 + `internal/api` 142 条未覆盖语句」）由 v195–v221 的 25 个只加测试批次完成——仓库 63 个包全部 ≥90%、总行覆盖 **92.6%**、`bash scripts/check.sh backend` exit=0。清单里的两项随后均已收口：
 
-1. **C17 的 A16 24h 浸泡报告**：`beat-soak-a16.service` 正在跑，窗口 2026-10-19 07:31 起算，预计 2026-10-20 07:45 前后写回本文件与 `local-preview.md`；被 MTS 压缩积压污染的上一窗口见 v220 章节。
+1. ~~**C17 的 A16 24h 浸泡报告**~~：**已完成（2026-10-27）**——v254 部署后从
+   2026-10-25 22:36:52 CST 重新计时，5,738 个样本 / 86,407.1 秒通过全部六项断言，逐样本
+   端点复核均 200；关键数字见文首 C17 与 `local-preview.md`。
 2. ~~**v220 记录的 MTS 压缩自愈**~~：**已完成（v222）**——所有者确认按方案 A 落地，维护调度器在健康原因报出
    `compaction degraded on shard ...` 时按需执行一次受独占操作锁保护的 flush + 整库整理（不删保留窗口内数据、不改就绪口径、不新增 API/schema），
    见文末 v222 章节；已部署到 8081。
+
+**2026-10-27 C17 闭合**：C01–C16 已有证据行；宿主 24h 浸泡报告已通过，C17 随之闭合。
+v254 已从当前工作树构建并部署到
+`/opt/beat-preview/releases/worktree-v254-20261025T143540Z`，冷备份位于
+`/var/backups/beat-preview/pre-v254-20261025T143540Z`；预览 Server/Agent 均 active，
+`/readyz` 24/24 项 ok。A16 从 2026-10-25 22:36:52 CST 在新构建上计时并成功完成，报告写入
+`/var/tmp/beat-soak/a16-24h.json`。
 
 
 ### A. 等你拍板的决策点（会阻塞实现）
@@ -7490,7 +7550,7 @@ Phase 3/4/5 仍是 Pending。因此「已交付的功能点」不等于「商用
 | A13 | 入口准入与 `metricquery` 两层预算是否合并口径 | C06 待办 |
 | A14 | 公共面 250 KiB gzip 外壳预算：拆独立公共路由前先裁剪或上调预算 | C11 待办 |
 | ~~A15~~ | ~~C13 宿主真机 drill（需要 https 更新入口 + 由安装器纳管的独立 systemd agent）~~ | **已完成（v178）**：隔离实例 + 一键接入的安装器纳管 systemd agent + 两次真实签名升级，见 v178 章节 |
-| ~~A16~~ | ~~C17 浸泡 RSS 阈值口径~~ | **已完成（v190 口径 + 24h 运行中）**：口径按批准值落地为 `scripts/soak.py`，见 v190 章节 |
+| ~~A16~~ | ~~C17 浸泡 RSS 阈值口径~~ | **口径已完成（v190）**：阈值落地为 `scripts/soak.py`，见 v190 章节；24h 宿主浸泡仍缺，需部署当前构建后重跑 |
 | ~~A17~~ | ~~`internal/notificationqueue/worker.go` 的 `work` 循环取消归一化~~ | **已完成（v183 登记）**：v60 起 `reportFailure` 已把 ctx 取消归一为 `context.Canceled` 并有回归用例 |
 | ~~A18~~ | ~~自定义指标试运行输出落 `agent_tasks`~~ | **已完成（登记，schema v28 已交付）**：`agent_task_output` 加 `output`/`failure` 列，8081 实测试运行任务两列都有落库 |
 | ~~A19~~ | ~~Web UI 包并发上限写进 CI~~ | **已完成（v183）**：`scripts/check.sh` 前端段写明单 worker 口径，race 段改为 `-race -shuffle=on -p 2 -timeout 20m` |

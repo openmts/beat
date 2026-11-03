@@ -20,6 +20,8 @@ const (
 	agentTaskResultMessage = "task_result"
 	agentChannelPingEvery  = 30 * time.Second
 	agentChannelWriteQueue = 16
+	// Agent 任务载荷本身有 256 KiB 上限；单帧留足 JSON 包装余量后固定为 1 MiB。
+	agentChannelMaximumPayload = 1 << 20
 	// 读超时为 ping 周期的 3 倍；agent 收到 ping 会回复 pong 续期。
 	agentChannelReadTimeout  = 90 * time.Second
 	agentChannelWriteTimeout = 30 * time.Second
@@ -100,6 +102,7 @@ func (h *AgentChannelHandler) HandleAgentWebSocket(w http.ResponseWriter, r *htt
 }
 
 func (h *AgentChannelHandler) serveConnection(ctx context.Context, nodeID string, conn *websocket.Conn) {
+	conn.MaxPayloadBytes = agentChannelMaximumPayload
 	ctx, cancel := context.WithCancel(ctx)
 	wrapped := &agentWebSocketConn{conn: conn, writeCh: make(chan []byte, agentChannelWriteQueue)}
 	if identity, ok := middleware.AgentIdentity(ctx); ok && h.verifyIdentity != nil {

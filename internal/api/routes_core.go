@@ -31,6 +31,12 @@ func (r *Router) registerAuthAndSettingsRoutes(api *http.ServeMux) {
 	if r.siteSettingsStore != nil {
 		api.Handle("PUT /api/v1/settings/site", r.metadataAdmin(http.HandlerFunc(settingsHandler.HandleUpdate), false))
 	}
+	if r.egressProxy != nil {
+		proxyHandler := handler.NewEgressProxyHandler(r.egressProxy)
+		api.Handle("GET /api/v1/admin/settings/egress-proxy", r.ownerAdmin(http.HandlerFunc(proxyHandler.HandleGet)))
+		api.Handle("PUT /api/v1/admin/settings/egress-proxy", r.metadataOwner(http.HandlerFunc(proxyHandler.HandleUpdate)))
+		api.Handle("POST /api/v1/admin/settings/egress-proxy/test", r.metadataOwner(http.HandlerFunc(proxyHandler.HandleProbe)))
+	}
 	r.registerPublicTelemetryRoutes(api)
 	r.registerTrafficCalibrationRoutes(api)
 	r.registerMetricErasureRoutes(api)

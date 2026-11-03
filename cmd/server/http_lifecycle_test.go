@@ -9,6 +9,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"golang.org/x/net/websocket"
 )
 
 func TestFatalWorkerCancelsActualHTTPContext(t *testing.T) {
@@ -64,5 +66,58 @@ func TestHTTPStartupFailureReturnsWithoutLeakedListener(t *testing.T) {
 	err := serveHTTP(t.Context(), httpServerConfig{address: "invalid address", handler: http.NotFoundHandler()})
 	if err == nil {
 		t.Fatal("invalid listener accepted")
+	}
+}
+
+func TestHTTPShutdownClosesAndWaitsForHijackedConnections(t *testing.T) {
+	root, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	started := make(chan struct{})
+	handlerDone := make(chan struct{})
+	hijacked := websocket.Handler(func(conn *websocket.Conn) {
+		close(started)
+		defer close(handlerDone)
+		var message string
+		_ = websocket.Message.Receive(conn, &message)
+	})
+	tracker := newHijackedTracker()
+	server := newHTTPServerWithTracker(hijacked, tracker)
+	done := make(chan error, 1)
+	go func() {
+		done <- (httpLifecycle{server: server, listener: listener, hijacked: tracker}).run(root)
+	}()
+
+	config, err := websocket.NewConfig("ws://"+listener.Addr().String()+"/", "http://"+listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	client, err := websocket.DialConfig(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = client.Close() }()
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("websocket handler did not start")
+	}
+
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("HTTP lifecycle ignored shutdown")
+	}
+	select {
+	case <-handlerDone:
+	default:
+		t.Fatal("HTTP lifecycle returned before the hijacked handler finished")
 	}
 }

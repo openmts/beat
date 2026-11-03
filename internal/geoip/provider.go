@@ -16,9 +16,13 @@ const providerResponseLimit = 32 * 1024
 
 const providerTimeout = 10 * time.Second
 
-func providerClient() *http.Client {
+func providerClient(proxies ...func(*http.Request) (*url.URL, error)) *http.Client {
+	var proxy func(*http.Request) (*url.URL, error)
+	if len(proxies) > 0 {
+		proxy = proxies[0]
+	}
 	return &http.Client{Timeout: providerTimeout, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }, Transport: &http.Transport{
-		Proxy: nil, DialContext: (&net.Dialer{Timeout: providerTimeout}).DialContext, TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12},
+		Proxy: proxy, DialContext: (&net.Dialer{Timeout: providerTimeout}).DialContext, TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12},
 		TLSHandshakeTimeout: providerTimeout, ResponseHeaderTimeout: providerTimeout, MaxIdleConns: 8, MaxIdleConnsPerHost: 2, IdleConnTimeout: 30 * time.Second,
 	}}
 }

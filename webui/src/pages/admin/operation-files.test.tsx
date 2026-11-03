@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react"
+import { render, screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { afterEach, beforeEach, expect, it, vi } from "vitest"
 import { LocaleProvider } from "@/context/locale"
@@ -9,6 +9,15 @@ vi.mock("@/lib/operation-transfers")
 vi.mock("@/context/auth",()=>({useAuth:()=>({principal:{user:{id:"owner",role:"owner"},session:{reauthenticated_until:new Date(Date.now()+600000).toISOString()}}})}))
 beforeEach(()=>{vi.resetAllMocks();vi.mocked(api.getOperationTransfer).mockResolvedValue(operationTransfer())})
 afterEach(()=>vi.restoreAllMocks())
+it("opens transfer details in a dismissible side sheet",async()=>{
+ const user=userEvent.setup(),close=vi.fn()
+ render(<LocaleProvider><OperationTransferDetail id="transfer-one" close={close} task={vi.fn()} /></LocaleProvider>)
+ const sheet=await screen.findByRole("dialog",{name:"Transfer details"})
+ expect(sheet).toHaveAttribute("data-slot","sheet-content")
+ expect(within(sheet).getByText("transfer-one")).toBeInTheDocument()
+ await user.click(within(sheet).getByRole("button",{name:"Close"}))
+ await waitFor(()=>expect(close).toHaveBeenCalledOnce())
+})
 it("shows download for a completed collection only when its artifact is available",async()=>{
  const user=userEvent.setup(), click=vi.spyOn(HTMLAnchorElement.prototype,"click").mockImplementation(()=>undefined)
  vi.mocked(api.getOperationTransfer).mockResolvedValue({...operationTransfer(),direction:"collect",state:"succeeded",download_available:true,task_id:"task-one"})

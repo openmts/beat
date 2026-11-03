@@ -90,7 +90,7 @@ assignment is maintained in
 SQLite stores releases, rollout policy, immutable target snapshots, per-node
 assignment state, attempt history, health observations, pause/abort reason, and
 audit linkage. Assignment uses the per-node Agent identity from the deployed
-token model and, when implemented, the secure enrollment identity.
+token model and the secure enrollment identity.
 
 A rollout defines:
 
@@ -279,10 +279,12 @@ because they exercise the Linux-only application secret store.
 
 This design changes release, Agent, SQLite, API, and deployment behavior. The
 commercial delivery registry records the current implementation authorization.
-Canonical SQLite migration `v15` follows `v14`; rollout routes and local binary
-replacement remain disabled until their signing, authorization, restart, rollback
-and platform acceptance gates are met. A signature-verifier foundation alone
-does not satisfy the complete rollout contract.
+Canonical SQLite migration `v15` follows `v14` and is implemented. Rollout
+routes, the Server runtime and the Agent update poller are integrated; the C13
+host acceptance recorded signed upgrade, rollback, health-gate and uninstall
+drills. Runtime scheduling remains disabled until the out-of-band
+`BEAT_AGENT_ROLLOUT_CONFIG` trust and Sigstore policy is supplied. A
+signature-verifier foundation alone would not have satisfied the complete
+rollout contract.
 
-
-Implementation scope and remaining integration are tracked in [agent-rollout-foundation.md](./agent-rollout-foundation.md).
+Implementation and verification are tracked in [agent-rollout-foundation.md](./agent-rollout-foundation.md).

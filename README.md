@@ -81,6 +81,8 @@ Application keys; rotation requires fresh password/TOTP confirmation and resumes
 after interruption. After stopping the server, root can rotate the root key with
 `beat-server secrets rotate-root --data-dir /var/lib/beat`. See the
 [key lifecycle guide](docs/beat/application-secret-lifecycle-design.md).
+OIDC discovery and token exchanges reject cross-origin redirects and enforce a
+30-second overall deadline.
 
 `BEAT_TRUSTED_PROXIES` is disabled when empty. Configure it only with the CIDRs
 of reverse proxies that connect directly to Beat; trusted HTTPS forwarding then
@@ -166,6 +168,13 @@ network-quality visibility are persisted in SQLite and exposed through a
 public read-only endpoint; updates remain administrator-only. Disabling public
 IP display also redacts node hosts from REST and live WebSocket responses. See
 [`docs/beat/site-theme-settings-design.md`](docs/beat/site-theme-settings-design.md).
+Owners can configure one encrypted HTTP, HTTPS, SOCKS5, or SOCKS5H outbound
+proxy for background traffic. It applies immediately to new MMDB/MaxMind
+downloads, GeoIP lookups, Agent release access, theme markets, notification
+webhooks, and OIDC; SMTP and SSH keep their native transports. The owner panel
+can test the saved route against a fixed public endpoint without exposing the
+proxy address or credentials. An enabled setting with no readable encrypted
+payload fails closed instead of falling back to direct access.
 The same page provides administrator-only data maintenance, a theme library
 with upload, preview, layout settings, activation, recovery and export, and signed HTTPS market sources whose
 catalogs are verified with Ed25519, show bounded cache status, and install the
@@ -173,7 +182,7 @@ selected version/digest without automatic activation. Sources must be public HTT
 by default; set `BEAT_THEME_MARKET_ALLOW_PRIVATE=true` at server startup to allow
 private, loopback or reserved addresses for self-hosted markets in offline networks. Themes apply only
 to the public dashboard and node detail; the administrator interface always uses the built-in
-shadcn surface. Seven editable declarative themes, one sandboxed reference theme and the
+shadcn surface. Nine editable declarative themes, one sandboxed reference theme and the
 pack/validate CLI are documented in the [theme author guide](docs/beat/theme-author-guide.md);
 signing and market publication use the
 [market publisher CLI](docs/beat/theme-market-publishing.md).
@@ -345,6 +354,9 @@ starts `beat-agent.service`. It uses the hostname and detected SSH port;
 `--name`, `--host`, and `--ssh-port` override them. Use a server address reachable
 from the target; `localhost` refers to the target itself. HTTP requires explicit
 permission in the page and `--allow-http` in the generated command.
+Agent join and protocol traffic connect directly and ignore process-level
+`HTTP_PROXY`/`HTTPS_PROXY` settings, so credentials are never sent to an implicit
+proxy.
 
 After an interruption, rerun the same command on the same machine to resume;
 an unfinished join can use a fresh command after its token expires. For an
@@ -432,6 +444,8 @@ Commands: `health`, `nodes list`, `nodes metrics <id>`,
 `0600`, responses print the unwrapped `data` field (`--raw` keeps the envelope),
 and denials exit non-zero with one bounded line. See the
 [automation access design](docs/beat/automation-access-design.md).
+Redirects are restricted to the original scheme, hostname and effective port,
+so a service token is never forwarded through an HTTPS-to-HTTP downgrade.
 
 The Agent version page discovers signed releases from `openmts/beat` first and
 keeps manual signed import as an offline fallback. Synchronization is an explicit
@@ -531,12 +545,26 @@ reconnecting.
 - Task results are sent back over the same WebSocket and recorded by the
   server; a transient failure to record one result is logged and the channel
   stays connected (the task remains pending and is redelivered on reconnect).
+- A failed writer unblocks pending result delivery and closes the connection so
+  the agent enters its normal reconnect loop instead of hanging.
+- Incoming Agent WebSocket frames are capped at 1 MiB, above the 256 KiB custom
+  metric registration limit; oversized frames close the connection and trigger
+  the normal reconnect path.
 - The server pings the channel every 30 seconds and the agent answers with a
   pong. Both sides enforce read/write deadlines, so a half-open connection is
   detected within about 90 seconds and re-established automatically.
+- The TCP connection and WebSocket upgrade share a 10-second handshake bound and
+  inherit the agent shutdown context, so an unresponsive server cannot stall
+  reconnection indefinitely.
+- Graceful server shutdown stops accepting requests, drains ordinary HTTP
+  handlers, then closes and waits for hijacked WebSockets before storage closes;
+  the combined shutdown remains bounded.
 - On every heartbeat the agent also checks that its own `~/.ssh/authorized_keys`
   still contains the node's assigned key and re-installs it if it was removed
   externally, so a lost key self-heals automatically.
+- Heartbeat self-healing and task-driven key updates share a serialized atomic
+  replacement path, so concurrent updates cannot drop keys and interrupted
+  writes cannot leave a truncated authorization file.
 
 ## Custom metrics
 
@@ -605,6 +633,35 @@ npm run lint
 npm run build
 ```
 
+The end-to-end browser smoke uses real SQLite, MTS, and Chromium. Install the
+Playwright browser once, then run it against a built frontend and Server:
+
+```bash
+cd webui && npx playwright install chromium && cd ..
+npm --prefix webui run build
+go build -trimpath -o /tmp/beat-server ./cmd/server
+BEAT_APP_BROWSER_STATIC="$PWD/webui/dist" \
+  bash webui/scripts/run-app-browser-gates.sh /tmp/beat-server /tmp/beat-app-browser-artifacts
+```
+
+To include a real Agent and an isolated interactive SSH/batch-command check on
+Linux as root (requires `sshd` and `ssh-keygen`):
+
+```bash
+go build -trimpath -o /tmp/beat-agent ./cmd/agent
+BEAT_APP_BROWSER_AGENT=/tmp/beat-agent BEAT_APP_BROWSER_SSH=1 \
+  BEAT_APP_BROWSER_STATIC="$PWD/webui/dist" \
+  bash webui/scripts/run-app-browser-gates.sh /tmp/beat-server /tmp/beat-app-browser-artifacts
+```
+
+The five-locale overflow gate creates its own temporary Server, owner, and
+public node:
+
+```bash
+BEAT_LOCALE_SMOKE_STATIC="$PWD/webui/dist" \
+  bash webui/scripts/run-locale-gates.sh /tmp/beat-server /tmp/beat-locale-gates
+```
+
 The repository requires at least 90% Go statement coverage and 90% frontend
 line coverage.
 
@@ -648,13 +705,17 @@ Every field is documented on the admin node-setup page and checked by
 Advanced alert rules use persisted scope/window/hysteresis and NoData/Error state
 under SQLite v12. See the [Agent operations runbook](docs/beat/agent-operations-runbook.md).
 GeoIP privacy defaults, licensed MMDB updates and recovery are documented in the
-[GeoIP runbook](docs/beat/geoip-runbook.md).
-The [signed Agent rollout foundation](docs/beat/agent-rollout-foundation.md) is a
-disabled library; v15 runtime and Agent self-update integration remain pending.
-Rollout backups declare excluded artifacts; restore pauses unfinished work,
-invalidates old download credentials and requires verified artifact re-import.
-Owners can review signed releases, artifacts and frozen rollout targets at
-`/admin/agent-releases`; controls remain unavailable until the server reports ready.
+[GeoIP runbook](docs/beat/geoip-runbook.md). The runbook also covers managed MMDB
+upload, MaxMind download, and verified updates from the fixed
+`P3TERX/GeoLite.mmdb` GitHub release source.
+Signed Agent rollout is integrated behind `BEAT_AGENT_ROLLOUT_CONFIG` and is
+disabled until that out-of-band trust and Sigstore policy file is configured.
+Owners import signed releases, stage artifacts, create frozen node/group/tag
+targets and review health-gated waves at `/admin/agent-releases`; the Agent
+poller performs the signed update or rollback. Rollout backups declare excluded
+artifacts; restore pauses unfinished work, invalidates old download credentials
+and requires verified artifact re-import. See the
+[Agent rollout contract](docs/beat/agent-rollout-foundation.md).
 Release retention is opt-in: set `BEAT_AGENT_ROLLOUT_RETENTION_DAYS` and/or
 `BEAT_AGENT_RELEASE_RETENTION_DAYS` at server startup to delete expired terminal
 rollouts and revoked, unreferenced releases. Both default to keeping history.
@@ -685,6 +746,7 @@ Agent credentials and existing vendor tools; missing samples are never zero-fill
 GPU alert windows and incidents are isolated by rule, node and device. Empty
 inventories have no targets; confirmed removal resolves only that device’s incident.
 
-The fixed local v14 preview and Agent remain available while later batches are
-integrated in the working tree. The preview includes the navigation fix; refresh an already
-open tab once to load it. See [preview access and rollback](docs/beat/local-preview.md).
+The current 8081 preview is v254 with schema v31. Server and Agent are active,
+and the A16 24-hour soak passed: 5,738 samples over 24 hours, zero failures and
+zero rate limits, with all endpoints returning 200. C01–C17 acceptance is closed
+on the current tree. See [preview access, evidence and rollback](docs/beat/local-preview.md).

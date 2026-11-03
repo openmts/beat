@@ -36,6 +36,52 @@ func TestPolicyWrappersAndExplicitDisableOverridePending(t *testing.T) {
 	}
 }
 
+func TestVisibilityWrappersPersistAndRejectMissingNode(t *testing.T) {
+	f := newFixture(t)
+	visible, err := f.service.PublicVisible(t.Context(), f.node.ID)
+	if err != nil || !visible {
+		t.Fatalf("default visibility = %v, err = %v, want true", visible, err)
+	}
+	if err = f.service.SetVisibility(t.Context(), f.actor, f.node.ID, false); err != nil {
+		t.Fatal(err)
+	}
+	visible, err = f.service.PublicVisible(t.Context(), f.node.ID)
+	if err != nil || visible {
+		t.Fatalf("saved visibility = %v, err = %v, want false", visible, err)
+	}
+	node, err := f.service.Node(t.Context(), f.actor, f.node.ID)
+	if err != nil || node.PublicVisible {
+		t.Fatalf("node visibility = %v, err = %v, want false", node.PublicVisible, err)
+	}
+	if err = f.service.SetVisibility(t.Context(), f.actor, "missing-node", true); err == nil {
+		t.Fatal("missing node visibility update succeeded")
+	}
+}
+
+func TestNewServiceRejectsEachMissingDependencyAndDefaultsClock(t *testing.T) {
+	f := newFixture(t)
+	cases := []struct {
+		name   string
+		config Config
+	}{
+		{name: "inventory", config: Config{}},
+		{name: "metrics", config: Config{Inventory: f.service.inventory}},
+		{name: "catalog", config: Config{Inventory: f.service.inventory, Metrics: f.service.metrics}},
+	}
+	for _, test := range cases {
+		if _, err := NewService(test.config); err == nil {
+			t.Fatalf("missing %s dependency accepted", test.name)
+		}
+	}
+	service, err := NewService(Config{Inventory: f.service.inventory, Metrics: f.service.metrics, Catalog: f.service.catalog})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if service.now == nil {
+		t.Fatal("default clock not installed")
+	}
+}
+
 func TestRevokedCredentialReconciliationCannotPublishInventory(t *testing.T) {
 	f := newFixture(t)
 	f.stage(t, true)

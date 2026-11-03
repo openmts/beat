@@ -1,6 +1,7 @@
 package theme
 
 import (
+	"archive/zip"
 	"bytes"
 	"encoding/json"
 	"os"
@@ -32,6 +33,15 @@ func TestPackUsesProductionValidationAndExcludesItsOutput(t *testing.T) {
 	first, err := BuildArchive(options)
 	if err != nil {
 		t.Fatal(err)
+	}
+	reader, err := zip.NewReader(bytes.NewReader(first), int64(len(first)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, file := range reader.File {
+		if file.Method != zip.Store {
+			t.Fatalf("archive entry %s uses toolchain-dependent compression method %d", file.Name, file.Method)
+		}
 	}
 	validated, err := ValidateArchive(first)
 	if err != nil || len(validated.Manifest.Files) != 2 {

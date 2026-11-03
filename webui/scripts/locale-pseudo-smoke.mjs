@@ -10,25 +10,61 @@ const user = process.env.BEAT_SMOKE_USER
 const password = process.env.BEAT_SMOKE_PASSWORD
 // 预览最新构建产物时入口端口与服务端放通来源不同，这里允许显式指定登录用的 Origin。
 const origin = process.env.BEAT_SMOKE_ORIGIN || base
+const adminMarkerKeys = {
+  workspace: "workspace.title",
+  security: "security.title",
+  settings: "settings.site",
+  enrollment: "discovery.title",
+  operations: "operations.title",
+  lifecycle: "lifecycle.country_location_and_lifecycle",
+  agentReleases: "agentRollout.title",
+  accelerators: "accelerator.title",
+  network: "network.manage",
+  terminal: "terminal.title",
+  groups: "group.manage",
+  nodes: "node.manage_description",
+}
 
-/** 用 Vite 的 SSR 装载能力读取 TS 目录，生成一份「词内膨胀 40%」的伪语言目录。 */
-async function pseudoCatalog() {
+/** 用 Vite 的 SSR 装载能力读取 TS 目录，并生成一份「词内膨胀 40%」的伪语言目录。 */
+async function loadCatalogData() {
   const vite = await createServer({ root: webui, configFile: path.join(webui, "vite.config.ts"),
     server: { middlewareMode: true }, appType: "custom", logLevel: "error" })
   try {
     const { allCatalogs } = await vite.ssrLoadModule("/src/test/catalogs.ts")
     const { pseudoCatalog: build } = await vite.ssrLoadModule("/src/test/pseudo-locale.ts")
+    const { localeOptions, translateFrom } = await vite.ssrLoadModule("/src/context/locales.ts")
     const english = {}
     for (const catalog of allCatalogs) Object.assign(english, catalog.en ?? {})
     const catalog = build(english)
-    return { catalog, keys: Object.keys(catalog).length }
+    const hints = {}
+    for (const option of localeOptions) {
+      hints[option.code] = {
+        language: translateFrom(allCatalogs, option.code, "app.language"),
+        theme: translateFrom(allCatalogs, option.code, "app.theme"),
+        fallback: translateFrom(allCatalogs, option.code, "app.not_found"),
+        markers: Object.fromEntries(Object.entries(adminMarkerKeys).map(([name, key]) => [
+          name, translateFrom(allCatalogs, option.code, key),
+        ])),
+        nativeName: option.nativeName,
+      }
+    }
+    return { catalog, keys: Object.keys(catalog).length, hints }
   } finally {
     await vite.close()
   }
 }
 
-const { catalog, keys } = await pseudoCatalog()
+const { catalog, keys, hints: localeHints } = await loadCatalogData()
 assert.ok(keys > 1000, `pseudo catalog is too small: ${keys} keys`)
+const pseudoHints = {
+  language: catalog["app.language"],
+  theme: catalog["app.theme"],
+  fallback: catalog["app.not_found"],
+  markers: Object.fromEntries(Object.entries(adminMarkerKeys).map(([name, key]) => [name, catalog[key]])),
+  nativeName: "日本語",
+}
+for (const key of ["language", "theme", "fallback"]) assert.ok(pseudoHints[key], `pseudo hint is missing: ${key}`)
+for (const [name, value] of Object.entries(pseudoHints.markers)) assert.ok(value, `pseudo marker is missing: ${name}`)
 const shard = `export const jaPublicCatalog = ${JSON.stringify({ ja: catalog })};\n` +
   `export const jaAdminCatalog = ${JSON.stringify({ ja: catalog })};\n`
 
@@ -38,10 +74,12 @@ const browser = await chromium.launch({ headless: true, executablePath: process.
 
 const viewports = [{ name: "mobile", width: 390, height: 844 }, { name: "tablet", width: 768, height: 1024 }, { name: "desktop", width: 1440, height: 1000 }]
 const publicPages = [["fleet", "/"], ["wallboard", "/wallboard"]]
-const adminPages = [["metrics", "/admin/metrics"], ["security", "/admin/security"], ["settings", "/admin/settings"],
-  ["enrollment", "/admin/enrollment"], ["operations", "/admin/operations"], ["lifecycle", "/admin/lifecycle"],
-  ["agent-releases", "/admin/agent-releases"], ["accelerators", "/admin/accelerators"], ["network", "/admin/network"],
-  ["backup", "/admin/backup"], ["themes", "/admin/themes"], ["nodes", "/admin/nodes"]]
+const adminPages = [["metrics", "/admin/metrics", "workspace"], ["security", "/admin/security", "security"],
+  ["settings", "/admin/settings", "settings"], ["enrollment", "/admin/enrollment", "enrollment"],
+  ["operations", "/admin/operations", "operations"], ["lifecycle", "/admin/lifecycle", "lifecycle"],
+  ["agent-releases", "/admin/agent-releases", "agentReleases"], ["accelerators", "/admin/accelerators", "accelerators"],
+  ["network", "/admin/network", "network"], ["terminal", "/admin/terminal", "terminal"],
+  ["groups", "/admin/groups", "groups"], ["nodes", "/admin/nodes", "nodes"]]
 
 /** 目录键泄漏成界面文本的样子：`app.nodes`、`workspace.stats_totals` 这类点分小写标识。 */
 const rawKey = /(?:^|[^A-Za-z0-9_.])((?:app|nav|admin|theme|workspace|fleet|node|metric|metrics|enrollment|security|backup|lifecycle|notification|operation|secret|diagnostic|diagnostics|traffic|telemetry|maintenance|migration|ingress|evaluation|accelerator|authentication|billing)\.[a-z][a-z0-9_]*(?:\.[a-z0-9_]+)+)/g
@@ -72,12 +110,42 @@ async function measure(page, label) {
   }, label)
 }
 
-async function visit(page, name, url, viewport, mode) {
+async function catalogSignals(page, hints, marker) {
+  return page.evaluate(({ language, nativeName, theme, fallback, marker }) => {
+    const attributes = [...document.querySelectorAll("[title], [aria-label]")]
+      .flatMap((element) => [element.getAttribute("title"), element.getAttribute("aria-label")])
+      .filter(Boolean)
+    const bodyText = document.body.textContent || ""
+    return {
+      languageMenu: attributes.some((value) => value === language || (value.startsWith(`${language} · `) && value.includes(nativeName))),
+      themeControl: attributes.includes(theme),
+      fallback: bodyText.includes(fallback),
+      marker: marker ? bodyText.includes(marker) : true,
+    }
+  }, { ...hints, marker })
+}
+
+function assertStrictVisit({ pass, name, viewport, status, text, leaked, measured, signals, pageErrors }) {
+  const label = `${pass.mode} ${name} @${viewport.name}`
+  check(`${label} loads`, status === 200, `status=${status}`)
+  if (pass.kind === "pseudo") check(`${label} renders the pseudo catalog`, text.includes("⟦"), text.slice(0, 120))
+  check(`${label} loads the selected locale`, signals.languageMenu || signals.fallback, JSON.stringify(pass.hints))
+  check(`${label} localizes shared chrome`, signals.themeControl || signals.fallback, JSON.stringify(pass.hints))
+  if (pass.marker) check(`${label} renders localized page content`, signals.marker, `${pass.marker}: ${pass.hints.markers[pass.marker]}`)
+  check(`${label} has no raw catalog keys`, leaked.length === 0, leaked.slice(0, 6).join(","))
+  check(`${label} keeps the page inside the viewport`, !measured.overflow,
+    `scrollWidth=${measured.scrollWidth} clientWidth=${measured.clientWidth}`)
+  check(`${label} has no page errors`, pageErrors.length === 0, pageErrors.slice(0, 3).join(" | "))
+}
+
+async function visit(page, name, url, viewport, pass, marker) {
+  const errorStart = errors.length
+  const pagePass = { ...pass, marker }
   await page.setViewportSize({ width: viewport.width, height: viewport.height })
   const response = await page.goto(base + url, { waitUntil: "domcontentloaded" })
   await page.waitForTimeout(1200)
   // 语言分片可能在首屏之后才注册，等到伪语言文案真的出现再测量。
-  if (mode === "pseudo") {
+  if (pagePass.kind === "pseudo") {
     const renderPseudo = async () => page.waitForFunction(() => document.body.innerText.includes("\u27e6"), null, { timeout: 12000 })
     try { await renderPseudo() } catch { await page.reload({ waitUntil: "domcontentloaded" }); await page.waitForTimeout(1200); await renderPseudo().catch(() => undefined) }
   }
@@ -85,24 +153,24 @@ async function visit(page, name, url, viewport, mode) {
   const text = await page.locator("body").innerText()
   const leaked = [...new Set([...text.matchAll(rawKey)].map((match) => match[1]))]
   const measured = await measure(page, `${name}@${viewport.name}`)
-  const overflow = measured.scrollWidth > measured.clientWidth + 1
+  measured.overflow = measured.scrollWidth > measured.clientWidth + 1
+  const signals = await catalogSignals(page, pagePass.hints, marker ? pagePass.hints.markers[marker] : undefined)
+  const pageErrors = errors.slice(errorStart)
   if (leakMode) {
     const tokens = englishLeakTokens(text)
-    if (tokens.length > 0) console.log(`LEAK ${mode} ${name} @${viewport.name}: ${tokens.join(", ")}`)
-    leakRecords.push({ mode, page: name, viewport: viewport.name, tokens })
+    if (tokens.length > 0) console.log(`LEAK ${pagePass.mode} ${name} @${viewport.name}: ${tokens.join(", ")}`)
+    leakRecords.push({ mode: pagePass.mode, page: name, viewport: viewport.name, tokens })
   }
-  if (mode === "pseudo") {
-    check(`${name} @${viewport.name} loads`, status === 200, `status=${status}`)
-    check(`${name} @${viewport.name} renders the pseudo catalog`, text.includes("⟦"), text.slice(0, 120))
-    check(`${name} @${viewport.name} has no raw catalog keys`, leaked.length === 0, leaked.slice(0, 6).join(","))
-    check(`${name} @${viewport.name} keeps the page inside the viewport`, !overflow,
-      `scrollWidth=${measured.scrollWidth} clientWidth=${measured.clientWidth}`)
-    if (measured.clipped.length > 0) console.log(`INFO ${name} @${viewport.name} clipped elements: ${JSON.stringify(measured.clipped.slice(0, 4))}`)
-  } else if (overflow) {
+  if (pagePass.kind !== "english") {
+    assertStrictVisit({ pass: pagePass, name, viewport, status, text, leaked, measured, signals, pageErrors })
+  } else if (measured.overflow) {
     console.log(`INFO baseline ${name} @${viewport.name} already overflows: scrollWidth=${measured.scrollWidth} clientWidth=${measured.clientWidth}`)
   }
-  records.push({ mode, page: name, viewport: viewport.name, status, leaked, ...measured })
-  await page.screenshot({ path: path.join(output, `${mode}-${name}-${viewport.name}.png`), fullPage: false })
+  if (pagePass.kind !== "english") {
+    if (measured.clipped.length > 0) console.log(`INFO ${name} @${viewport.name} clipped elements: ${JSON.stringify(measured.clipped.slice(0, 4))}`)
+  }
+  records.push({ mode: pagePass.mode, page: name, viewport: viewport.name, status, leaked, signals, pageErrors, ...measured })
+  await page.screenshot({ path: path.join(output, `${pagePass.mode}-${name}-${viewport.name}.png`), fullPage: false })
 }
 
 /** 硬编码英文候选：伪语言把目录文案整条包进 ⟦⟧，所以界定符之外剩下的英文单词只能来自代码字面量或数据。 */
@@ -122,46 +190,55 @@ const errors = []
 const leakRecords = []
 const pages = [...publicPages]
 
-async function login(context, mode) {
+async function login(context, pass) {
   if (!user || !password) return false
   const response = await context.request.post(`${base}/api/v1/auth/login`, { headers: { Origin: origin }, data: { username: user, password } })
-  if (mode === "pseudo") check("admin login", response.status() === 200, `status=${response.status()}`)
-  await context.request.post(`${base}/api/v1/auth/reauthenticate`, { headers: { Origin: origin }, data: { password } })
+  if (pass.kind !== "english") check(`${pass.mode} admin login`, response.status() === 200, `status=${response.status()}`)
+  const reauthentication = await context.request.post(`${base}/api/v1/auth/reauthenticate`, { headers: { Origin: origin }, data: { password } })
+  if (pass.kind !== "english") check(`${pass.mode} recent authentication`, reauthentication.ok(), `status=${reauthentication.status()}`)
   return response.status() === 200
 }
 
-async function runPass(mode, locale, intercept) {
+async function runPass(pass) {
   const context = await browser.newContext({ viewport: { width: viewports[2].width, height: viewports[2].height } })
   await context.addInitScript((code) => {
     // 主题沙箱 iframe 与冻结文档里访问 localStorage 会抛 SecurityError，这里静默跳过。
     try { localStorage.setItem("locale", code); localStorage.setItem("theme", "light") } catch { /* 沙箱文档没有存储 */ }
-  }, locale)
-  if (intercept) await context.route(/\/assets\/[^/]*ja-[^/]*\.js$/, (route) => route.fulfill({ status: 200, contentType: "application/javascript", body: shard }))
-  context.on("weberror", (error) => errors.push(`${mode}: ${error.error().message}`))
+  }, pass.locale)
+  if (pass.intercept) await context.route(/\/assets\/[^/]*ja-[^/]*\.js$/, (route) => route.fulfill({ status: 200, contentType: "application/javascript", body: shard }))
+  context.on("weberror", (error) => errors.push(`${pass.mode}: ${error.error().message}`))
   const page = await context.newPage()
-  page.on("pageerror", (error) => errors.push(`${mode}: ${error.message}`))
-  const authorised = await login(context, mode)
-  if (!authorised && mode === "pseudo") console.log("INFO no admin session: skipping the admin pages")
-  const targets = authorised ? [...pages, ...adminPages] : pages
-  for (const [name, url] of targets) {
-    for (const viewport of viewports) await visit(page, name, url, viewport, mode)
+  page.on("pageerror", (error) => errors.push(`${pass.mode}: ${error.message}`))
+  try {
+    const authorised = await login(context, pass)
+    if (!authorised && pass.kind !== "english") console.log("INFO no admin session: skipping the admin pages")
+    const targets = authorised ? [...pages, ...adminPages] : pages
+    for (const [name, url, marker] of targets) {
+      for (const viewport of viewports) await visit(page, name, url, viewport, pass, marker)
+    }
+    await page.setViewportSize({ width: 768, height: 1024 })
+    await page.goto(base, { waitUntil: "domcontentloaded" })
+    await page.waitForTimeout(1200)
+    const detail = page.locator('a[href^="/node/"]').first()
+    const linked = await detail.count() > 0
+    if (pass.kind !== "english") check(`${pass.mode} public fleet links a node detail page`, linked)
+    if (linked) {
+      const href = await detail.getAttribute("href")
+      for (const viewport of viewports) await visit(page, "node-detail", href, viewport, pass)
+    }
+  } finally {
+    await context.close()
   }
-  await page.setViewportSize({ width: 768, height: 1024 })
-  await page.goto(base, { waitUntil: "domcontentloaded" })
-  await page.waitForTimeout(1200)
-  const detail = page.locator('a[href^="/node/"]').first()
-  const linked = await detail.count() > 0
-  if (mode === "pseudo") check("public fleet links a node detail page", linked)
-  if (linked) {
-    const href = await detail.getAttribute("href")
-    for (const viewport of viewports) await visit(page, "node-detail", href, viewport, mode)
-  }
-  await context.close()
 }
 
 try {
-  if (process.env.BEAT_SMOKE_PSEUDO_ONLY !== "1") await runPass("english", "en", false)
-  await runPass("pseudo", "ja", true)
+  if (process.env.BEAT_SMOKE_PSEUDO_ONLY !== "1") {
+    await runPass({ kind: "english", mode: "english", locale: "en", hints: localeHints.en })
+    for (const [locale, mode] of [["zh-CN", "locale-zh-CN"], ["zh-TW", "locale-zh-TW"], ["ja", "locale-ja"], ["id", "locale-id"]]) {
+      await runPass({ kind: "locale", mode, locale, hints: localeHints[locale] })
+    }
+  }
+  await runPass({ kind: "pseudo", mode: "pseudo", locale: "ja", hints: pseudoHints, intercept: true })
   check("no page errors during the passes", errors.length === 0, errors.slice(0, 3).join(" | "))
 } finally {
   await browser.close()

@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -121,5 +122,21 @@ func TestReadAPIRejectsTrailingJSON(t *testing.T) {
 	var output map[string]any
 	if err := service.readAPI(context.Background(), target, &output); !errors.Is(err, ErrUnavailable) {
 		t.Fatalf("trailing JSON = %v", err)
+	}
+}
+
+func TestReadAPIRejectsOversizedValidJSON(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`"` + strings.Repeat("a", maximumAPIResponseBytes-1) + `"`))
+	}))
+	defer server.Close()
+	service, err := New(Config{Rollout: &agentrollout.Service{}, APIURL: server.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	target, _ := service.repositoryURL("releases")
+	var output string
+	if err := service.readAPI(context.Background(), target, &output); !errors.Is(err, ErrUnavailable) {
+		t.Fatalf("oversized JSON = %v", err)
 	}
 }

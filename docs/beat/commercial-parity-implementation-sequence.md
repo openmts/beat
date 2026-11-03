@@ -1,9 +1,10 @@
 # Commercial parity implementation sequence
 
-Updated: 2026-10-20
+Updated: 2026-10-25
 
-Status: the working tree and 8081 preview both run schema `v30` with backup
-format `v4` (see "Deployed schema ledger" at the end)
+Status: the working tree uses schema `v31` with backup format `v4`. The last
+recorded 8081 deployment (v239) also reported schema `v31`, but both preview
+services were inactive on 2026-10-25; see "Schema ledger" at the end.
 
 ## Purpose and authority
 
@@ -19,10 +20,10 @@ The original 8080 deployment baseline is SQLite migration `v7` and backup writer
 persistence; `v7` implements the one-command, single-machine join contract in
 [`agent-join-design.md`](./agent-join-design.md), not the older full-discovery
 proposal. Unimplemented batch numbers below are allocations, never evidence of
-completion. The separate 8081 preview now runs SQLite `v29` with backup format
-`v4`; its current verification and rollback are recorded below and in local-preview.md.
-The ledger at the end of this document is the authoritative deployed-versus-proposed
-split as of 2026-10-18.
+completion. The separate 8081 preview's last recorded deployment ran SQLite
+`v31` with backup format `v4`; its verification history and current availability
+are recorded below and in local-preview.md. The ledger at the end of this
+document is the authoritative deployed-versus-proposed split as of 2026-10-25.
 
 The current user has authorized implementation across the commercial-readiness
 scope. Grafana alignment means Beat's own metric interaction experience. The
@@ -857,20 +858,23 @@ unshipped resumable-upload session status endpoint moved to
 path and every other upload endpoint are unchanged. The frontend
 (`webui/src/lib/backup-api.ts`) and the handler test follow the new path.
 
-## Deployed schema ledger, 2026-10-18
+## Schema ledger, 2026-10-23
 
 The allocation table above lists reviewed batches. It is **not** a status board:
-every number from `v8` to `v30` now exists as a real migration, and the 8081
-preview database has all of them applied. Evidence:
+every number from `v8` to `v31` now exists as a real migration. Schema `v31`
+adds encrypted outbound proxy settings and was applied by the v239 preview
+deployment. Evidence:
 
-- `internal/store/sqlite_migrations.go` — `currentSchemaVersion = 30`, with the
-  inventory `v1`…`v30` in order (`application_schema_baseline` …
-  `accelerator_public_visibility`).
+- `internal/store/sqlite_migrations.go` — `currentSchemaVersion = 31`, with the
+  inventory `v1`…`v31` in order (`application_schema_baseline` …
+  `egress_proxy_settings`).
 - Live preview database (`/var/lib/beat-preview/data/beat.db`, opened read-only):
-  `schema_migrations` holds 30 contiguous rows, `max(version) = 30`, with
-  `accelerator_public_visibility` as the latest migration.
-- The v225 deploy probe printed `schema 30`, SQLite `integrity ok`, and
-  `fk violations 0`; `/readyz` reported every worker and storage check `ok`.
+  `schema_migrations` held 31 contiguous rows with `max(version) = 31` and
+  `egress_proxy_settings` as the latest migration at the last recorded
+  inspection. SQLite integrity was `ok` with zero foreign-key violations.
+- The v239 deployment ran schema 31. Both preview services were inactive on
+  2026-10-25, so this is retained deployment evidence rather than a currently
+  serving instance.
 
 Deployed migration names (authoritative; `sqlite_migrations.go` is the source):
 
@@ -886,12 +890,13 @@ Deployed migration names (authoritative; `sqlite_migrations.go` is the source):
 | `v26`–`v28` | `agent_discovery`, `dashboard_versions`, `agent_task_output` | `v26`–`v28` (added here; previously unlisted) |
 | `v29` | `agent_release_retention` | `v29` agent-release-retention |
 | `v30` | `accelerator_public_visibility` | `v30` accelerator-public-visibility |
+| `v31` | `egress_proxy_settings` | outbound proxy settings |
 
 Backup envelope: the writer emits `format_version: 4`
 (`internal/backup/archive_create.go`) and the validator accepts `1`–`4`
 (`internal/backup/manifest.go`), so `v26`–`v28` extend the archive payload
 through `platform.sqlite` without changing the envelope. Next free number is
-schema `v31`; backup format `v5` remains unallocated until a design needs it.
+schema `v32`; backup format `v5` remains unallocated until a design needs it.
 
 Rule that keeps this ledger honest: a number is *deployed* only when the
 migration exists in `sqlite_migrations.go` and the preview database reports it;

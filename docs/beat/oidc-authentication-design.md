@@ -137,10 +137,16 @@ OIDC endpoints are privileged outbound destinations. The provider client will:
 
 - validate discovery, authorization, token, and JWKS URLs as HTTPS URLs;
 - resolve and validate every dial target, not only the initially entered host;
+- pin direct connections to the validated numeric address instead of resolving
+  the hostname again after validation;
+- when an owner-configured egress proxy is enabled, validate every request
+  target before handing it to the proxy, whose own endpoint is exempt from the
+  destination-address rule;
 - reject loopback, private, link-local, multicast, unspecified, and other
   non-global addresses in production, including after DNS rebinding;
 - reject URL user information and non-HTTP(S) schemes;
-- disable redirects by default, or allow at most three HTTPS redirects whose
+- allow at most three redirects that remain on the exact original origin
+  (scheme, hostname and effective port, including default ports) and whose
   destinations pass the same validation;
 - use explicit connect, TLS handshake, response-header, and overall request
   timeouts;
@@ -150,6 +156,13 @@ OIDC endpoints are privileged outbound destinations. The provider client will:
 The first batch intentionally does not support private-network identity
 providers. Supporting an internal IdP later requires a separate, explicit
 destination allowlist rather than weakening the global-address rule.
+
+Implementation evidence (2026-10-25): a real TLS provider returning 307 to a
+different port verifies that the redirect target receives no token-exchange
+request; the same test suite covers query preservation in the authorization URL
+and a stalled response body failing closed at the overall timeout. The OIDC
+client uses a 30-second total request deadline. The full quality gate passed
+with OIDC line coverage at 90.9% and was deployed as preview v254.
 
 ## Persistence model
 
@@ -298,6 +311,8 @@ Backend tests cover:
 
 - issuer, endpoint, redirect, scope, claim, and response-size validation;
 - DNS/IP SSRF rejection, redirects, timeouts, cancellation, and body closing;
+- proxy chaining, including private token/JWKS targets returned by discovery and
+  reserved-address rejection;
 - state, nonce, browser binding, PKCE S256, expiry, and single consumption;
 - concurrent duplicate callbacks where exactly one succeeds;
 - discovery/JWKS rotation and invalid signature, issuer, audience, nonce, and
