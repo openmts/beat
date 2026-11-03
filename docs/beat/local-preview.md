@@ -1,24 +1,23 @@
 # 当前工作区预览
 
-验证日期：2026-10-27。v254 仍已部署，8081 正常监听，
-`beat-preview-server.service` 与 `beat-preview-agent.service` 均为 `active`；A16 24 小时浸泡已通过。
-下列 v253 及更早条目是历史部署/门禁证据，不代表当前运行状态。
+验证日期：2026-11-04。v255 已部署，8081 正常监听，
+`beat-preview-server.service` 与 `beat-preview-agent.service` 均为 `active`；A16 24 小时浸泡进行中。
+下列 v254 及更早条目是历史部署/门禁证据，不代表当前运行状态。
 
 - 地址：http://192.168.1.48:8081；后台 `/admin`；指标 `/admin/metrics`。
 - systemd：`beat-preview-server.service`、`beat-preview-agent.service`（当前 active，未设置开机自启）。
 - 可执行程序及前端：`/opt/beat-preview/current`。
-- 当前发布目录：`/opt/beat-preview/releases/worktree-v254-20261025T143540Z`；升级包 `release/preview-v254-20261025/`；上一版目录 `worktree-v239-20261023T163336Z`。
-- 冷备份：`/var/backups/beat-preview/pre-v254-20261025T143540Z`。
+- 当前发布目录：`/opt/beat-preview/releases/worktree-v255-20261103T165619Z`；升级包 `release/preview-v255-20261104/`；上一版目录 `worktree-v254-20261025T143540Z`。
+- 冷备份：`/var/backups/beat-preview/pre-v255-20261103T165619Z`。
 - 独立数据：`/var/lib/beat-preview/data`；schema v31 `egress_proxy_settings`；SQLite integrity_check=ok、外键 0 违规。
 - Agent 配置：`/var/lib/beat-preview/agent-home/agent.json`，由专用 beat-preview 用户运行，每5秒上报。
 - 登录资料：`/etc/beat-preview/access.json`，root 私有文件，不入库。
 - 已安装全部十套主题（Canvas、Operations、Slate、Aurora、Graphite、Paper、Terminal、Midnight、Solar、沙箱主题 Pulse），当前启用 Slate；已创建“当前主机实时监控”六面板仪表盘，可在指标工作台下拉选择。
 - 浏览器实测公共首页和指标工作台正常渲染；Agent 在线、telemetry=fresh。MTS readiness 异常已修复，维护接口返回健康且无分片整理告警。
-- A16 浸泡：`beat-soak-a16.service` 自 2026-10-25 22:36:52 CST 起算 24 小时，已成功结束。
-  报告 `/var/tmp/beat-soak/a16-24h.json` 含 5,738 个样本 / 86,407.1 秒，6/6 断言通过、0 失败、
-  0 限流；独立逐样本复核所有 `readyz` 与五类端点均为 200。服务端 RSS 两端窗口中位数
-  632,044→617,326 KiB（-2.33%），峰值 799,384 KiB；容量证据完整。日志为 `/var/tmp/beat-soak/a16-24h.log`。
-  上一窗口日志归档为 `/var/tmp/beat-soak/a16-24h.pre-v254-20261025T143540Z.log`。
+- A16 浸泡：`beat-soak-a16.service` 自 2026-11-04 00:57:03 CST 起算 24 小时，当前运行中；
+  报告为 `/var/tmp/beat-soak/a16-24h.json`，日志为 `/var/tmp/beat-soak/a16-24h.log`，首条采样中
+  `readyz` 与五类端点均为 200、失败 0。上一轮报告和日志归档到
+  `/var/tmp/beat-soak/a16-24h.pre-v255-20261103T165619Z.{json,log}`。
 - 8080 宿主实例与数据未改动。C01–C17 商用验收已在当前树闭合；远程操作仍默认关闭。
 - v221（2026-10-19）是**只加测试**的一批：把 10 个按包覆盖率低于 90% 的包全部补到 ≥90%，产品代码、前端、
   API 与 schema 都没有改动，因此 8081 未重新部署（`ActiveEnterTimestamp` 仍是 2026-10-19 00:43:32、
@@ -26,6 +25,23 @@
 - v221 门禁（2026-10-19 实测）：`bash scripts/check.sh backend` **exit=0**——`-race` + `-shuffle` 63 包全 `ok`/0 FAIL、
   `go tool cover -func` 总行覆盖 **92.6%** 且 63 个包全部 ≥90%、`golangci-lint` 0 issues、`go vet` 干净、
   `govulncheck` 0 可达漏洞、双端 `-trimpath` 构建通过；本批无前端改动，前端门禁沿用 v219 结果。
+
+## v255：出站边界与停机生命周期安全修复（2026-11-04）
+
+- 提交 `6768c79` 统一 Agent 的直连 transport，禁止进程级 `HTTP_PROXY/HTTPS_PROXY` 隐式转发凭据；
+  WebSocket 握手共享 10 秒上限并继承停机 context，入站帧限制为 1 MiB。服务端停机先排空普通请求，
+  再关闭并等待被劫持连接，超时返回明确错误。
+- 出站代理设置按加密来源持久化，启用但密文不可读时失败关闭；OIDC、通知、GeoIP、主题市场和
+  Agent Release 分别覆盖同源重定向、整体期限与代理目标复核。前端补齐代理配置和无障碍/本地化状态。
+- 依赖审计升级 `follow-redirects` 到 1.16.2，`npm audit --registry=https://registry.npmjs.org
+  --omit=dev --audit-level=high` 为 0 vulnerabilities。
+- 完整门禁 `bash scripts/check.sh all` **exit=0**，日志 `/var/tmp/beat-check-commit-20261104-r3.log`：
+  scripts 74 例、`golangci-lint` 0 issues、0 可达漏洞、前端 257 文件 / 1,570 例（行覆盖 90.22%）、
+  race 两分片、privileged、themes、三套主题浏览器与隔离容器 `/readyz` 全部通过。
+- 部署：v255 `0.2.0-dev+worktree.20261104.01`（commit `6768c79`），入口
+  `assets/index-Cp-bm9cw.js`；发布目录、冷备份见顶部。`/readyz` 24/24 项 ok，schema 31、
+  integrity ok、外键 0 违规；`current`、运行中 Server/Agent 可执行文件均指向发布目录，
+  181 项 `SHA256SUMS` 校验通过，`NRestarts=0`。
 
 ## v254：OIDC/CLI/代理安全修复与部署（2026-10-25）
 
