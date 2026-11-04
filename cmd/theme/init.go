@@ -129,7 +129,7 @@ func initManifest(options initOptions) []byte {
 	}
 	manifest := map[string]any{"schema_version": 1, "id": id, "name": options.name,
 		"description": options.name + " theme scaffold.", "version": "1.0.0", "author": "Beat theme author",
-		"license": "MIT", "runtime": "declarative", "minimum_beat_version": "0.1.0", "preview": initPreviewFile,
+		"license": "MIT", "runtime": "declarative", "minimum_beat_version": "0.0.1", "preview": initPreviewFile,
 		"supported_locales": []string{"en"}}
 	raw, err := json.MarshalIndent(manifest, "", "  ")
 	if err != nil {

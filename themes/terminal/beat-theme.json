@@ -3,11 +3,11 @@
   "id": "beat-terminal",
   "name": "Terminal",
   "description": "Compact monospace operations table with teal accents.",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "author": "Beat contributors",
   "license": "MIT",
   "runtime": "declarative",
-  "minimum_beat_version": "0.1.0",
+  "minimum_beat_version": "0.0.1",
   "preview": "preview.png",
   "configuration": {
     "type": "managed",

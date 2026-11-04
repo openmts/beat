@@ -85,7 +85,8 @@ func TestInitScaffoldGuardsExistingDirectories(t *testing.T) {
 		t.Fatal(err)
 	}
 	manifest, err := os.ReadFile(filepath.Join(options.output, initManifestFile))
-	if err != nil || !strings.Contains(string(manifest), `"id": "beat-custom"`) {
+	if err != nil || !strings.Contains(string(manifest), `"id": "beat-custom"`) ||
+		!strings.Contains(string(manifest), `"minimum_beat_version": "0.0.1"`) {
 		t.Fatalf("explicit id not honoured: %s %v", manifest, err)
 	}
 }

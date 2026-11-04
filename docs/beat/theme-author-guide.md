@@ -100,7 +100,7 @@ my-script-theme/
   "author": "Your name",
   "license": "MIT",
   "runtime": "declarative",
-  "minimum_beat_version": "0.1.0",
+  "minimum_beat_version": "0.0.1",
   "preview": "preview.png",
   "files": []
 }
@@ -149,7 +149,7 @@ my-status-theme/
   "author": "Your name",
   "license": "MIT",
   "runtime": "declarative",
-  "minimum_beat_version": "0.1.0",
+  "minimum_beat_version": "0.0.1",
   "preview": "preview.png",
   "supported_locales": ["en", "zh-CN"],
   "files": [
