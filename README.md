@@ -45,6 +45,21 @@ export BEAT_LOG_LEVEL='info'
   -listen-addr :8080
 ```
 
+HTTPS is disabled by default. To terminate TLS directly, provide a PEM certificate chain and an unencrypted private key:
+
+```bash
+./beat-server -listen-addr :8443 -tls-enabled \
+  -tls-cert /etc/beat/tls/fullchain.pem -tls-key /etc/beat/tls/privkey.pem
+```
+
+The equivalents are `BEAT_TLS_ENABLED=true`, `BEAT_TLS_CERT_FILE` and
+`BEAT_TLS_KEY_FILE`. The key must be readable by the server account and must
+not be accessible by group or others; `0600` is the expected mode. The listener
+uses TLS 1.2 or newer and supports HTTP/2; it does not also serve plaintext or
+redirect HTTP. Set `BEAT_PUBLIC_BASE_URL` to the matching `https://` origin. When
+Beat stays behind a TLS reverse proxy, leave direct TLS disabled and configure
+`BEAT_TRUSTED_PROXIES` instead.
+
 `-static-dir` is read from disk on every request, so a rebuilt `webui/dist` is picked up without restarting the server; hard-refresh the browser afterwards because asset hashes change.
 
 The public dashboard and read-only monitoring APIs do not require login. The

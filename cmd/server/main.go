@@ -33,6 +33,14 @@ func main() {
 	mtsPath := flag.String("mts-path", "./data/beat_mts", "path to MTS time series data")
 	listenAddr := flag.String("listen-addr", ":8080", "address to listen on")
 	staticDir := flag.String("static-dir", "../webui/dist", "path to frontend static files")
+	tlsDefaults, err := tlsSettingsFromEnv(os.Getenv)
+	if err != nil {
+		_, _ = fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
+	}
+	tlsEnabled := flag.Bool("tls-enabled", tlsDefaults.enabled, "serve HTTPS (requires -tls-cert and -tls-key)")
+	tlsCertFile := flag.String("tls-cert", tlsDefaults.certFile, "path to TLS certificate chain")
+	tlsKeyFile := flag.String("tls-key", tlsDefaults.keyFile, "path to TLS private key")
 	showVersion := flag.Bool("version", false, "print version and exit")
 	flag.Parse()
 	if *showVersion {
@@ -43,7 +51,10 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	if err := run(ctx, serverRunConfig{dbPath: *dbPath, mtsPath: *mtsPath, listenAddr: *listenAddr, staticDir: *staticDir}); err != nil {
+	if err := run(ctx, serverRunConfig{
+		dbPath: *dbPath, mtsPath: *mtsPath, listenAddr: *listenAddr, staticDir: *staticDir,
+		tlsEnabled: *tlsEnabled, tlsCertFile: *tlsCertFile, tlsKeyFile: *tlsKeyFile,
+	}); err != nil {
 		_, _ = fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
 	}

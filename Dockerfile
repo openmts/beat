@@ -76,7 +76,23 @@ USER 65532:65532
 EXPOSE 8080
 VOLUME ["/var/lib/beat"]
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
-    CMD curl --fail --silent --show-error --output /dev/null http://127.0.0.1:8080/readyz || exit 1
+    CMD if [ "${BEAT_TLS_ENABLED:-false}" = "true" ]; then \
+            if [ -n "${BEAT_TLS_CA_FILE:-}" ]; then \
+                if [ -n "${BEAT_TLS_SERVER_NAME:-}" ]; then \
+                    curl --fail --silent --show-error --cacert "${BEAT_TLS_CA_FILE}" --resolve "${BEAT_TLS_SERVER_NAME}:8080:127.0.0.1" --output /dev/null "https://${BEAT_TLS_SERVER_NAME}:8080/readyz" || exit 1; \
+                else \
+                    curl --fail --silent --show-error --cacert "${BEAT_TLS_CA_FILE}" --output /dev/null https://127.0.0.1:8080/readyz || exit 1; \
+                fi; \
+            else \
+                if [ -n "${BEAT_TLS_SERVER_NAME:-}" ]; then \
+                    curl --fail --silent --show-error --resolve "${BEAT_TLS_SERVER_NAME}:8080:127.0.0.1" --output /dev/null "https://${BEAT_TLS_SERVER_NAME}:8080/readyz" || exit 1; \
+                else \
+                    curl --fail --silent --show-error --output /dev/null https://127.0.0.1:8080/readyz || exit 1; \
+                fi; \
+            fi; \
+        else \
+            curl --fail --silent --show-error --output /dev/null http://127.0.0.1:8080/readyz || exit 1; \
+        fi
 ENV BEAT_CONTAINER_ROLE=server
 ENTRYPOINT ["/usr/local/bin/beat-container"]
 CMD ["-db-path", "/var/lib/beat/data/beat.db", "-mts-path", "/var/lib/beat/data/beat_mts", "-static-dir", "/opt/beat/static", "-listen-addr", ":8080"]
@@ -110,7 +126,23 @@ USER 65532:65532
 EXPOSE 8080
 VOLUME ["/var/lib/beat", "/etc/beat-agent"]
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
-    CMD curl --fail --silent --show-error --output /dev/null http://127.0.0.1:8080/readyz || exit 1
+    CMD if [ "${BEAT_TLS_ENABLED:-false}" = "true" ]; then \
+            if [ -n "${BEAT_TLS_CA_FILE:-}" ]; then \
+                if [ -n "${BEAT_TLS_SERVER_NAME:-}" ]; then \
+                    curl --fail --silent --show-error --cacert "${BEAT_TLS_CA_FILE}" --resolve "${BEAT_TLS_SERVER_NAME}:8080:127.0.0.1" --output /dev/null "https://${BEAT_TLS_SERVER_NAME}:8080/readyz" || exit 1; \
+                else \
+                    curl --fail --silent --show-error --cacert "${BEAT_TLS_CA_FILE}" --output /dev/null https://127.0.0.1:8080/readyz || exit 1; \
+                fi; \
+            else \
+                if [ -n "${BEAT_TLS_SERVER_NAME:-}" ]; then \
+                    curl --fail --silent --show-error --resolve "${BEAT_TLS_SERVER_NAME}:8080:127.0.0.1" --output /dev/null "https://${BEAT_TLS_SERVER_NAME}:8080/readyz" || exit 1; \
+                else \
+                    curl --fail --silent --show-error --output /dev/null https://127.0.0.1:8080/readyz || exit 1; \
+                fi; \
+            fi; \
+        else \
+            curl --fail --silent --show-error --output /dev/null http://127.0.0.1:8080/readyz || exit 1; \
+        fi
 ENV BEAT_CONTAINER_ROLE=server
 ENTRYPOINT ["/usr/local/bin/beat-container"]
 CMD ["-db-path", "/var/lib/beat/data/beat.db", "-mts-path", "/var/lib/beat/data/beat_mts", "-static-dir", "/opt/beat/static", "-listen-addr", ":8080"]

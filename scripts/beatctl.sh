@@ -12,6 +12,11 @@ service_name=${BEAT_SERVICE_NAME:-beat-server.service}
 listen_addr=${BEAT_LISTEN_ADDR:-:8080}
 service_account=${BEAT_SERVICE_ACCOUNT:-beat}
 ready_attempts=${BEAT_READY_ATTEMPTS:-30}
+tls_enabled=${BEAT_TLS_ENABLED:-false}
+tls_cert_file=${BEAT_TLS_CERT_FILE:-}
+tls_key_file=${BEAT_TLS_KEY_FILE:-}
+tls_ca_file=${BEAT_TLS_CA_FILE:-}
+tls_server_name=${BEAT_TLS_SERVER_NAME:-}
 script_dir=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 workspace= stage= candidate_data= before_data= checkpoint= old_pointer=
 stopped=0 was_active=0 had_unit=0 data_changed=0 unit_changed=0
@@ -31,7 +36,12 @@ usage() {
         '  BEAT_CONFIG_DIR=/etc/beat    private configuration' \
         '  BEAT_STATE_DIR=/var/lib/beat database, metric store and account home' \
         '  BEAT_LISTEN_ADDR=:8080       server listen address' \
-        '  BEAT_SERVICE_ACCOUNT=beat    dedicated unprivileged account' >&2
+        '  BEAT_SERVICE_ACCOUNT=beat    dedicated unprivileged account' \
+        '  BEAT_TLS_ENABLED=false       serve HTTPS instead of HTTP' \
+        '  BEAT_TLS_CERT_FILE=          PEM certificate chain; required with TLS' \
+        '  BEAT_TLS_KEY_FILE=           PEM private key; required with TLS' \
+        '  BEAT_TLS_CA_FILE=            optional CA bundle for the readiness probe' \
+        '  BEAT_TLS_SERVER_NAME=        certificate hostname for the readiness probe' >&2
     exit 2
 }
 
@@ -42,6 +52,7 @@ validate_paths() {
     [[ "$ready_attempts" =~ ^[1-9][0-9]?$ ]] || die 'ready attempts must be between 1 and 99'
     validate_account_name
     validate_listen_addr
+    validate_tls
     for path in "$prefix" "$config_dir" "$state_dir" "$backup_dir" "$unit_dir"; do
         [[ "$path" =~ ^/[a-zA-Z0-9_./-]+$ && "$path" != / && "$path" == "$(realpath -m -- "$path")" ]] || die 'paths must be clean absolute paths without spaces'
         [[ -z ${seen[$path]+present} ]] || die 'deployment directories must be distinct'
@@ -78,19 +89,60 @@ validate_listen_addr() {
     (( 10#$port >= 1 && 10#$port <= 65535 )) || die 'listen port must be between 1 and 65535'
 }
 
+normalize_tls_enabled() {
+    case "${tls_enabled,,}" in
+        true|1|yes|on) tls_enabled=true ;;
+        false|0|no|off|'') tls_enabled=false ;;
+        *) die 'TLS enabled must be true or false' ;;
+    esac
+}
+
+validate_tls_file() {
+    local path=$1 label=$2 mode
+    [[ "$path" =~ ^/[a-zA-Z0-9_./@+-]+$ ]] || die "$label path must be a clean absolute path without spaces"
+    [[ -f "$path" && -r "$path" ]] || die "$label is not a readable regular file: $path"
+    mode=$(stat -c '%a' -- "$path") || die "cannot inspect $label permissions: $path"
+    (( (8#$mode & 022) == 0 )) || die "$label must not be writable by group or others: $path"
+}
+
+validate_tls() {
+    normalize_tls_enabled
+    if [[ "$tls_enabled" == false ]]; then
+        [[ -z "$tls_cert_file" && -z "$tls_key_file" && -z "$tls_ca_file" && -z "$tls_server_name" ]] || die 'TLS settings require BEAT_TLS_ENABLED=true'
+        return 0
+    fi
+    [[ -n "$tls_cert_file" && -n "$tls_key_file" ]] || die 'TLS requires BEAT_TLS_CERT_FILE and BEAT_TLS_KEY_FILE'
+    [[ -z "$tls_server_name" || "$tls_server_name" =~ ^[a-zA-Z0-9.-]+$ ]] || die 'TLS server name must be a hostname without a scheme, port or path'
+    validate_tls_file "$tls_cert_file" 'TLS certificate'
+    validate_tls_file "$tls_key_file" 'TLS private key'
+    (( (8#$(stat -c '%a' -- "$tls_key_file") & 077) == 0 )) || die "TLS private key must not be accessible by group or others: $tls_key_file"
+    [[ -z "$tls_ca_file" ]] || validate_tls_file "$tls_ca_file" 'TLS CA bundle'
+}
+
 # 就绪探针使用可路由的回环地址：通配与空主机（:8080、0.0.0.0:8080、[::]:8080）都落到 127.0.0.1。
 ready_url() {
     local host=${listen_addr%:*} port=${listen_addr##*:}
     host=${host#[}
     host=${host%]}
     case "$host" in ''|0.0.0.0|'::'|'*') host=127.0.0.1 ;; esac
-    printf 'http://%s:%s/readyz\n' "$host" "$port"
+    if [[ "$tls_enabled" == true ]]; then
+        [[ -z "$tls_server_name" ]] || host=$tls_server_name
+        printf 'https://%s:%s/readyz\n' "$host" "$port"
+    else
+        printf 'http://%s:%s/readyz\n' "$host" "$port"
+    fi
+}
+
+tls_exec_args() {
+    if [[ "$tls_enabled" == true ]]; then
+        printf ' -tls-enabled -tls-cert %s -tls-key %s' "$tls_cert_file" "$tls_key_file"
+    fi
 }
 
 # 现有单元的管理性判定：ExecStart 与 User 必须与本次参数完全一致。
 unit_exec_start() {
-    printf 'ExecStart=%s/current/beat-server -db-path %s/beat.db -mts-path %s/beat_mts -static-dir %s/current/static -listen-addr %s\n' \
-        "$prefix" "$state_dir" "$state_dir" "$prefix" "$listen_addr"
+    printf 'ExecStart=%s/current/beat-server -db-path %s/beat.db -mts-path %s/beat_mts -static-dir %s/current/static -listen-addr %s%s\n' \
+        "$prefix" "$state_dir" "$state_dir" "$prefix" "$listen_addr" "$(tls_exec_args)"
 }
 
 validate_account() {
@@ -125,7 +177,7 @@ validate_account() {
 initialize() {
     [[ $(id -u) == 0 ]] || die 'run beatctl as root'
     local tool
-    for tool in python3 systemctl useradd getent ps install tar curl flock realpath; do command -v "$tool" >/dev/null || die "required tool is missing: $tool"; done
+    for tool in python3 systemctl useradd getent ps install tar curl flock realpath stat; do command -v "$tool" >/dev/null || die "required tool is missing: $tool"; done
     [[ -f "$script_dir/state_archive.py" && ! -L "$script_dir/state_archive.py" ]] || die 'state_archive.py must accompany beatctl.sh'
     validate_paths
     ensure_directory "$config_dir"
@@ -188,7 +240,7 @@ prepare_release() {
 }
 
 prepare_unit() {
-    local lifecycle_lock
+    local lifecycle_lock tls_args
     ensure_directory "$(dirname -- "$state_dir")"
     lifecycle_lock=$(python3 -c 'import hashlib,pathlib,sys; p=pathlib.Path(sys.argv[1]).resolve(); print(p.parent / (".beat-lifecycle-"+hashlib.sha256(str(p).encode()).hexdigest()+".lock"))' "$state_dir")
     python3 -c 'import os,stat,sys; p,account=sys.argv[1:]; f=os.open(p,os.O_RDWR|os.O_CREAT|os.O_NOFOLLOW|os.O_NONBLOCK,0o600); s=os.fstat(f); fields=account.split(":"); valid=stat.S_ISREG(s.st_mode) and stat.S_IMODE(s.st_mode)==0o600 and s.st_nlink==1 and s.st_uid in (0,int(fields[2])); valid or sys.exit("unsafe lifecycle lock"); os.fchown(f,int(fields[2]),int(fields[3])); os.fsync(f); os.close(f)' "$lifecycle_lock" "$(getent passwd "$service_account")"
@@ -199,12 +251,16 @@ prepare_unit() {
     fi
     chmod 0600 "$config_dir/beat.env"
     chown root:root "$config_dir/beat.env"
+    tls_args=$(tls_exec_args)
     sed -e "s|/opt/beat|$prefix|g" -e "s|/etc/beat|$config_dir|g" -e "s|/var/lib/beat|$state_dir|g" -e "s|/var/lib/.beat-lifecycle-[0-9a-f]*\.lock|$lifecycle_lock|g" \
         -e "s|^User=beat$|User=$service_account|" -e "s|^Group=beat$|Group=$service_account|" \
-        -e "s| -listen-addr :8080$| -listen-addr $listen_addr|" \
+        -e "s| -listen-addr :8080$| -listen-addr $listen_addr$tls_args|" \
         "$selected/deploy/systemd/beat-server.service" >"$workspace/new-unit"
     [[ $(awk '/^User=/{print $0}' "$workspace/new-unit") == "User=$service_account" ]] || die "release must run under the dedicated $service_account account"
     grep -Fq -- " -listen-addr $listen_addr" "$workspace/new-unit" || die 'generated unit does not carry the requested listen address'
+    if [[ "$tls_enabled" == true ]]; then
+        grep -Fq -- " -tls-enabled -tls-cert $tls_cert_file -tls-key $tls_key_file" "$workspace/new-unit" || die 'generated unit does not carry the requested TLS files'
+    fi
     local setting
     for setting in "Group=$service_account" 'ProtectSystem=strict' "ReadOnlyPaths=$prefix" "ReadWritePaths=$state_dir" "ReadWritePaths=$lifecycle_lock" 'NoNewPrivileges=yes'; do
         grep -Fxq "$setting" "$workspace/new-unit" || die 'release service template lacks required isolation'
@@ -229,8 +285,15 @@ publish_pointer() {
 
 wait_ready() {
     local attempt
+    local -a curl_args=(--fail --silent --show-error --max-time 2)
+    if [[ "$tls_enabled" == true && -n "$tls_ca_file" ]]; then
+        curl_args+=(--cacert "$tls_ca_file")
+    fi
+    if [[ "$tls_enabled" == true && -n "$tls_server_name" ]]; then
+        curl_args+=(--resolve "$tls_server_name:${listen_addr##*:}:127.0.0.1")
+    fi
     for ((attempt=0; attempt<ready_attempts; attempt++)); do
-        if systemctl is-active --quiet "$service_name" && curl --fail --silent --show-error --max-time 2 "$(ready_url)" >/dev/null; then return 0; fi
+        if systemctl is-active --quiet "$service_name" && curl "${curl_args[@]}" "$(ready_url)" >/dev/null; then return 0; fi
         sleep 1
     done
     return 1

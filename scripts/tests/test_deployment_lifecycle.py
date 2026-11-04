@@ -201,6 +201,55 @@ class DeploymentLifecycleTests(DeploymentFixture):
         self.assertTrue(probes, self.calls())
         self.assertIn("http://127.0.0.1:18081/readyz", probes[0])
 
+    def test_https_configuration_reaches_the_unit_and_trusted_probe(self):
+        certificate, key, ca = self.tls_files()
+        result = self.run_script("install", self.release("1.0.0"), "1.0.0", BEAT_LISTEN_ADDR="127.0.0.1:18443",
+                                 BEAT_TLS_ENABLED="true", BEAT_TLS_CERT_FILE=certificate,
+                                 BEAT_TLS_KEY_FILE=key, BEAT_TLS_CA_FILE=ca,
+                                 BEAT_TLS_SERVER_NAME="beat.example.com")
+        self.assertEqual(0, result.returncode, result.stderr)
+        unit = self.units.joinpath("beat-server.service").read_text()
+        self.assertIn(f" -tls-enabled -tls-cert {certificate} -tls-key {key}", unit)
+        probes = [call for call in self.calls() if call[0] == "curl"]
+        self.assertTrue(probes, self.calls())
+        self.assertIn("--cacert", probes[0])
+        self.assertIn(str(ca), probes[0])
+        self.assertIn("--resolve", probes[0])
+        self.assertIn("beat.example.com:18443:127.0.0.1", probes[0])
+        self.assertIn("https://beat.example.com:18443/readyz", probes[0])
+
+    def test_invalid_tls_configuration_is_rejected_before_any_change(self):
+        certificate, key, ca = self.tls_files()
+        missing = self.root / "missing.pem"
+        directory = self.root / "tls-directory"
+        directory.mkdir(mode=0o700)
+        writable_certificate = self.root / "tls/writable.pem"
+        loose_key = self.root / "tls/loose.key"
+        private_file(writable_certificate, "certificate")
+        writable_certificate.chmod(0o660)
+        private_file(loose_key, "key")
+        loose_key.chmod(0o640)
+        cases = [
+            dict(BEAT_TLS_ENABLED="sometimes", BEAT_TLS_CERT_FILE=certificate, BEAT_TLS_KEY_FILE=key),
+            dict(BEAT_TLS_ENABLED="true", BEAT_TLS_CERT_FILE=certificate),
+            dict(BEAT_TLS_ENABLED="false", BEAT_TLS_CERT_FILE=certificate, BEAT_TLS_KEY_FILE=key),
+            dict(BEAT_TLS_ENABLED="true", BEAT_TLS_CERT_FILE="relative.pem", BEAT_TLS_KEY_FILE=key),
+            dict(BEAT_TLS_ENABLED="true", BEAT_TLS_CERT_FILE=missing, BEAT_TLS_KEY_FILE=key),
+            dict(BEAT_TLS_ENABLED="true", BEAT_TLS_CERT_FILE=directory, BEAT_TLS_KEY_FILE=key),
+            dict(BEAT_TLS_ENABLED="true", BEAT_TLS_CERT_FILE=writable_certificate, BEAT_TLS_KEY_FILE=key),
+            dict(BEAT_TLS_ENABLED="true", BEAT_TLS_CERT_FILE=certificate, BEAT_TLS_KEY_FILE=loose_key),
+            dict(BEAT_TLS_ENABLED="true", BEAT_TLS_CERT_FILE=certificate, BEAT_TLS_KEY_FILE=key, BEAT_TLS_CA_FILE=missing),
+            dict(BEAT_TLS_ENABLED="true", BEAT_TLS_CERT_FILE=certificate, BEAT_TLS_KEY_FILE=key,
+                 BEAT_TLS_SERVER_NAME="https://beat.example.com"),
+            dict(BEAT_TLS_ENABLED="false", BEAT_TLS_SERVER_NAME="beat.example.com"),
+        ]
+        for values in cases:
+            with self.subTest(values=values):
+                result = self.run_script("install", self.release("1.0.0"), "1.0.0", **values)
+                self.assertNotEqual(0, result.returncode)
+                self.assertFalse(self.units.joinpath("beat-server.service").exists())
+        self.assertNotIn("useradd", [call[0] for call in self.calls()])
+
     def test_wildcard_hosts_fall_back_to_loopback_for_readiness(self):
         for index, address in enumerate((":18081", "[::]:18081", "*:18081")):
             # 每个地址都是一次全新的部署环境：第二次安装会走进 state 归档校验，与这里要验证的映射无关。
@@ -237,6 +286,17 @@ class DeploymentLifecycleTests(DeploymentFixture):
         self.assertEqual(2, result.returncode)
         self.assertIn("Python 3", result.stderr)
         self.assertEqual([], self.calls())
+
+    def tls_files(self):
+        directory = self.root / "tls"
+        directory.mkdir(mode=0o700)
+        certificate = directory / "server.pem"
+        key = directory / "server.key"
+        ca = directory / "ca.pem"
+        private_file(certificate, "certificate")
+        private_file(key, "key")
+        private_file(ca, "ca")
+        return certificate, key, ca
 
 
 if __name__ == "__main__":

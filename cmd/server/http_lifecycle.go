@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -24,6 +25,7 @@ const (
 type httpServerConfig struct {
 	address        string
 	handler        http.Handler
+	tlsConfig      *tls.Config
 	beforeShutdown func()
 }
 
@@ -34,7 +36,14 @@ func serveHTTP(ctx context.Context, config httpServerConfig) error {
 	}
 	hijacked := newHijackedTracker()
 	server := newHTTPServerWithTracker(config.handler, hijacked)
-	slog.InfoContext(ctx, "server listening", "address", config.address, "version", buildinfo.Version)
+	if config.tlsConfig != nil {
+		server.TLSConfig = config.tlsConfig.Clone()
+	}
+	scheme := "http"
+	if server.TLSConfig != nil {
+		scheme = "https"
+	}
+	slog.InfoContext(ctx, "server listening", "address", config.address, "scheme", scheme, "version", buildinfo.Version)
 	return (httpLifecycle{server: server, listener: listener, beforeShutdown: config.beforeShutdown, hijacked: hijacked}).run(ctx)
 }
 
@@ -71,7 +80,11 @@ type httpLifecycle struct {
 
 func (lifecycle httpLifecycle) run(ctx context.Context) error {
 	finished := make(chan error, 1)
-	go func() { finished <- lifecycle.server.Serve(lifecycle.listener) }()
+	serve := func() error { return lifecycle.server.Serve(lifecycle.listener) }
+	if lifecycle.server.TLSConfig != nil {
+		serve = func() error { return lifecycle.server.ServeTLS(lifecycle.listener, "", "") }
+	}
+	go func() { finished <- serve() }()
 	var serveErr error
 	received := false
 	select {

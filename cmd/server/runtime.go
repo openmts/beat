@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"log"
 	"os"
@@ -118,9 +119,17 @@ type backgroundTasks struct {
 	once    sync.Once
 }
 
-type serverRunConfig struct{ dbPath, mtsPath, listenAddr, staticDir string }
+type serverRunConfig struct {
+	dbPath, mtsPath, listenAddr, staticDir string
+	tlsEnabled                             bool
+	tlsCertFile, tlsKeyFile                string
+}
 
 func run(ctx context.Context, config serverRunConfig) error {
+	tlsConfig, err := loadServerTLSConfig(tlsSettings{enabled: config.tlsEnabled, certFile: config.tlsCertFile, keyFile: config.tlsKeyFile})
+	if err != nil {
+		return fmt.Errorf("configure tls: %w", err)
+	}
 	dbPath, mtsPath := config.dbPath, config.mtsPath
 	lease, err := acquireServerLease(dbPath)
 	if err != nil {
@@ -163,11 +172,12 @@ func run(ctx context.Context, config serverRunConfig) error {
 		services.wait()
 	}()
 	return serveRuntime(runCtx, cancelRun, runtimeServingConfig{dataDir: dataDir, staticDir: config.staticDir, listenAddr: config.listenAddr,
-		stores: stores, services: services, trustedProxies: trustedProxies, deploymentAccess: deploymentAccess})
+		tlsConfig: tlsConfig, stores: stores, services: services, trustedProxies: trustedProxies, deploymentAccess: deploymentAccess})
 }
 
 type runtimeServingConfig struct {
 	dataDir, staticDir, listenAddr string
+	tlsConfig                      *tls.Config
 	stores                         *serverStores
 	services                       *serverServices
 	trustedProxies                 middleware.TrustedProxies
@@ -191,7 +201,7 @@ func serveRuntime(runCtx context.Context, cancelRun context.CancelFunc, config r
 		runtime: runtime, fanout: fanout,
 	})
 	defer background.stop()
-	if err := serveHTTP(runCtx, httpServerConfig{address: config.listenAddr, handler: handler, beforeShutdown: func() {
+	if err := serveHTTP(runCtx, httpServerConfig{address: config.listenAddr, handler: handler, tlsConfig: config.tlsConfig, beforeShutdown: func() {
 		runtime.beginShutdown()
 		_ = fanout.Close()
 		config.services.terminal.CloseAll()

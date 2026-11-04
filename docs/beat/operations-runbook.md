@@ -379,6 +379,37 @@ location / {
 Caddy's standard `reverse_proxy [::1]:8080` behavior is compatible. Keep the
 CIDR list limited to the actual Caddy address or network.
 
+## Direct HTTPS
+
+TLS is off by default and does not change the existing HTTP listener contract.
+Enable it with a PEM certificate chain and private key, either as flags or as
+the equivalent environment variables:
+
+```bash
+BEAT_TLS_ENABLED=true \
+BEAT_TLS_CERT_FILE=/etc/beat/tls/fullchain.pem \
+BEAT_TLS_KEY_FILE=/etc/beat/tls/privkey.pem \
+  ./beat-server -listen-addr :8443 -tls-enabled \
+  -tls-cert /etc/beat/tls/fullchain.pem -tls-key /etc/beat/tls/privkey.pem
+```
+
+Startup validates both files before opening the listener: both are required,
+must be readable regular files, and neither may be writable by group or others.
+The private key must not be accessible by group or others; use mode `0600` and
+make it readable by the service account. Certificate files may be symlinks, so
+normal ACME/LetsEncrypt issuance directories work. The server enables TLS 1.2
+or newer and HTTP/2. It serves HTTPS only on the configured listener; use a
+reverse proxy or a separate controlled front end if HTTP-to-HTTPS redirects are
+required. Set `BEAT_PUBLIC_BASE_URL` to the public `https://` origin.
+
+Direct TLS termination automatically drives Secure cookies, HSTS and same-origin
+checks; do not also enable `BEAT_TRUSTED_PROXIES` unless a trusted proxy is in
+front of Beat. After enabling, verify the public readiness endpoint:
+
+```bash
+curl --fail https://beat.example.com/readyz
+```
+
 ## SQLite and migrations
 
 Startup enables and verifies persistent WAL mode with bounded lock retries.
@@ -568,9 +599,20 @@ the deployment above exactly:
 | `BEAT_SERVICE_NAME` | `beat-server.service` | managed unit name |
 | `BEAT_LISTEN_ADDR` | `:8080` | server `-listen-addr`; readiness probes the same port on loopback |
 | `BEAT_SERVICE_ACCOUNT` | `beat` | dedicated unprivileged account and group |
+| `BEAT_TLS_ENABLED` | `false` | serve HTTPS instead of HTTP |
+| `BEAT_TLS_CERT_FILE` | empty | PEM certificate chain; required when TLS is enabled |
+| `BEAT_TLS_KEY_FILE` | empty | PEM private key readable by the service account; required when TLS is enabled |
+| `BEAT_TLS_CA_FILE` | empty | optional CA bundle used by installer readiness checks (for example, a private CA) |
+| `BEAT_TLS_SERVER_NAME` | empty | certificate hostname for readiness checks; resolves to loopback without changing the public URL |
 
 ```bash
 sudo BEAT_LISTEN_ADDR=127.0.0.1:8081 BEAT_SERVICE_ACCOUNT=beatsvc \
+  ./scripts/beatctl.sh install "$PWD" 1.0.0
+
+sudo BEAT_LISTEN_ADDR=127.0.0.1:8443 BEAT_TLS_ENABLED=true \
+  BEAT_TLS_CERT_FILE=/etc/beat/tls/fullchain.pem \
+  BEAT_TLS_KEY_FILE=/etc/beat/tls/privkey.pem \
+  BEAT_TLS_SERVER_NAME=beat.example.com \
   ./scripts/beatctl.sh install "$PWD" 1.0.0
 ```
 
@@ -578,8 +620,14 @@ The account name must be a lowercase system account name; `root` and other
 system accounts are rejected. The listen address must be `host:port` (an empty
 host, `0.0.0.0`, `[::]` or `*` means all interfaces) and its port must be
 between 1 and 65535; the readiness probe always targets `127.0.0.1` with that
-port. Install, upgrade and uninstall all read the same variables, so a
+port and uses HTTPS when TLS is enabled. The installer writes the TLS arguments
+into the managed unit and rejects missing, non-regular, writable or
+group/world-readable private-key files before stopping the service. Install,
+upgrade and uninstall all read the same variables, so a
 deployment must be upgraded and removed with the values it was installed with.
+When the certificate does not include a loopback IP SAN, set
+`BEAT_TLS_SERVER_NAME` to a DNS name in the certificate; the readiness probe
+connects to `127.0.0.1` with `curl --resolve` while validating that hostname.
 Programs and directories use mode `0700` and belong to `beat`; static files
 use `0600`. The service's mount namespace makes the program tree read-only;
 only `/var/lib/beat` is writable application state. Configuration and recovery
