@@ -281,11 +281,23 @@ func applyMigrations(ctx context.Context, db *sql.DB) error {
 	return applyMigrationsObserved(ctx, db, nil)
 }
 
-// applyMigrationsObserved 应用全部规范迁移，并向可选观察者报告有界阶段。
-func applyMigrationsObserved(ctx context.Context, db *sql.DB, observer MigrationObserver) (resultErr error) {
-	if _, err := db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations (
+func createMigrationLedger(ctx context.Context, db *sql.DB) error {
+	tx, err := beginWriteTx(ctx, db)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations (
 		version INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_at DATETIME NOT NULL
 	)`); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// applyMigrationsObserved 应用全部规范迁移，并向可选观察者报告有界阶段。
+func applyMigrationsObserved(ctx context.Context, db *sql.DB, observer MigrationObserver) (resultErr error) {
+	if err := createMigrationLedger(ctx, db); err != nil {
 		resultErr = migrationFail(MigrationFailureApply, fmt.Errorf("create migration ledger: %w", err))
 		notifyFailure(observer, resultErr)
 		return resultErr

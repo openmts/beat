@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 func TestSQLiteConnectionPolicy(t *testing.T) {
@@ -113,6 +114,41 @@ func TestConcurrentSQLiteMigrationStartup(t *testing.T) {
 		if err := <-errorsCh; err != nil {
 			t.Fatalf("concurrent migration startup: %v", err)
 		}
+	}
+}
+
+func TestMigrationLedgerCreationRetriesBusyDatabase(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "busy-migration.db")
+	dsn := sqliteConnectionString(path) + "&_pragma=busy_timeout(0)"
+	holder, err := sql.Open("sqlite", dsn)
+	if err != nil {
+		t.Fatalf("open lock holder: %v", err)
+	}
+	t.Cleanup(func() { _ = holder.Close() })
+	holder.SetMaxOpenConns(1)
+	database, err := sql.Open("sqlite", dsn)
+	if err != nil {
+		t.Fatalf("open migration database: %v", err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+	if _, err := holder.Exec("CREATE TABLE busy_probe(id INTEGER)"); err != nil {
+		t.Fatalf("create lock probe: %v", err)
+	}
+	if _, err := holder.Exec("BEGIN IMMEDIATE"); err != nil {
+		t.Fatalf("acquire write lock: %v", err)
+	}
+	released := make(chan error, 1)
+	go func() {
+		time.Sleep(100 * time.Millisecond)
+		_, releaseErr := holder.Exec("ROLLBACK")
+		released <- releaseErr
+	}()
+	migrationErr := applyMigrationsObserved(t.Context(), database, nil)
+	if err := <-released; err != nil {
+		t.Fatalf("release write lock: %v", err)
+	}
+	if migrationErr != nil {
+		t.Fatalf("migration ledger must retry SQLITE_BUSY: %v", migrationErr)
 	}
 }
 
