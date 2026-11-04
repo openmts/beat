@@ -12,6 +12,7 @@ import {
 } from "@/components/ui/alert-dialog"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { EraseBackupNotice } from "@/components/erase-backup-notice"
+import { Button } from "@/components/ui/button"
 import { Field, FieldDescription, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
 import { useLocale } from "@/context/locale"
@@ -66,6 +67,9 @@ export function EntityDeleteDialog(props: {
           <p className="text-sm text-muted-foreground">
             {t(erasureErasesEntity(target.scope) ? "erase.entity_removed" : "erase.entity_kept")}
           </p>
+          <Alert>
+            <AlertDescription>{t("erase.recent_auth_notice")}</AlertDescription>
+          </Alert>
           <EraseBackupNotice
             open
             readiness={readiness}
@@ -74,13 +78,23 @@ export function EntityDeleteDialog(props: {
           />
           <Field>
             <FieldLabel htmlFor="entity-delete-name">{t("erase.name_label")}</FieldLabel>
-            <Input
-              id="entity-delete-name"
-              value={typed}
-              disabled={props.pending}
-              placeholder={target.name}
-              onChange={(event) => setTyped(event.target.value)}
-            />
+            <div className="flex gap-2">
+              <Input
+                id="entity-delete-name"
+                value={typed}
+                disabled={props.pending}
+                placeholder={target.name}
+                onChange={(event) => setTyped(event.target.value)}
+              />
+              <Button
+                type="button"
+                variant="outline"
+                disabled={props.pending}
+                onClick={() => setTyped(target.name)}
+              >
+                {t("erase.fill_confirmation")}
+              </Button>
+            </div>
             <FieldDescription>{t("erase.name_hint")}</FieldDescription>
           </Field>
           {props.error ? (

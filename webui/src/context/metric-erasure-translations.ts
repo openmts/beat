@@ -32,6 +32,8 @@ export const metricErasureTranslations: Record<string, Record<string, string>> =
     "erase.name_label": "Entity display name",
     "erase.name_hint": "Type the exact display name to confirm this erasure.",
     "erase.name_placeholder": "Display name",
+    "erase.fill_confirmation": "Fill confirmation",
+    "erase.recent_auth_notice": "You are still signed in, but deleting an entity is a sensitive action. It requires an identity confirmation from the last 10 minutes; confirming will continue the deletion automatically.",
     "erase.backup_ready": "A ready backup from the last 24 hours is available: {name}.",
     "erase.backup_missing": "No ready backup was created in the last 24 hours.",
     "erase.backup_unknown": "The backup list could not be read, so a recent recovery point cannot be confirmed.",

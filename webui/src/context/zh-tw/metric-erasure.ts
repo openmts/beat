@@ -31,6 +31,8 @@ export const zhTWMetricErasure: Record<string, string> = {
     "erase.name_label": "實體顯示名稱",
     "erase.name_hint": "請輸入完全一致的顯示名稱以確認本次擦除。",
     "erase.name_placeholder": "顯示名稱",
+    "erase.fill_confirmation": "一鍵填入確認內容",
+    "erase.recent_auth_notice": "您仍處於登入狀態，但刪除實體屬於敏感操作，需要最近 10 分鐘內的身分確認；確認後會自動繼續目前的刪除。",
     "erase.backup_ready": "已存在 24 小時內的就緒備份：{name}。",
     "erase.backup_missing": "最近 24 小時內未建立任何就緒備份。",
     "erase.backup_unknown": "無法讀取備份清單，因此無法確認近期是否有還原點。",

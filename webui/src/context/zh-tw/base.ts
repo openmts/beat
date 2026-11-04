@@ -27,7 +27,7 @@ export const zhTWBase: Record<string, string> = {
   "app.refresh": "重新整理",
   "app.close": "關閉",
   "reauth.title": "確認身分",
-  "reauth.description": "此操作需要先完成一次近期身分確認。",
+  "reauth.description": "目前登入仍然有效，但此敏感操作需要最近 10 分鐘內的再次身分確認，僅用於解鎖本次操作。",
   "reauth.password": "密碼",
   "reauth.code": "驗證器驗證碼",
   "reauth.confirm": "確認並繼續",

@@ -32,6 +32,8 @@ export const zhCNMetricErasure: Record<string, string> = {
   "erase.name_label": "实体显示名",
   "erase.name_hint": "请输入完全一致的显示名以确认本次擦除。",
   "erase.name_placeholder": "显示名",
+  "erase.fill_confirmation": "一键填写确认内容",
+  "erase.recent_auth_notice": "你仍处于登录状态，但删除实体属于敏感操作，需要最近 10 分钟内的身份确认；确认后会自动继续当前删除。",
   "erase.backup_ready": "已存在 24 小时内的就绪备份：{name}。",
   "erase.backup_missing": "最近 24 小时内没有创建任何就绪备份。",
   "erase.backup_unknown": "无法读取备份列表，因此无法确认近期是否存在恢复点。",

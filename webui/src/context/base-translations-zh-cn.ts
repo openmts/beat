@@ -26,7 +26,7 @@ export const baseTranslationsZhCN: Record<string, string> = {
   "app.refresh": "刷新",
   "app.close": "关闭",
   "reauth.title": "确认身份",
-  "reauth.description": "该操作需要先完成一次近期身份确认。",
+  "reauth.description": "当前登录仍然有效，但该敏感操作需要最近 10 分钟内的再次身份确认，仅用于解锁本次操作。",
   "reauth.password": "密码",
   "reauth.code": "身份验证器验证码",
   "reauth.confirm": "确认并继续",

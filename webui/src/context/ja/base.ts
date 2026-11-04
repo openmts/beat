@@ -27,7 +27,7 @@ export const jaBase: Record<string, string> = {
   "app.refresh": "更新",
   "app.close": "閉じる",
   "reauth.title": "本人確認",
-  "reauth.description": "この操作には直近の本人確認が必要です。",
+  "reauth.description": "ログインは有効なままですが、この機密性の高い操作には直近 10 分以内の本人確認が必要です。確認はこの操作のみに使われます。",
   "reauth.password": "パスワード",
   "reauth.code": "認証アプリのコード",
   "reauth.confirm": "確認して続行",

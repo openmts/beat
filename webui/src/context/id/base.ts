@@ -27,7 +27,7 @@ export const idBase: Record<string, string> = {
   "app.refresh": "Segarkan",
   "app.close": "Tutup",
   "reauth.title": "Konfirmasi identitas Anda",
-  "reauth.description": "Tindakan ini memerlukan konfirmasi identitas terbaru.",
+  "reauth.description": "Sesi login Anda masih valid, tetapi tindakan sensitif ini memerlukan konfirmasi identitas baru dalam 10 menit terakhir. Konfirmasi ini hanya membuka tindakan tersebut.",
   "reauth.password": "Kata sandi",
   "reauth.code": "Kode autentikator",
   "reauth.confirm": "Konfirmasi dan lanjutkan",

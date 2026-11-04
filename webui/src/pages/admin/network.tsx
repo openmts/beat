@@ -14,14 +14,17 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { useLocale } from "@/context/locale"
 import { useNodes } from "@/hooks/use-api"
 import { useAdminNetworkTasks } from "@/hooks/use-network"
+import { useReauthRetry } from "@/hooks/use-reauth-retry"
 import * as networkApi from "@/lib/network-api"
 import { EntityDeleteDialog } from "@/pages/admin/entity-delete-dialog"
+import { ReauthDialog } from "@/components/reauth-dialog"
 import type { NetworkTaskPayload, NetworkTaskView } from "@/types"
 
 export default function Network() {
   const { t } = useLocale()
   const tasks = useAdminNetworkTasks()
   const nodes = useNodes()
+  const reauth = useReauthRetry()
   const [editView, setEditView] = useState<NetworkTaskView | null>(null)
   const [dialogOpen, setDialogOpen] = useState(false)
   const [deleteView, setDeleteView] = useState<NetworkTaskView | null>(null)
@@ -43,12 +46,23 @@ export default function Network() {
     setDialogOpen(false)
   })
 
-  const remove = async (requestId: string) => runAction(async () => {
+  const remove = async (requestId: string) => {
     if (!deleteView) return
-    await networkApi.deleteNetworkTask(deleteView.task.id, deleteView.task.name, requestId)
-    await tasks.refresh()
-    setDeleteView(null)
-  })
+    const view = deleteView
+    setActionError(null)
+    setActionLoading(true)
+    try {
+      await reauth.run(async () => {
+        await networkApi.deleteNetworkTask(view.task.id, view.task.name, requestId)
+        await tasks.refresh()
+        setDeleteView(null)
+      })
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : t("app.error"))
+    } finally {
+      setActionLoading(false)
+    }
+  }
 
   const move = async (view: NetworkTaskView, direction: -1 | 1) => runAction(async () => {
     const section = view.task.enabled ? enabled : disabled
@@ -119,11 +133,20 @@ export default function Network() {
       />
       <EntityDeleteDialog
         target={deleteView ? { id: deleteView.task.id, name: deleteView.task.name, scope: "delete_network_task" } : null}
-        pending={actionLoading}
+        pending={actionLoading || reauth.busy}
         error={actionError}
         onOpenChange={(open) => { if (!open) { setDeleteView(null); setActionError(null) } }}
         onConfirm={remove}
       />
+      {reauth.pending && (
+        <ReauthDialog
+          codeRequired={reauth.codeRequired}
+          pending={reauth.busy}
+          error={reauth.error}
+          onClose={reauth.close}
+          onConfirm={(password, code) => void reauth.confirm(password, code)}
+        />
+      )}
       <NetworkHistoryDialog open={historyView !== null} view={historyView} admin onOpenChange={(open) => { if (!open) setHistoryView(null) }} />
         </TabsContent>
         <TabsContent value="diagnostics" className="flex flex-col gap-4">

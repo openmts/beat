@@ -2,6 +2,7 @@ import { Link } from "react-router"
 
 import { useAuth } from "@/context/auth"
 import { useConfirmedOperation } from "@/hooks/use-confirmed-operation"
+import { useReauthRetry } from "@/hooks/use-reauth-retry"
 import { OperationConfirm } from "./operation-confirm"
 import { APIError } from "@/lib/api-error"
 import { useMemo, useState } from "react"
@@ -14,6 +15,7 @@ import { NodeEditDialog } from "@/components/node-edit-dialog"
 import { TrafficCalibrationDialog } from "@/components/traffic-calibration-dialog"
 import { TrafficCalibrationHistory } from "@/components/traffic-calibration-history"
 import { EntityDeleteDialog } from "@/pages/admin/entity-delete-dialog"
+import { ReauthDialog } from "@/components/reauth-dialog"
 import { createTrafficCalibration, newCalibrationRequestID, revokeTrafficCalibration, type TrafficCalibrationPayload } from "@/lib/traffic-calibration"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -39,6 +41,7 @@ function NodesSession() {
   const { data: sshKeys, error: sshKeysError } = useSSHKeys()
   const { t } = useLocale()
   const flow = useConfirmedOperation()
+  const reauth = useReauthRetry()
   const [editNode, setEditNode] = useState<EditableNode | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<ManagedNode | null>(null)
   const [actionMessage, setActionMessage] = useState<string | null>(null)
@@ -81,13 +84,16 @@ function NodesSession() {
 
   const handleDelete = async (requestId: string) => {
     if (!deleteTarget) return
+    const target = deleteTarget
     setActionError(null)
     setActionLoading(true)
     try {
-      await api.deleteNode(deleteTarget.id, deleteTarget.name, requestId)
-      setActionMessage(t("node.deletion_queued"))
-      setDeleteTarget(null)
-      await refreshAfterMutation()
+      await reauth.run(async () => {
+        await api.deleteNode(target.id, target.name, requestId)
+        setActionMessage(t("node.deletion_queued"))
+        setDeleteTarget(null)
+        await refreshAfterMutation()
+      })
     } catch (err) {
       setActionError(messageFromError(err))
     } finally {
@@ -318,11 +324,21 @@ function NodesSession() {
 
       <EntityDeleteDialog
         target={deleteTarget ? { id: deleteTarget.id, name: deleteTarget.name, scope: "delete_node" } : null}
-        pending={actionLoading}
+        pending={actionLoading || reauth.busy}
         error={actionError}
         onOpenChange={(open) => { if (!open) { setDeleteTarget(null); setActionError(null) } }}
         onConfirm={handleDelete}
       />
+
+      {reauth.pending && (
+        <ReauthDialog
+          codeRequired={reauth.codeRequired}
+          pending={reauth.busy}
+          error={reauth.error}
+          onClose={reauth.close}
+          onConfirm={(password, code) => void reauth.confirm(password, code)}
+        />
+      )}
     </div>
   )
 }

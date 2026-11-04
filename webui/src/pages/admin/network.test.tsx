@@ -7,13 +7,17 @@ import * as apiHooks from "@/hooks/use-api"
 import * as networkHooks from "@/hooks/use-network"
 import * as networkApi from "@/lib/network-api"
 import * as backupApi from "@/lib/backup-api"
+import { APIError } from "@/lib/api-error"
+import { reauthenticateAdmin } from "@/lib/security-api"
 import Network from "@/pages/admin/network"
 import type { NetworkTaskPayload, NetworkTaskView } from "@/types"
 
+vi.mock("@/context/auth", () => ({ useAuth: () => ({ principal: { user: { totp_enabled_at: null } } }) }))
 vi.mock("@/hooks/use-api")
 vi.mock("@/hooks/use-network")
 vi.mock("@/lib/network-api")
 vi.mock("@/lib/backup-api", () => ({ listBackups: vi.fn(), listBackupQuarantine: vi.fn(), createBackup: vi.fn() }))
+vi.mock("@/lib/security-api", () => ({ reauthenticateAdmin: vi.fn() }))
 vi.mock("@/components/ui/alert-dialog", async () => {
   const mocks = await vi.importActual<typeof import("@/test/admin-ui-mocks")>("@/test/admin-ui-mocks")
   return {
@@ -33,6 +37,7 @@ vi.mock("@/components/ui/dialog", async () => {
     Dialog: mocks.MockDialog,
     DialogContent: mocks.PassThrough,
     DialogHeader: mocks.PassThrough,
+    DialogDescription: mocks.PassThrough,
     DialogTitle: mocks.PassThrough,
     DialogFooter: mocks.PassThrough,
   }
@@ -143,6 +148,30 @@ describe("admin network page", () => {
     fireEvent.click(screen.getByRole("tab", { name: "Advanced diagnostics" }))
     expect(screen.getByTestId("diagnostics-panel")).toBeInTheDocument()
     expect(screen.queryByRole("article", { name: "One" })).toBeNull()
+  })
+
+  it("retries a deletion after recent identity confirmation without showing the backend error", async () => {
+    vi.mocked(networkApi.deleteNetworkTask)
+      .mockRejectedValueOnce(new APIError("recent authentication is required", 428))
+      .mockResolvedValueOnce({ id: "job" } as never)
+    vi.mocked(reauthenticateAdmin).mockResolvedValue({ reauthenticated_until: "2099-01-01T00:00:00Z" } as never)
+    view(<Network />)
+    fireEvent.click(within(screen.getByRole("article", { name: "One" })).getByRole("button", { name: "remove" }))
+    const deleteDialog = await screen.findByRole("dialog")
+    fireEvent.click(within(deleteDialog).getByRole("button", { name: "Fill confirmation" }))
+    expect(networkApi.deleteNetworkTask).not.toHaveBeenCalled()
+    fireEvent.click(within(deleteDialog).getByRole("checkbox"))
+    fireEvent.click(within(deleteDialog).getByRole("button", { name: "Delete" }))
+
+    expect(await screen.findByText(/still valid/i)).toBeInTheDocument()
+    expect(screen.queryByText("recent authentication is required")).not.toBeInTheDocument()
+    fireEvent.change(screen.getByLabelText("Password"), { target: { value: "secret" } })
+    fireEvent.click(screen.getByRole("button", { name: "Confirm and continue" }))
+
+    await waitFor(() => expect(networkApi.deleteNetworkTask).toHaveBeenCalledTimes(2))
+    const firstRequestID = vi.mocked(networkApi.deleteNetworkTask).mock.calls[0][2]
+    expect(networkApi.deleteNetworkTask).toHaveBeenLastCalledWith("one", "One", firstRequestID)
+    expect(reauthenticateAdmin).toHaveBeenCalledWith("secret", "")
   })
 
   it("renders loading, empty, fetch errors, and action errors", async () => {

@@ -31,6 +31,8 @@ export const jaMetricErasure: Record<string, string> = {
   "erase.name_label": "エンティティの表示名",
   "erase.name_hint": "この消去を確定するには、正確な表示名を入力してください。",
   "erase.name_placeholder": "表示名",
+  "erase.fill_confirmation": "確認内容を入力",
+  "erase.recent_auth_notice": "ログインは有効なままですが、エンティティの削除は機密性の高い操作のため、直近 10 分以内の本人確認が必要です。確認後、削除は自動的に続行されます。",
   "erase.backup_ready": "直近 24 時間以内の準備済みバックアップがあります: {name}。",
   "erase.backup_missing": "直近 24 時間以内に準備済みのバックアップは作成されていません。",
   "erase.backup_unknown": "バックアップ一覧を読み取れなかったため、最近の復旧ポイントを確認できません。",

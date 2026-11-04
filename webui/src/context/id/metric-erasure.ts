@@ -31,6 +31,8 @@ export const idMetricErasure: Record<string, string> = {
   "erase.name_label": "Nama tampilan entitas",
   "erase.name_hint": "Ketik nama tampilan yang tepat untuk mengonfirmasi penghapusan ini.",
   "erase.name_placeholder": "Nama tampilan",
+  "erase.fill_confirmation": "Isi konfirmasi",
+  "erase.recent_auth_notice": "Anda masih login, tetapi menghapus entitas adalah tindakan sensitif yang memerlukan konfirmasi identitas dalam 10 menit terakhir; setelah dikonfirmasi, penghapusan akan dilanjutkan secara otomatis.",
   "erase.backup_ready": "Cadangan siap dari 24 jam terakhir tersedia: {name}.",
   "erase.backup_missing": "Tidak ada cadangan siap yang dibuat dalam 24 jam terakhir.",
   "erase.backup_unknown": "Daftar cadangan tidak dapat dibaca, sehingga titik pemulihan terbaru tidak dapat dipastikan.",

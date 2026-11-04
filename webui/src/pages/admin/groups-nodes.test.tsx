@@ -282,6 +282,33 @@ describe("admin nodes", () => {
     expect(await screen.findByText("delete failed")).toBeInTheDocument()
   })
 
+  it("fills the exact name and retries a deletion after recent identity confirmation", async () => {
+    vi.mocked(api.deleteNode)
+      .mockRejectedValueOnce(new APIError("recent authentication is required", 428))
+      .mockResolvedValueOnce({} as never)
+    vi.mocked(reauthenticateAdmin).mockResolvedValue({ reauthenticated_until: "2099-01-01T00:00:00Z" } as never)
+    view(<Nodes />)
+    fireEvent.click(within(screen.getByTestId("node-card-n1")).getByRole("button", { name: "Actions" }))
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Delete" }))
+    const deleteDialog = await screen.findByRole("dialog")
+    expect(within(deleteDialog).getByText(/still signed in/i)).toBeInTheDocument()
+    fireEvent.click(within(deleteDialog).getByRole("button", { name: "Fill confirmation" }))
+    expect(within(deleteDialog).getByLabelText("Entity display name")).toHaveValue("server-one")
+    expect(api.deleteNode).not.toHaveBeenCalled()
+    fireEvent.click(within(deleteDialog).getByRole("checkbox"))
+    fireEvent.click(within(deleteDialog).getByRole("button", { name: "Delete" }))
+
+    expect(await screen.findByText(/still valid/i)).toBeInTheDocument()
+    expect(screen.queryByText("recent authentication is required")).not.toBeInTheDocument()
+    fireEvent.change(screen.getByLabelText("Password"), { target: { value: "secret" } })
+    fireEvent.click(screen.getByRole("button", { name: "Confirm and continue" }))
+
+    await waitFor(() => expect(api.deleteNode).toHaveBeenCalledTimes(2))
+    const firstRequestID = vi.mocked(api.deleteNode).mock.calls[0][2]
+    expect(api.deleteNode).toHaveBeenLastCalledWith("n1", "server-one", firstRequestID)
+    expect(reauthenticateAdmin).toHaveBeenCalledWith("secret", "")
+  })
+
   it("creates a node and clears one-time credentials on close", async () => {
     vi.mocked(api.createManagedNode).mockResolvedValue({
       node,

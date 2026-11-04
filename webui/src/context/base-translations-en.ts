@@ -26,7 +26,7 @@ export const baseTranslationsEn: Record<string, string> = {
   "app.refresh": "Refresh",
   "app.close": "Close",
   "reauth.title": "Confirm your identity",
-  "reauth.description": "This action needs a recent identity confirmation.",
+  "reauth.description": "Your sign-in is still valid, but this sensitive action needs a fresh identity confirmation from the last 10 minutes. It only unlocks this action.",
   "reauth.password": "Password",
   "reauth.code": "Authenticator code",
   "reauth.confirm": "Confirm and continue",
