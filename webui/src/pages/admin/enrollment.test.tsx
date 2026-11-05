@@ -22,7 +22,7 @@ const grant: EnrollmentGrant = {
   consumed_enrollments: 2, created_at: "2026-10-01T00:00:00Z", updated_at: "2026-10-01T00:00:00Z",
 }
 
-const downloadCommand = "curl --fail --output ./beat-agent 'https://github.com/openmts/beat/releases/download/v0.0.1-beta.6/beat-agent_linux_${arch}'"
+const downloadCommand = "sudo curl -fsSL --retry 3 --proto '=https' --proto-redir '=https' \"https://github.com/openmts/beat/releases/download/v0.0.1-beta.6/beat-agent_linux_$(uname -m)\" -o /usr/local/bin/beat-agent && sudo chmod 0700 /usr/local/bin/beat-agent"
 
 const request: EnrollmentRequest = {
   id: "request-1", grant_id: "grant-1", grant_name: "Datacenter rollout", status: "pending", node_name: "web-9",
@@ -146,7 +146,7 @@ describe("node enrollment workspace", () => {
     const secret = within(lastDialog())
     expect(secret.getByText("beat_enroll_v1_created")).toBeInTheDocument()
     expect(secret.getByLabelText("Download Beat Agent")).toHaveTextContent(downloadCommand)
-    const command = secret.getByText(/beat-agent enroll --server/)
+    const command = secret.getByText(/sudo beat-agent enroll --server/)
     expect(command.textContent).toContain("--server http://localhost:3000 --allow-http --grant-stdin <<'BEAT_ENROLL'")
     expect(command.textContent).toContain("\nbeat_enroll_v1_created\nBEAT_ENROLL")
     expect(secret.getByText(/--grant-file instead of --grant-stdin/)).toBeInTheDocument()
@@ -177,7 +177,7 @@ describe("node enrollment workspace", () => {
     expect(rotated.getByText("beat_enroll_v1_rotated")).toBeInTheDocument()
     expect(rotated.getByText(/no matching published Agent binary/)).toBeInTheDocument()
     expect(rotated.queryByLabelText("Download Beat Agent")).not.toBeInTheDocument()
-    expect(rotated.getByText(/beat-agent enroll --server/).textContent).toContain("beat_enroll_v1_rotated")
+    expect(rotated.getByText(/sudo beat-agent enroll --server/).textContent).toContain("beat_enroll_v1_rotated")
   })
 
   it("clears the one-time secret once the dialog closes", async () => {
@@ -188,7 +188,7 @@ describe("node enrollment workspace", () => {
     expect(within(lastDialog()).getByText("beat_enroll_v1_rotated")).toBeInTheDocument()
     await userEvent.keyboard("{Escape}")
     await waitFor(() => expect(screen.queryByText(/beat_enroll_v1_rotated/)).not.toBeInTheDocument())
-    expect(screen.queryByText(/beat-agent enroll --server/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/sudo beat-agent enroll --server/)).not.toBeInTheDocument()
   })
 
   it("reports a failed queue load and retries on demand", async () => {

@@ -7,7 +7,7 @@ const heredocDelimiter = "BEAT_ENROLL"
 export function enrollmentCommand(origin: string, secret: string): string {
   // 明文 HTTP 需要显式开关；HTTPS 保持默认，不额外放宽传输策略。
   const transport = origin.startsWith("https://") ? [] : ["--allow-http"]
-  const invocation = ["beat-agent enroll", `--server ${origin}`, ...transport,
+  const invocation = ["sudo beat-agent enroll", `--server ${origin}`, ...transport,
     "--grant-stdin", `<<'${heredocDelimiter}'`].join(" ")
   return [invocation, secret, heredocDelimiter].join("\n")
 }

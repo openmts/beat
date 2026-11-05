@@ -32,8 +32,8 @@ A publishable release contains all of the following relevant assets:
 beat-agent-manifest.json
 beat-agent-manifest.sig
 beat-agent-manifest.sigstore.json
-beat-agent_linux_amd64
-beat-agent_linux_arm64
+beat-agent_linux_x86_64
+beat-agent_linux_aarch64
 beat-agent-release-notes.txt
 beat-agent-release-spec.json
 checksums.txt

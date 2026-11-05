@@ -8,15 +8,23 @@ import (
 func TestAgentDownloadCommand(t *testing.T) {
 	command := AgentDownloadCommand("0.0.1-beta.6")
 	for _, expected := range []string{
-		`set -euo pipefail`,
-		`x86_64|amd64) arch=amd64`,
-		`aarch64|arm64) arch=arm64`,
-		`https://github.com/openmts/beat/releases/download/v0.0.1-beta.6/beat-agent_linux_${arch}`,
-		`chmod 0700 ./beat-agent`,
+		`https://github.com/openmts/beat/releases/download/v0.0.1-beta.6/beat-agent_linux_$(uname -m)"`,
+		`-o /usr/local/bin/beat-agent`,
+		`sudo chmod 0700 /usr/local/bin/beat-agent`,
 	} {
 		if !strings.Contains(command, expected) {
 			t.Fatalf("download command missing %q:\n%s", expected, command)
 		}
+	}
+}
+
+func TestAgentDownloadCommandUsesOneDownloadAndInstallLine(t *testing.T) {
+	command := AgentDownloadCommand("0.0.1-beta.6")
+	if strings.Contains(command, "\n") {
+		t.Fatalf("download command must remain a single line:\n%s", command)
+	}
+	if !strings.Contains(command, " && sudo chmod 0700 /usr/local/bin/beat-agent") {
+		t.Fatalf("download command does not install the executable in one line:\n%s", command)
 	}
 }
 

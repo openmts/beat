@@ -90,7 +90,8 @@ func TestAgentEnrollmentGrantAdminLifecycle(t *testing.T) {
 	if created.Secret == "" || created.Grant.ID == "" || created.Grant.Mode != "manual" {
 		t.Fatalf("created grant = %#v", created)
 	}
-	if !strings.Contains(created.DownloadCommand, "/v0.0.1-beta.6/beat-agent_linux_") {
+	if !strings.Contains(created.DownloadCommand, "/v0.0.1-beta.6/beat-agent_linux_$(uname -m)") ||
+		!strings.Contains(created.DownloadCommand, "/usr/local/bin/beat-agent") {
 		t.Fatalf("created grant download command = %q", created.DownloadCommand)
 	}
 	if _, err := agentenrollment.DescribeSecret(agentenrollment.GrantSecretPrefix, created.Secret); err != nil {

@@ -10,12 +10,13 @@ is enabled under systemd and its database has migrated to v7; see
 
 The authenticated `/admin/agent-setup` page issues a fresh, random enrollment
 token on each explicit generation. When the server version has a published
-release, the page also emits a download command that detects `amd64` or `arm64`
-and places the matching executable at `./beat-agent`. The operator runs that
-download first, then the join command from the same directory:
+release, the page also emits a download command that uses `uname -m` and places
+the matching executable at `/usr/local/bin/beat-agent` with mode `0700`. The
+operator runs that download first, then the join command with `sudo` from any
+directory:
 
 ```bash
-sudo ./beat-agent join --server https://beat.example.com --token '<join-token>'
+sudo beat-agent join --server https://beat.example.com --token '<join-token>'
 ```
 
 The command registers a new node, writes its configuration, installs a stable

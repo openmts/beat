@@ -107,7 +107,7 @@ function EnrollmentHelp() {
         <CardHeader><CardTitle className="flex items-center gap-2"><TerminalIcon className="size-4" /><h3>{t("enrollment.recovery_title")}</h3></CardTitle></CardHeader>
         <CardContent className="min-w-0 space-y-4 text-sm leading-relaxed [&>p]:text-muted-foreground">
           <p>{t("enrollment.recovery")}</p>
-          <AgentSetupCode title={t("enrollment.service_command")} code="sudo ./beat-agent service install --config /etc/beat-agent/agent.json" />
+          <AgentSetupCode title={t("enrollment.service_command")} code="sudo beat-agent service install --config /etc/beat-agent/agent.json" />
           <p>{t("enrollment.customize")}</p>
         </CardContent>
       </Card>

@@ -45,7 +45,7 @@ cosign verify-blob --bundle beat-agent-manifest.sigstore.json \
     --certificate-identity "https://github.com/$GITHUB_REPOSITORY/.github/workflows/release.yml@$GITHUB_REF" \
     --certificate-oidc-issuer https://token.actions.githubusercontent.com beat-agent-manifest.json
 
-assets=(beat_*.tar.gz beat_*.tar.gz.sbom.json beat-agent_linux_amd64 beat-agent_linux_arm64 \
+assets=(beat_*.tar.gz beat_*.tar.gz.sbom.json beat-agent_linux_x86_64 beat-agent_linux_aarch64 \
     beat-agent-release-notes.txt beat-agent-release-spec.json beat-agent-manifest.json \
     beat-agent-manifest.sig beat-agent-manifest.sigstore.json)
 sha256sum -- "${assets[@]}" >checksums.txt

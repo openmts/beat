@@ -138,8 +138,8 @@ jobs:
           files: |
             dist/beat_*.tar.gz
             dist/beat_*.tar.gz.sbom.json
-            dist/beat-agent_linux_amd64
-            dist/beat-agent_linux_arm64
+            dist/beat-agent_linux_x86_64
+            dist/beat-agent_linux_aarch64
             dist/beat-agent-release-notes.txt
             dist/beat-agent-release-spec.json
             dist/beat-agent-manifest.json

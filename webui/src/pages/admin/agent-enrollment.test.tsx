@@ -10,8 +10,8 @@ vi.mock("@/lib/agent-enrollment-api")
 const enrollment = {
   id: "join-one", token: "beat_join_v1_one", server_url: "https://beat.example.com",
   expires_at: new Date(Date.now() + 30 * 60_000).toISOString(),
-  download_command: "curl --fail --output ./beat-agent 'https://github.com/openmts/beat/releases/download/v0.0.1-beta.6/beat-agent_linux_${arch}'",
-  command: "sudo ./beat-agent join --server 'https://beat.example.com' --token 'beat_join_v1_one'",
+  download_command: "sudo curl -fsSL --retry 3 --proto '=https' --proto-redir '=https' \"https://github.com/openmts/beat/releases/download/v0.0.1-beta.6/beat-agent_linux_$(uname -m)\" -o /usr/local/bin/beat-agent && sudo chmod 0700 /usr/local/bin/beat-agent",
+  command: "sudo beat-agent join --server 'https://beat.example.com' --token 'beat_join_v1_one'",
 }
 const clipboard = vi.fn()
 

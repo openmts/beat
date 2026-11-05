@@ -398,7 +398,7 @@ the field that needs correction without exposing secrets.
 Grant management shows name, mode, default group name, source scope, hostname
 constraint, occupied/maximum slots, expiry, and status. Creation and rotation
 use the existing one-time-secret dialog pattern; closing it clears plaintext
-from React state. The dialog also renders the ready-to-run `beat-agent enroll`
+from React state. The dialog also renders the ready-to-run `sudo beat-agent enroll`
 command built from the current browser origin plus, when the server version has
 a published release, the matching Agent download command. The operator copies
 the generated blocks instead of assembling flags or release URLs. Revoke
@@ -533,7 +533,7 @@ Owners create or rotate a grant in **Enrollment → Enrollment grants**; the pla
 secret is shown once. On the monitored machine the whole handshake is one command:
 
 ```bash
-sudo ./beat-agent enroll --server https://beat.example.com --grant-stdin
+sudo beat-agent enroll --server https://beat.example.com --grant-stdin
 # paste the grant secret when prompted, then press Ctrl-D
 ```
 

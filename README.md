@@ -357,12 +357,12 @@ Optional Agent operations use explicit local policy and dedicated roots; see the
 
 Open **Node setup** at `/admin/agent-setup` to generate a one-command join for a
 Linux machine with systemd. When this server has a matching published release,
-the page also generates a download command that places `./beat-agent` in the
-current directory. Run the download command first, then run the join command
-from the same directory:
+the page also generates a download command that uses `uname -m` to install the
+matching Agent at `/usr/local/bin/beat-agent` with mode `0700`. Run the download
+command first, then run the join command with `sudo` from any directory:
 
 ```bash
-sudo ./beat-agent join --server https://beat.example.com --token '<join-token>'
+sudo beat-agent join --server https://beat.example.com --token '<join-token>'
 ```
 
 Each generated token is different, expires after 30 minutes, and admits one
@@ -380,9 +380,9 @@ proxy.
 After an interruption, rerun the same command on the same machine to resume;
 an unfinished join can use a fresh command after its token expires. For an
 existing valid configuration or a saved enrollment receipt, recover with
-`sudo ./beat-agent service install --config /etc/beat-agent/agent.json`.
+`sudo beat-agent service install --config /etc/beat-agent/agent.json`.
 To remove the service again, run
-`sudo ./beat-agent service uninstall`; it stops and disables both
+`sudo beat-agent service uninstall`; it stops and disables both
 `beat-agent.service` and `beat-agent-update.service`, deletes only unit files
 carrying the Beat managed marker plus the installed binaries, and keeps the
 configuration and identity under `/etc/beat-agent`. Add `--purge` to delete that
@@ -394,7 +394,7 @@ remain available on the Node setup page. See the
 
 **Node enrollment** at `/admin/enrollment` adds policy grants for fleets. An owner
 creates a grant with an approval mode, capacity, expiry, default group, and
-optional source CIDRs and hostname pattern, then copies the `beat-agent enroll`
+optional source CIDRs and hostname pattern, then copies the `sudo beat-agent enroll`
 and Agent download commands the dialog prints beside the one-time secret. The
 secret travels on standard input, as a `0600` file, or through a protected
 environment variable. Discovered machines wait in *Pending approval* until an administrator

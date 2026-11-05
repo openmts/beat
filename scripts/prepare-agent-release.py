@@ -12,6 +12,7 @@ import sys
 import tarfile
 
 ARCHIVE = re.compile(r"^beat_(?P<version>.+)_linux_(?P<arch>amd64|arm64)\.tar\.gz$")
+ASSET_ARCH = {"amd64": "x86_64", "arm64": "aarch64"}
 MAX_METADATA_BYTES = 1 << 20
 
 
@@ -77,7 +78,7 @@ def prepare(directory):
     artifacts = []
     provenance = sha256(checksums)
     for arch, archive in found.items():
-        filename = f"beat-agent_linux_{arch}"
+        filename = f"beat-agent_linux_{ASSET_ARCH[arch]}"
         destination = directory / filename
         if destination.exists() or destination.is_symlink():
             destination.unlink()

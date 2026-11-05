@@ -51,8 +51,14 @@ class ReleasePreparationTests(unittest.TestCase):
         self.assertEqual(0, result.returncode, result.stderr)
         self.assertEqual(["sign-blob", "verify-blob", "sign-blob", "verify-blob"], self.log.read_text().splitlines())
         for name in ("beat-agent-manifest.json", "beat-agent-manifest.sig", "beat-agent-manifest.sigstore.json",
-                     "beat-agent_linux_amd64", "beat-agent_linux_arm64", "checksums.txt.bundle"):
+                     "beat-agent_linux_x86_64", "beat-agent_linux_aarch64", "checksums.txt.bundle"):
             self.assertTrue(self.dist.joinpath(name).is_file(), name)
+        spec = json.loads(self.dist.joinpath("beat-agent-release-spec.json").read_text())
+        artifacts = {item["arch"]: item for item in spec["artifacts"]}
+        self.assertEqual({"amd64", "arm64"}, set(artifacts))
+        self.assertEqual("beat-agent_linux_x86_64", artifacts["amd64"]["filename"])
+        self.assertEqual("beat-agent_linux_aarch64", artifacts["arm64"]["filename"])
+        self.assertEqual("linux-amd64", artifacts["amd64"]["id"])
         self.assertEqual(64, self.dist.joinpath("beat-agent-manifest.sig").stat().st_size)
         self.assertIn(".sbom.json", self.dist.joinpath("checksums.txt").read_text())
         self.assertFalse(list(self.dist.glob(".release-prepare.*")))

@@ -85,7 +85,7 @@ func TestJoinTokenGenerationAndCommand(t *testing.T) {
 		}
 	}
 	command := JoinCommand("https://beat.example", token.Plaintext)
-	if !strings.Contains(command, "sudo ./beat-agent join --server 'https://beat.example' --token '") || strings.Contains(command, "--allow-http") {
+	if !strings.Contains(command, "sudo beat-agent join --server 'https://beat.example' --token '") || strings.Contains(command, "--allow-http") {
 		t.Fatal(command)
 	}
 	if !strings.HasSuffix(JoinCommand("http://localhost", token.Plaintext), " --allow-http") {

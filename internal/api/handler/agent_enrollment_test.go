@@ -60,10 +60,11 @@ func TestAgentEnrollmentIssuesUniqueBoundedCredentials(t *testing.T) {
 		if err := agentjoin.ValidateToken(output.Data.Token); err != nil {
 			t.Fatal(err)
 		}
-		if output.Data.ServerURL != "https://beat.example" || !strings.Contains(output.Data.Command, "sudo ./beat-agent join") {
+		if output.Data.ServerURL != "https://beat.example" || !strings.Contains(output.Data.Command, "sudo beat-agent join") {
 			t.Fatal("invalid command")
 		}
-		if !strings.Contains(output.Data.DownloadCommand, "/v0.0.1-beta.6/beat-agent_linux_") {
+		if !strings.Contains(output.Data.DownloadCommand, "/v0.0.1-beta.6/beat-agent_linux_$(uname -m)") ||
+			!strings.Contains(output.Data.DownloadCommand, "/usr/local/bin/beat-agent") {
 			t.Fatal("missing version-matched download command")
 		}
 		if index == 1 && firstToken == output.Data.Token {

@@ -51,7 +51,7 @@ func DigestToken(value string) []byte {
 
 func JoinCommand(serverURL, token string) string {
 	quote := func(value string) string { return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'" }
-	command := "sudo ./beat-agent join --server " + quote(serverURL) + " --token " + quote(token)
+	command := "sudo beat-agent join --server " + quote(serverURL) + " --token " + quote(token)
 	if strings.HasPrefix(serverURL, "http://") {
 		command += " --allow-http"
 	}
