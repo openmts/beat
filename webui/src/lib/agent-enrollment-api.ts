@@ -7,6 +7,7 @@ export interface AgentEnrollmentCommand {
   token: string
   server_url: string
   expires_at: string
+  download_command: string
   command: string
 }
 

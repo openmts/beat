@@ -9,6 +9,7 @@ import (
 
 	"github.com/beat/backend/internal/agentjoin"
 	"github.com/beat/backend/internal/api/middleware"
+	"github.com/beat/backend/internal/buildinfo"
 	"github.com/beat/backend/internal/store"
 )
 
@@ -31,11 +32,12 @@ type AgentEnrollmentHandler struct {
 	store                   AgentEnrollmentOperations
 	now                     func() time.Time
 	generate                func() (agentjoin.Token, error)
+	version                 string
 	issueBudget, joinBudget *enrollmentBudget
 }
 
 func NewAgentEnrollmentHandler(store AgentEnrollmentOperations) *AgentEnrollmentHandler {
-	return &AgentEnrollmentHandler{store: store, now: time.Now, generate: agentjoin.GenerateToken,
+	return &AgentEnrollmentHandler{store: store, now: time.Now, generate: agentjoin.GenerateToken, version: buildinfo.Version,
 		issueBudget: newEnrollmentBudget(enrollmentBudgetPolicy{perIP: issueRequestsPerMinute, total: issueGlobalRequests, concurrent: issueConcurrency, keys: enrollmentBudgetKeys}),
 		joinBudget:  newEnrollmentBudget(enrollmentBudgetPolicy{perIP: joinRequestsPerMinute, total: joinGlobalRequests, concurrent: joinConcurrency, keys: enrollmentBudgetKeys}),
 	}
@@ -81,7 +83,9 @@ func (h *AgentEnrollmentHandler) HandleIssue(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	JSONResponse(w, http.StatusCreated, agentjoin.IssueResult{ID: issued.ID, Token: token.Plaintext,
-		ServerURL: issued.ServerURL, ExpiresAt: issued.ExpiresAt, Command: agentjoin.JoinCommand(issued.ServerURL, token.Plaintext),
+		ServerURL: issued.ServerURL, ExpiresAt: issued.ExpiresAt,
+		DownloadCommand: agentjoin.AgentDownloadCommand(h.version),
+		Command:         agentjoin.JoinCommand(issued.ServerURL, token.Plaintext),
 	})
 }
 

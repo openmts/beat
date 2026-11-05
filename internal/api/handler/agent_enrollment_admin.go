@@ -8,6 +8,7 @@ import (
 
 	"github.com/beat/backend/internal/agentenrollment"
 	"github.com/beat/backend/internal/api/middleware"
+	"github.com/beat/backend/internal/buildinfo"
 	"github.com/beat/backend/internal/store"
 )
 
@@ -30,12 +31,14 @@ type AgentEnrollmentAdminHandler struct {
 	store          AgentEnrollmentAdminOperations
 	now            func() time.Time
 	generateSecret func() (agentenrollment.Secret, error)
+	version        string
 	metrics        EnrollmentMetrics
 }
 
 // NewAgentEnrollmentAdminHandler 构造管理端处理器。
 func NewAgentEnrollmentAdminHandler(operations AgentEnrollmentAdminOperations) *AgentEnrollmentAdminHandler {
-	return &AgentEnrollmentAdminHandler{store: operations, now: time.Now, generateSecret: agentenrollment.GenerateGrantSecret}
+	return &AgentEnrollmentAdminHandler{store: operations, now: time.Now, generateSecret: agentenrollment.GenerateGrantSecret,
+		version: buildinfo.Version}
 }
 
 // enrollmentAdminAuditContext 把已认证主体与请求来源写进上下文，供存储层原子写入审计行。

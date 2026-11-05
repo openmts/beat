@@ -21,11 +21,12 @@ type IssueRequest struct {
 }
 
 type IssueResult struct {
-	ID        string    `json:"id"`
-	Token     string    `json:"token"`
-	ServerURL string    `json:"server_url"`
-	ExpiresAt time.Time `json:"expires_at"`
-	Command   string    `json:"command"`
+	ID              string    `json:"id"`
+	Token           string    `json:"token"`
+	ServerURL       string    `json:"server_url"`
+	ExpiresAt       time.Time `json:"expires_at"`
+	DownloadCommand string    `json:"download_command"`
+	Command         string    `json:"command"`
 }
 
 type Request struct {

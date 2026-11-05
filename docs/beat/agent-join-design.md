@@ -9,8 +9,10 @@ is enabled under systemd and its database has migrated to v7; see
 ## Operator workflow
 
 The authenticated `/admin/agent-setup` page issues a fresh, random enrollment
-token on each explicit generation. An operator copies one command to a Linux
-machine that already has the matching `beat-agent` executable:
+token on each explicit generation. When the server version has a published
+release, the page also emits a download command that detects `amd64` or `arm64`
+and places the matching executable at `./beat-agent`. The operator runs that
+download first, then the join command from the same directory:
 
 ```bash
 sudo ./beat-agent join --server https://beat.example.com --token '<join-token>'
@@ -41,8 +43,11 @@ This implementation preserves the existing per-node reporting identity.
 `POST /api/v1/admin/agent-enrollment-tokens` uses the existing complete admin
 session, same-origin mutation and audit boundary. Its request is
 `{server_url, allow_http}` and response data is
-`{id, token, server_url, expires_at, command}`. Only token hashes are persisted;
-the command and plaintext token are shown in the successful response once.
+`{id, token, server_url, expires_at, download_command, command}`. Only token
+hashes are persisted; the commands and plaintext token are shown in the
+successful response once. `download_command` is derived from the server build
+version and is empty for development builds or versions without a published
+release, so the interface can direct the operator to manual installation.
 
 `POST /api/v1/agents/join` accepts the join token in the Authorization header
 and a bounded JSON body:

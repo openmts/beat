@@ -10,6 +10,7 @@ vi.mock("@/lib/agent-enrollment-api")
 const enrollment = {
   id: "join-one", token: "beat_join_v1_one", server_url: "https://beat.example.com",
   expires_at: new Date(Date.now() + 30 * 60_000).toISOString(),
+  download_command: "curl --fail --output ./beat-agent 'https://github.com/openmts/beat/releases/download/v0.0.1-beta.6/beat-agent_linux_${arch}'",
   command: "sudo ./beat-agent join --server 'https://beat.example.com' --token 'beat_join_v1_one'",
 }
 const clipboard = vi.fn()
@@ -35,7 +36,7 @@ describe("single-command agent enrollment", () => {
   it("opens command generation by default without automatically issuing a token", () => {
     view()
     expect(screen.getByRole("tab", { name: "One-command setup" })).toHaveAttribute("aria-selected", "true")
-    expect(screen.getByText(/already has the beat-agent executable/)).toBeInTheDocument()
+    expect(screen.getByText(/If the Agent is not installed/)).toBeInTheDocument()
     expect(screen.getByRole("button", { name: "Generate join command" })).toBeInTheDocument()
     expect(enrollmentAPI.createAgentEnrollmentToken).not.toHaveBeenCalled()
   })
@@ -55,8 +56,11 @@ describe("single-command agent enrollment", () => {
     useHTTPS()
     fireEvent.click(screen.getByRole("button", { name: "Generate join command" }))
     expect(await screen.findByLabelText("Join command")).toHaveTextContent(enrollment.command)
+    expect(screen.getByLabelText("Download Beat Agent")).toHaveTextContent(enrollment.download_command)
+    fireEvent.click(screen.getByRole("button", { name: "Copy Download Beat Agent" }))
+    await waitFor(() => expect(clipboard).toHaveBeenCalledWith(enrollment.download_command))
     fireEvent.click(screen.getByRole("button", { name: "Copy Join command" }))
-    await waitFor(() => expect(clipboard).toHaveBeenCalledWith(enrollment.command))
+    await waitFor(() => expect(clipboard).toHaveBeenLastCalledWith(enrollment.command))
     const next = { ...enrollment, id: "join-two", token: "beat_join_v1_two", command: enrollment.command.replace("_one", "_two") }
     vi.mocked(enrollmentAPI.createAgentEnrollmentToken).mockResolvedValue(next)
     fireEvent.click(screen.getByRole("button", { name: "Generate another command" }))
@@ -65,6 +69,16 @@ describe("single-command agent enrollment", () => {
     expect(enrollmentAPI.createAgentEnrollmentToken).toHaveBeenCalledTimes(2)
     expect(localStorage.length).toBe(1)
     expect(sessionStorage.length).toBe(0)
+  })
+
+  it("explains when a development build has no published Agent binary", async () => {
+    vi.mocked(enrollmentAPI.createAgentEnrollmentToken).mockResolvedValue({ ...enrollment, download_command: "" })
+    view()
+    useHTTPS()
+    fireEvent.click(screen.getByRole("button", { name: "Generate join command" }))
+    expect(await screen.findByText(/no matching published Agent binary/)).toBeInTheDocument()
+    expect(screen.queryByLabelText("Download Beat Agent")).not.toBeInTheDocument()
+    expect(screen.getByLabelText("Join command")).toHaveTextContent(enrollment.command)
   })
 
   it("clears a displayed credential when the server address changes", async () => {

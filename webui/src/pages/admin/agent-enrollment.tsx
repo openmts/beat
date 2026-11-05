@@ -76,6 +76,10 @@ function EnrollmentCommand({ value }: { value: AgentEnrollmentCommand }) {
   return (
     <div className="space-y-3">
       {expired ? <Alert variant="destructive"><AlertDescription>{t("enrollment.expired")}</AlertDescription></Alert> : <>
+        {value.download_command ? <div className="space-y-2">
+          <AgentSetupCode title={t("enrollment.download_title")} code={value.download_command} />
+          <p className="text-sm leading-relaxed text-muted-foreground">{t("enrollment.download_hint")}</p>
+        </div> : <p className="text-sm leading-relaxed text-muted-foreground">{t("enrollment.download_unavailable")}</p>}
         <AgentSetupCode title={t("enrollment.command")} code={value.command} />
         <p className="text-xs text-muted-foreground">
           {t("enrollment.expires")} <time dateTime={value.expires_at}>{formatDateTime(locale, value.expires_at)}</time>

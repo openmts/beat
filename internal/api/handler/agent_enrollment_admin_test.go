@@ -45,6 +45,7 @@ func newDiscoveryHarness(t *testing.T) discoveryHarness {
 	now := time.Date(2026, 10, 15, 12, 0, 0, 0, time.UTC)
 	admin := NewAgentEnrollmentAdminHandler(enrollment)
 	admin.now = func() time.Time { return now }
+	admin.version = "0.0.1-beta.6"
 	discovery := NewAgentDiscoveryHandler(enrollment, func(*http.Request) string { return discoveryTestOrigin }, false)
 	discovery.now = func() time.Time { return now }
 	return discoveryHarness{admin: admin, discovery: discovery, store: enrollment, db: database.DB,
@@ -89,6 +90,9 @@ func TestAgentEnrollmentGrantAdminLifecycle(t *testing.T) {
 	if created.Secret == "" || created.Grant.ID == "" || created.Grant.Mode != "manual" {
 		t.Fatalf("created grant = %#v", created)
 	}
+	if !strings.Contains(created.DownloadCommand, "/v0.0.1-beta.6/beat-agent_linux_") {
+		t.Fatalf("created grant download command = %q", created.DownloadCommand)
+	}
 	if _, err := agentenrollment.DescribeSecret(agentenrollment.GrantSecretPrefix, created.Secret); err != nil {
 		t.Fatalf("generated secret is not well formed: %v", err)
 	}
@@ -130,7 +134,7 @@ func TestAgentEnrollmentGrantAdminLifecycle(t *testing.T) {
 	harness.admin.HandleRotateGrantSecret(recorder, withPath(enrollmentAdminRequest(http.MethodPost,
 		"/api/v1/admin/agent-enrollment/grants/"+created.Grant.ID+"/rotate", nil), "id", created.Grant.ID))
 	rotated := decodeEnrollmentBody[enrollmentGrantSecretResponse](t, recorder)
-	if recorder.Code != http.StatusOK || rotated.Secret == created.Secret {
+	if recorder.Code != http.StatusOK || rotated.Secret == created.Secret || rotated.DownloadCommand == "" {
 		t.Fatalf("rotate grant = %d %#v", recorder.Code, rotated)
 	}
 

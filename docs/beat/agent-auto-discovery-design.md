@@ -399,9 +399,11 @@ Grant management shows name, mode, default group name, source scope, hostname
 constraint, occupied/maximum slots, expiry, and status. Creation and rotation
 use the existing one-time-secret dialog pattern; closing it clears plaintext
 from React state. The dialog also renders the ready-to-run `beat-agent enroll`
-command built from the current browser origin, so the operator copies one block
-instead of assembling flags. Revoke requires recent reauthentication and a
-clear impact summary for pending and approved requests.
+command built from the current browser origin plus, when the server version has
+a published release, the matching Agent download command. The operator copies
+the generated blocks instead of assembling flags or release URLs. Revoke
+requires recent reauthentication and a clear impact summary for pending and
+approved requests.
 
 Desktop uses a dense queue with stable columns and a side sheet for review.
 Mobile converts each request to one flat card with actions in an overflow menu;

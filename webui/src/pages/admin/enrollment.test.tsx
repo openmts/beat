@@ -22,6 +22,8 @@ const grant: EnrollmentGrant = {
   consumed_enrollments: 2, created_at: "2026-10-01T00:00:00Z", updated_at: "2026-10-01T00:00:00Z",
 }
 
+const downloadCommand = "curl --fail --output ./beat-agent 'https://github.com/openmts/beat/releases/download/v0.0.1-beta.6/beat-agent_linux_${arch}'"
+
 const request: EnrollmentRequest = {
   id: "request-1", grant_id: "grant-1", grant_name: "Datacenter rollout", status: "pending", node_name: "web-9",
   hostname: "web-9.example.com", advertised_host: "10.0.0.9", os: "linux", architecture: "amd64",
@@ -57,9 +59,9 @@ describe("node enrollment workspace", () => {
     vi.mocked(api.listEnrollmentGrants).mockResolvedValue([grant])
     vi.mocked(api.approveEnrollmentRequest).mockResolvedValue({ ...request, status: "approved", node_name: "web-9" })
     vi.mocked(api.rejectEnrollmentRequest).mockResolvedValue({ ...request, status: "rejected", reason: "policy-conflict" })
-    vi.mocked(api.createEnrollmentGrant).mockResolvedValue({ grant, secret: "beat_enroll_v1_created" })
+    vi.mocked(api.createEnrollmentGrant).mockResolvedValue({ grant, secret: "beat_enroll_v1_created", download_command: downloadCommand })
     vi.mocked(api.updateEnrollmentGrant).mockResolvedValue(grant)
-    vi.mocked(api.rotateEnrollmentGrantSecret).mockResolvedValue({ grant, secret: "beat_enroll_v1_rotated" })
+    vi.mocked(api.rotateEnrollmentGrantSecret).mockResolvedValue({ grant, secret: "beat_enroll_v1_rotated", download_command: "" })
     vi.mocked(api.revokeEnrollmentGrant).mockResolvedValue(grant)
   })
 
@@ -143,6 +145,7 @@ describe("node enrollment workspace", () => {
     })))
     const secret = within(lastDialog())
     expect(secret.getByText("beat_enroll_v1_created")).toBeInTheDocument()
+    expect(secret.getByLabelText("Download Beat Agent")).toHaveTextContent(downloadCommand)
     const command = secret.getByText(/beat-agent enroll --server/)
     expect(command.textContent).toContain("--server http://localhost:3000 --allow-http --grant-stdin <<'BEAT_ENROLL'")
     expect(command.textContent).toContain("\nbeat_enroll_v1_created\nBEAT_ENROLL")
@@ -172,6 +175,8 @@ describe("node enrollment workspace", () => {
     await waitFor(() => expect(api.rotateEnrollmentGrantSecret).toHaveBeenCalledWith("grant-1"))
     const rotated = within(lastDialog())
     expect(rotated.getByText("beat_enroll_v1_rotated")).toBeInTheDocument()
+    expect(rotated.getByText(/no matching published Agent binary/)).toBeInTheDocument()
+    expect(rotated.queryByLabelText("Download Beat Agent")).not.toBeInTheDocument()
     expect(rotated.getByText(/beat-agent enroll --server/).textContent).toContain("beat_enroll_v1_rotated")
   })
 

@@ -25,6 +25,10 @@ export function EnrollmentSecretDialog({ value, created, onClose }: EnrollmentSe
         <p className="text-sm leading-relaxed text-muted-foreground">
           {t(created ? "discovery.secret_created" : "discovery.secret_rotated")}
         </p>
+        {value.download_command ? <div className="space-y-2">
+          <AgentSetupCode title={t("discovery.download_title")} code={value.download_command} />
+          <p className="text-xs leading-relaxed text-muted-foreground">{t("discovery.download_hint")}</p>
+        </div> : <p className="text-xs leading-relaxed text-muted-foreground">{t("discovery.download_unavailable")}</p>}
         <AgentSetupCode title={t("discovery.command_title")} code={command} />
         <p className="text-xs leading-relaxed text-muted-foreground">{t("discovery.command_hint")}</p>
         <p className="text-xs leading-relaxed text-muted-foreground">{t("discovery.command_alternative")}</p>

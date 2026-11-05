@@ -48,6 +48,7 @@ export interface EnrollmentGrantWrite {
 export interface EnrollmentGrantSecret {
   grant: EnrollmentGrant
   secret: string
+  download_command: string
 }
 
 export interface EnrollmentRequest {

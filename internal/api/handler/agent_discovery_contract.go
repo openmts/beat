@@ -133,8 +133,9 @@ type enrollmentGrantListResponse struct {
 
 // enrollmentGrantSecretResponse 在创建或轮换后一次性返回授权秘密明文。
 type enrollmentGrantSecretResponse struct {
-	Grant  enrollmentGrantPayload `json:"grant"`
-	Secret string                 `json:"secret"`
+	Grant           enrollmentGrantPayload `json:"grant"`
+	Secret          string                 `json:"secret"`
+	DownloadCommand string                 `json:"download_command"`
 }
 
 // enrollmentGrantUpsertPayload 是创建或覆盖授权时提交的策略。

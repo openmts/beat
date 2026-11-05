@@ -11,10 +11,12 @@ describe("agent enrollment API", () => {
   it("issues a command only through the authenticated mutation endpoint", async () => {
     const payload = { server_url: "https://beat.example.com", allow_http: false }
     const issued = { id: "join-1", token: "one-time-token", server_url: payload.server_url,
+      download_command: "curl --fail --output ./beat-agent 'https://github.com/openmts/beat/releases/download/v0.0.1-beta.6/beat-agent_linux_${arch}'",
       command: "sudo ./beat-agent join --server 'https://beat.example.com' --token 'one-time-token'",
       expires_at: "2026-09-12T01:00:00Z" }
     mock.onPost("/admin/agent-enrollment-tokens", payload).reply(201, { code: 201, data: issued })
     expect(await createAgentEnrollmentToken(payload)).toEqual(issued)
+    expect(issued.download_command).toContain("/v0.0.1-beta.6/beat-agent_linux_")
     expect(mock.history.get).toHaveLength(0)
   })
 

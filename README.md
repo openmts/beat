@@ -356,7 +356,10 @@ Optional Agent operations use explicit local policy and dedicated roots; see the
 ## Run beat-agent
 
 Open **Node setup** at `/admin/agent-setup` to generate a one-command join for a
-Linux machine with systemd and an existing `beat-agent` executable:
+Linux machine with systemd. When this server has a matching published release,
+the page also generates a download command that places `./beat-agent` in the
+current directory. Run the download command first, then run the join command
+from the same directory:
 
 ```bash
 sudo ./beat-agent join --server https://beat.example.com --token '<join-token>'
@@ -368,7 +371,8 @@ machine. Join creates the node, saves `/etc/beat-agent/agent.json` with mode
 starts `beat-agent.service`. It uses the hostname and detected SSH port;
 `--name`, `--host`, and `--ssh-port` override them. Use a server address reachable
 from the target; `localhost` refers to the target itself. HTTP requires explicit
-permission in the page and `--allow-http` in the generated command.
+permission in the page and `--allow-http` in the generated command. Development
+builds without a published Agent binary show a manual-install notice instead.
 Agent join and protocol traffic connect directly and ignore process-level
 `HTTP_PROXY`/`HTTPS_PROXY` settings, so credentials are never sent to an implicit
 proxy.
@@ -391,8 +395,9 @@ remain available on the Node setup page. See the
 **Node enrollment** at `/admin/enrollment` adds policy grants for fleets. An owner
 creates a grant with an approval mode, capacity, expiry, default group, and
 optional source CIDRs and hostname pattern, then copies the `beat-agent enroll`
-command the dialog prints beside the one-time secret. The secret travels on
-standard input, as a `0600` file, or through a protected environment variable. Discovered machines wait in *Pending approval* until an administrator
+and Agent download commands the dialog prints beside the one-time secret. The
+secret travels on standard input, as a `0600` file, or through a protected
+environment variable. Discovered machines wait in *Pending approval* until an administrator
 approves them with the final node fields, or are approved automatically by the
 grant policy; each machine still receives its own node credential when it claims.
 See the [enrollment design](docs/beat/agent-auto-discovery-design.md).

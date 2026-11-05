@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/beat/backend/internal/agentenrollment"
+	"github.com/beat/backend/internal/agentjoin"
 	"github.com/beat/backend/internal/store"
 )
 
@@ -47,7 +48,8 @@ func (handler *AgentEnrollmentAdminHandler) HandleCreateGrant(w http.ResponseWri
 		return
 	}
 	JSONResponse(w, http.StatusCreated, enrollmentGrantSecretResponse{
-		Grant: enrollmentGrantView(grant), Secret: secret.Plaintext})
+		Grant: enrollmentGrantView(grant), Secret: secret.Plaintext,
+		DownloadCommand: agentjoin.AgentDownloadCommand(handler.version)})
 }
 
 // HandleGetGrant 读取单条授权。
@@ -98,7 +100,8 @@ func (handler *AgentEnrollmentAdminHandler) HandleRotateGrantSecret(w http.Respo
 		return
 	}
 	JSONResponse(w, http.StatusOK, enrollmentGrantSecretResponse{
-		Grant: enrollmentGrantView(grant), Secret: secret.Plaintext})
+		Grant: enrollmentGrantView(grant), Secret: secret.Plaintext,
+		DownloadCommand: agentjoin.AgentDownloadCommand(handler.version)})
 }
 
 // HandleRevokeGrant 撤销授权：拒绝未认领请求并清理保留节点。

@@ -45,6 +45,7 @@ func TestAgentEnrollmentIssuesUniqueBoundedCredentials(t *testing.T) {
 		issued = append(issued, input)
 		return store.EnrollmentToken{ID: "enrollment-1", ServerURL: input.ServerURL, ExpiresAt: input.ExpiresAt}, nil
 	}})
+	handler.version = "0.0.1-beta.6"
 	var firstToken string
 	for index := range 2 {
 		response := httptest.NewRecorder()
@@ -61,6 +62,9 @@ func TestAgentEnrollmentIssuesUniqueBoundedCredentials(t *testing.T) {
 		}
 		if output.Data.ServerURL != "https://beat.example" || !strings.Contains(output.Data.Command, "sudo ./beat-agent join") {
 			t.Fatal("invalid command")
+		}
+		if !strings.Contains(output.Data.DownloadCommand, "/v0.0.1-beta.6/beat-agent_linux_") {
+			t.Fatal("missing version-matched download command")
 		}
 		if index == 1 && firstToken == output.Data.Token {
 			t.Fatal("reused token")
