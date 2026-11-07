@@ -3,6 +3,7 @@ import { ActivityIcon, PlusIcon } from "lucide-react"
 
 import { DiagnosticsPanel } from "@/components/diagnostics/diagnostics-panel"
 import { NetworkHistoryDialog } from "@/components/network-history-dialog"
+import { NetworkQualityGuide } from "@/components/network-quality-guide"
 import { NetworkTaskCard } from "@/components/network-task-card"
 import { NetworkTaskDialog } from "@/components/network-task-dialog"
 import { PageHeader } from "@/components/page-header"
@@ -98,6 +99,7 @@ export default function Network() {
           <TabsTrigger value="diagnostics">{t("diagnostics.tab_diagnostics")}</TabsTrigger>
         </TabsList>
         <TabsContent value="quality" className="flex flex-col gap-6">
+          <NetworkQualityGuide />
           <div className="flex justify-end">
             <Button onClick={() => { setEditView(null); setDialogOpen(true) }}>
               <PlusIcon data-icon="inline-start" />{t("network.create_task")}

@@ -63,11 +63,12 @@ function IdentityFields({ payload, t, onChange }: NetworkTaskFieldsProps) {
         <Field>
           <FieldLabel htmlFor="network-task-direction">{t("network.direction")}</FieldLabel>
           <Select items={directions} value={payload.direction} onValueChange={(value) => changeDirection((value ?? "agent_to_target") as NetworkDirection)}>
-            <SelectTrigger id="network-task-direction" className="w-full"><SelectValue /></SelectTrigger>
+            <SelectTrigger id="network-task-direction" aria-describedby="network-task-direction-hint" className="w-full"><SelectValue /></SelectTrigger>
             <SelectContent><SelectGroup>{directions.map((option) => (
               <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
             ))}</SelectGroup></SelectContent>
           </Select>
+          <FieldDescription id="network-task-direction-hint">{t(`network.direction_hint.${payload.direction}`)}</FieldDescription>
         </Field>
       </div>
       <div className="grid gap-4 sm:grid-cols-2">

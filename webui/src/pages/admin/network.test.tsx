@@ -152,6 +152,14 @@ describe("admin network page", () => {
     expect(screen.queryByRole("article", { name: "One" })).toBeNull()
   })
 
+  it("explains how to choose a probe source, protocol, and schedule", () => {
+    view(<Network />)
+    const guide = screen.getByRole("region", { name: "Network quality task guide" })
+    expect(guide).toHaveTextContent("Server → agent measures the path from the Beat server")
+    expect(guide).toHaveTextContent("ICMP supports 1–20 packets")
+    expect(guide).toHaveTextContent("Quick setup order")
+  })
+
   it("retries a deletion after recent identity confirmation without showing the backend error", async () => {
     vi.mocked(networkApi.deleteNetworkTask)
       .mockRejectedValueOnce(new APIError("recent authentication is required", 428))
