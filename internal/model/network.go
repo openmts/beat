@@ -4,6 +4,7 @@ import (
 	"errors"
 	"math"
 	"net"
+	"net/netip"
 	"net/url"
 	"strings"
 	"time"
@@ -15,14 +16,19 @@ const (
 	NetworkProbeTCP  = "tcp"
 	NetworkProbeHTTP = "http"
 
+	NetworkDirectionAgentToTarget = "agent_to_target"
+	NetworkDirectionServerToAgent = "server_to_agent"
+
 	IPFamilyAuto = "auto"
 	IPFamilyIPv4 = "ipv4"
 	IPFamilyIPv6 = "ipv6"
 
-	MinNetworkInterval = 10 * time.Second
-	MaxNetworkInterval = 24 * time.Hour
-	MinNetworkTimeout  = 100 * time.Millisecond
-	MaxNetworkTimeout  = 30 * time.Second
+	DefaultNetworkPacketCount = 5
+	MaxNetworkPacketCount     = 20
+	MinNetworkInterval        = 10 * time.Second
+	MaxNetworkInterval        = 24 * time.Hour
+	MinNetworkTimeout         = 100 * time.Millisecond
+	MaxNetworkTimeout         = 30 * time.Second
 )
 
 var networkErrorCodes = map[string]struct{}{
@@ -34,11 +40,13 @@ var networkErrorCodes = map[string]struct{}{
 type NetworkTask struct {
 	ID                  string        `json:"id"`
 	Name                string        `json:"name"`
+	Direction           string        `json:"direction"`
 	Type                string        `json:"type"`
 	Target              string        `json:"target"`
 	IPFamily            string        `json:"ip_family"`
 	IntervalSeconds     int           `json:"interval_seconds"`
 	TimeoutMilliseconds int           `json:"timeout_milliseconds"`
+	PacketCount         int           `json:"packet_count"`
 	AllNodes            bool          `json:"all_nodes"`
 	Enabled             bool          `json:"enabled"`
 	IsPublic            bool          `json:"is_public"`
@@ -57,20 +65,77 @@ type NetworkNode struct {
 type NetworkAssignment struct {
 	ID                  string `json:"id"`
 	Name                string `json:"name"`
+	Direction           string `json:"direction"`
 	Type                string `json:"type"`
 	Target              string `json:"target"`
 	IPFamily            string `json:"ip_family"`
 	IntervalSeconds     int    `json:"interval_seconds"`
 	TimeoutMilliseconds int    `json:"timeout_milliseconds"`
+	PacketCount         int    `json:"packet_count"`
+}
+
+type NetworkProbeTarget struct {
+	NodeID string `json:"node_id"`
+	Name   string `json:"name"`
+	Alias  string `json:"alias"`
+	Host   string `json:"host"`
+	Port   int    `json:"port"`
+}
+
+type ServerNetworkTask struct {
+	ID                  string               `json:"id"`
+	Name                string               `json:"name"`
+	Type                string               `json:"type"`
+	Target              string               `json:"target"`
+	IPFamily            string               `json:"ip_family"`
+	IntervalSeconds     int                  `json:"interval_seconds"`
+	TimeoutMilliseconds int                  `json:"timeout_milliseconds"`
+	PacketCount         int                  `json:"packet_count"`
+	Targets             []NetworkProbeTarget `json:"targets"`
 }
 
 type NetworkProbeResult struct {
-	TaskID     string    `json:"task_id"`
-	FinishedAt time.Time `json:"finished_at"`
-	LatencyMS  float64   `json:"latency_ms"`
-	Success    bool      `json:"success"`
-	StatusCode int       `json:"status_code"`
-	ErrorCode  string    `json:"error_code"`
+	TaskID          string    `json:"task_id"`
+	FinishedAt      time.Time `json:"finished_at"`
+	LatencyMS       float64   `json:"latency_ms"`
+	Success         bool      `json:"success"`
+	StatusCode      int       `json:"status_code"`
+	ErrorCode       string    `json:"error_code"`
+	SentPackets     int       `json:"sent_packets"`
+	ReceivedPackets int       `json:"received_packets"`
+	LossPercent     *float64  `json:"loss_percent"`
+	JitterMS        *float64  `json:"jitter_ms"`
+	MinLatencyMS    *float64  `json:"min_latency_ms"`
+	MaxLatencyMS    *float64  `json:"max_latency_ms"`
+}
+
+// Normalize 为创建和更新补上默认方向、默认包数与服务端探测目标模板。
+// 现存任务通过数据库默认值保持 agent_to_target；新 ICMP 任务默认发送 5 个包。
+func (task *NetworkTask) Normalize() {
+	if task.Direction == "" {
+		task.Direction = NetworkDirectionAgentToTarget
+	}
+	if task.PacketCount <= 0 {
+		if task.Type == NetworkProbeICMP {
+			task.PacketCount = DefaultNetworkPacketCount
+		} else {
+			task.PacketCount = 1
+		}
+	}
+	if task.Type != NetworkProbeICMP && task.PacketCount > 1 {
+		task.PacketCount = 1
+	}
+	if task.Direction != NetworkDirectionServerToAgent || strings.TrimSpace(task.Target) != "" {
+		return
+	}
+	switch task.Type {
+	case NetworkProbeICMP:
+		task.Target = "{{host}}"
+	case NetworkProbeTCP:
+		task.Target = "{{host_port}}"
+	case NetworkProbeHTTP:
+		task.Target = "http://{{host}}/"
+	}
 }
 
 func (task NetworkTask) Validate() error {
@@ -83,6 +148,9 @@ func (task NetworkTask) Validate() error {
 	}
 	if !validNetworkProbeType(task.Type) {
 		return errors.New("network task type is invalid")
+	}
+	if !validNetworkDirection(task.Direction) {
+		return errors.New("network task direction is invalid")
 	}
 	if !validIPFamily(task.IPFamily) {
 		return errors.New("network task IP family is invalid")
@@ -97,6 +165,12 @@ func (task NetworkTask) Validate() error {
 	}
 	if task.SortOrder < 0 {
 		return errors.New("network task sort order must not be negative")
+	}
+	if task.PacketCount < 1 || task.PacketCount > MaxNetworkPacketCount {
+		return errors.New("network task packet count is out of range")
+	}
+	if task.Direction == NetworkDirectionServerToAgent {
+		return validateServerNetworkTarget(task.Type, task.Target)
 	}
 	return validateNetworkTarget(task.Type, task.Target)
 }
@@ -120,11 +194,38 @@ func (result NetworkProbeResult) Validate() error {
 	if result.Success && result.ErrorCode != "none" {
 		return errors.New("successful network probe must use the none error code")
 	}
+	if result.SentPackets < 0 || result.ReceivedPackets < 0 ||
+		result.ReceivedPackets > result.SentPackets {
+		return errors.New("network probe packet counts are invalid")
+	}
+	if err := validateOptionalNonNegative(result.LossPercent, "loss"); err != nil {
+		return err
+	}
+	if result.LossPercent != nil && *result.LossPercent > 100 {
+		return errors.New("network probe loss is invalid")
+	}
+	if err := validateOptionalNonNegative(result.JitterMS, "jitter"); err != nil {
+		return err
+	}
+	if err := validateOptionalNonNegative(result.MinLatencyMS, "minimum latency"); err != nil {
+		return err
+	}
+	if err := validateOptionalNonNegative(result.MaxLatencyMS, "maximum latency"); err != nil {
+		return err
+	}
+	if result.MinLatencyMS != nil && result.MaxLatencyMS != nil &&
+		*result.MinLatencyMS > *result.MaxLatencyMS {
+		return errors.New("network probe latency range is invalid")
+	}
 	return nil
 }
 
 func validNetworkProbeType(probeType string) bool {
 	return probeType == NetworkProbeICMP || probeType == NetworkProbeTCP || probeType == NetworkProbeHTTP
+}
+
+func validNetworkDirection(direction string) bool {
+	return direction == NetworkDirectionAgentToTarget || direction == NetworkDirectionServerToAgent
 }
 
 func validIPFamily(family string) bool {
@@ -134,7 +235,15 @@ func validIPFamily(family string) bool {
 func validateNetworkTarget(probeType, target string) error {
 	switch probeType {
 	case NetworkProbeICMP:
-		if strings.TrimSpace(target) != target || strings.ContainsAny(target, "/:?#@") {
+		if strings.TrimSpace(target) != target || strings.ContainsAny(target, "/?#@") {
+			return errors.New("ICMP target must be an IP address or hostname")
+		}
+		if address, err := netip.ParseAddr(target); err == nil {
+			if address.Is4() || address.Is6() {
+				return nil
+			}
+		}
+		if strings.Contains(target, ":") {
 			return errors.New("ICMP target must be an IP address or hostname")
 		}
 	case NetworkProbeTCP:

@@ -19,9 +19,14 @@ const snapshot = (mode: "hidden" | "full" = "hidden") => buildThemeSnapshot({ ro
     metrics: { cpu: 10, memory: 20, disk: 30 } } as unknown as Node,
     { id: "hidden", name: "Hidden node", is_public: false } as Node], groups: [{ id: "g", name: "Group", sort_order: 0 } as never], locale: "en", theme: "light" })
 
-function renderCollection(value: ThemeDefinition, layout: ThemeDefinition["overview"], mode: "hidden" | "full" = "hidden") {
+function renderCollection(
+  value: ThemeDefinition,
+  layout: ThemeDefinition["overview"],
+  mode: "hidden" | "full" = "hidden",
+  networkSummaries?: Record<string, { task_id: string; task_name: string; direction: "agent_to_target" | "server_to_agent"; type: "icmp" | "tcp" | "http"; latency_ms: number; loss_percent: number | null; success: boolean; timestamp: string }>,
+) {
   render(<LocaleProvider><MemoryRouter><PublicThemeProvider definition={value} snapshot={snapshot(mode)}>
-    <ThemedNodeCollection selectedGroup="" fleetLayout={layout === "cards" || layout === "table" ? layout : undefined} />
+    <ThemedNodeCollection selectedGroup="" fleetLayout={layout === "cards" || layout === "table" ? layout : undefined} networkSummaries={networkSummaries} />
   </PublicThemeProvider></MemoryRouter></LocaleProvider>)
 }
 
@@ -63,6 +68,17 @@ describe("declarative public themes", () => {
     expect(screen.getByText("192.0.2.9")).toBeInTheDocument()
     renderCollection(definition("cards"), "cards", "full")
     expect(screen.getAllByText(/↓ /).length).toBeGreaterThan(0)
+  })
+
+  it("shows network quality in themed nodes", () => {
+    renderCollection(definition("cards"), "cards", "full", {
+      node: { task_id: "task", task_name: "Server probe", direction: "server_to_agent", type: "icmp",
+        latency_ms: 12, loss_percent: 5, success: true, timestamp: "2026-07-29T00:00:00Z" },
+    })
+    expect(screen.getByText("Network latency")).toBeInTheDocument()
+    expect(screen.getByText("12 ms")).toBeInTheDocument()
+    expect(screen.getByText("Packet loss")).toBeInTheDocument()
+    expect(screen.getByText("5.0%")).toBeInTheDocument()
   })
 
   it("hides content the author turns off", () => {

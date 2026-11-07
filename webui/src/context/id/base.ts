@@ -61,6 +61,8 @@ export const idBase: Record<string, string> = {
   "node.memory": "Memori",
   "node.disk": "Disk",
   "node.network": "Jaringan",
+  "node.network_latency": "Latensi jaringan",
+  "node.network_packet_loss": "Kehilangan paket",
   "node.alias": "Alias",
   "node.ssh_key": "Kunci SSH",
   "node.ssh_key_distribute_hint": "Kunci publik dari kunci ini akan disebarkan ke node setelah disimpan.",

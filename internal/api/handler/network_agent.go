@@ -75,13 +75,18 @@ func (h *NetworkHandler) validateNetworkResults(
 		if err != nil {
 			return nil, http.StatusInternalServerError, errors.New("failed to verify network result")
 		}
-		if assigned == nil || !assigned.Enabled || !assigned.Assigned {
+		if assigned == nil || !assigned.Enabled || !assigned.Assigned ||
+			assigned.Direction != model.NetworkDirectionAgentToTarget {
 			return nil, http.StatusConflict, errors.New("network task is not assigned")
 		}
 		samples = append(samples, store.NetworkProbeSample{
 			TaskID: result.TaskID, NodeID: assigned.NodeID, TaskType: assigned.TaskType,
+			Direction:  assigned.Direction,
 			FinishedAt: result.FinishedAt.UTC(), LatencyMS: result.LatencyMS,
 			Success: result.Success, StatusCode: result.StatusCode, ErrorCode: result.ErrorCode,
+			SentPackets: result.SentPackets, ReceivedPackets: result.ReceivedPackets,
+			LossPercent: result.LossPercent, JitterMS: result.JitterMS,
+			MinLatencyMS: result.MinLatencyMS, MaxLatencyMS: result.MaxLatencyMS,
 		})
 	}
 	return samples, http.StatusNoContent, nil

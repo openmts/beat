@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useState } from "react"
+import { useCallback, useEffect, useMemo, useState } from "react"
 
 import * as networkApi from "@/lib/network-api"
+import { networkSummaryByNode } from "@/lib/network-quality"
 import { retryAfterDelay } from "@/lib/retry-after"
 import type { NetworkHistoryResponse, NetworkTaskView } from "@/types"
 
@@ -22,25 +23,33 @@ interface RefreshOptions {
   silent?: boolean
 }
 
-export function usePublicNetworkQuality() {
-  return useNetworkTaskViews(networkApi.listPublicNetworkQuality, 15_000)
+export function usePublicNetworkQuality(enabled = true) {
+  return useNetworkTaskViews(networkApi.listPublicNetworkQuality, 15_000, enabled)
 }
 
 export function useAdminNetworkTasks() {
   return useNetworkTaskViews(networkApi.listNetworkTasks)
 }
 
+export function useNodeNetworkSummaries(enabled = true) {
+  const quality = usePublicNetworkQuality(enabled)
+  const summaries = useMemo(() => networkSummaryByNode(quality.data), [quality.data])
+  return { ...quality, summaries }
+}
+
 function useNetworkTaskViews(
   fetcher: () => Promise<NetworkTaskView[]>,
   refreshMilliseconds?: number,
+  enabled = true,
 ) {
   const [state, setState] = useState<NetworkState<NetworkTaskView[]>>({
     data: null,
-    loading: true,
+    loading: enabled,
     error: null,
   })
 
   const refresh = useCallback(async (options?: RefreshOptions) => {
+    if (!enabled) return 0
     const silent = options?.silent === true
     setState((previous) => ({
       ...previous,
@@ -60,9 +69,13 @@ function useNetworkTaskViews(
       }))
       return retryAfterDelay(error)
     }
-  }, [fetcher])
+  }, [enabled, fetcher])
 
   useEffect(() => {
+    if (!enabled) {
+      setState((previous) => previous.loading ? { ...previous, loading: false } : previous)
+      return
+    }
     void refresh()
     if (!refreshMilliseconds) return
     // 轮询用超时链而不是固定间隔，这样服务端的 Retry-After 能得到遵守。
@@ -74,7 +87,7 @@ function useNetworkTaskViews(
     }
     timer = setTimeout(() => void tick(), refreshMilliseconds)
     return () => { stopped = true; clearTimeout(timer) }
-  }, [refresh, refreshMilliseconds])
+  }, [enabled, refresh, refreshMilliseconds])
 
   return { ...state, refresh }
 }

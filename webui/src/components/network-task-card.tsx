@@ -20,6 +20,7 @@ import {
   formatLatency,
   formatNetworkInterval,
   latestSuccessPercent,
+  networkDirectionKey,
   networkTypeKey,
 } from "@/lib/network-quality"
 import type { NetworkProbeType, NetworkTaskView } from "@/types"
@@ -64,6 +65,7 @@ export function NetworkTaskCard(props: NetworkTaskCardProps) {
       </CardHeader>
       <CardContent className="grid grid-cols-2 gap-x-4 gap-y-3">
         <TaskFact icon={ActivityIcon} label={t("app.type")} value={t(networkTypeKey(view.task.type))} />
+        <TaskFact icon={RadioTowerIcon} label={t("network.direction")} value={t(networkDirectionKey(view.task.direction))} />
         <TaskFact
           icon={ClockIcon}
           label={t("network.schedule")}

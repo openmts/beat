@@ -1,10 +1,8 @@
 # Network quality tasks
 
-Status: Implemented, deployed, and verified on 2026-07-29. The user approved
-the schema, shared Agent/API contract, probe dependency, frontend scope, and
-deployment work. Backend and frontend quality gates passed. Runtime acceptance
-confirmed public IPv6 access, protected administration, successful ICMP/TCP/HTTP
-checks, historical points in MTS, and task definitions only in SQLite.
+Status: Implemented through schema `v32` in the working tree on 2026-11-07.
+The extension adds `agent_to_target` / `server_to_agent` directions and
+multi-packet ICMP quality sampling. It has not been deployed yet.
 
 Deployed acceptance evidence:
 
@@ -41,12 +39,23 @@ Community references:
 Advanced one-off path and bandwidth jobs are intentionally separate from this
 scheduled quality model and are reviewed in
 [`advanced-network-diagnostics-design.md`](./advanced-network-diagnostics-design.md).
+MTR is not used for every scheduled sample: it requires the system `mtr`
+binary, raw-socket capability, and considerable output. It remains an explicit
+path diagnostic, while scheduled quality uses bounded ICMP/TCP/HTTP probes.
 
 ## Product behavior
 
 An administrator can create, edit, enable, disable, sort, publish, and delete
 a task. A task either applies to all nodes or to an explicit node set. New
 nodes automatically receive tasks configured for all nodes.
+
+Each task has one direction:
+
+- `agent_to_target`: the Agent probes a configured target, then reports the
+  result through the API.
+- `server_to_agent`: the Beat Server probes each assigned node using a target
+  template such as `{{host}}`, `{{host_port}}`, or `{{ssh_port}}`. The Server
+  writes the result directly to MTS.
 
 Agents poll their current assignment set every 30 seconds. A successful poll
 returns assignments with a 90-second expiry. If refreshes fail, the Agent may
@@ -63,11 +72,13 @@ assignments, latest state, and history.
 | --- | --- |
 | `id` | UUID text primary key |
 | `name` | 1-100 Unicode characters |
+| `direction` | `agent_to_target` or `server_to_agent` |
 | `type` | `icmp`, `tcp`, or `http` |
 | `target` | Type-specific target, maximum 2048 bytes |
 | `ip_family` | `auto`, `ipv4`, or `ipv6` |
 | `interval_seconds` | 10-86400 |
 | `timeout_milliseconds` | 100-30000 and no greater than the interval |
+| `packet_count` | 1-20; only multi-packet ICMP uses values above one |
 | `all_nodes` | Boolean assignment mode |
 | `enabled` | Boolean execution state |
 | `is_public` | Boolean public visibility |
@@ -99,6 +110,7 @@ Tags:
 - `task`: task UUID
 - `node`: node UUID
 - `type`: `icmp`, `tcp`, or `http`
+- `direction`: `agent_to_target` or `server_to_agent`
 
 Fields:
 
@@ -106,6 +118,14 @@ Fields:
 - `success`: `1.0` for success and `0.0` for failure
 - `status_code`: HTTP status or zero for non-HTTP checks
 - `error_code`: stable low-cardinality error code
+- `sent_packets` and `received_packets`: ICMP sample counts
+- `loss_percent`: ICMP packet loss percentage
+- `jitter_ms`: mean absolute consecutive RTT difference
+- `min_latency_ms` and `max_latency_ms`: ICMP RTT range
+
+TCP and HTTP do not fabricate packet loss or jitter fields. Their latency and
+availability still provide reachability evidence, but only multi-packet ICMP
+measures loss and RTT variation.
 
 The point timestamp is the Agent's finish time with nanosecond precision. The
 server accepts it only when it is within five minutes of server time. MTS
@@ -229,6 +249,11 @@ Every probe derives a timeout context from the Agent process context. Shutdown
 cancels DNS, dial, TLS, ICMP, and report operations and waits for all owned
 goroutines.
 
+The Beat Server runs an equivalent bounded scheduler for `server_to_agent`
+tasks: it refreshes enabled tasks every 30 seconds, schedules each task/node
+pair without overlap, and uses four probe workers. Server results bypass the
+Agent result endpoint and are written directly to MTS.
+
 ## Probe semantics
 
 ### ICMP
@@ -239,7 +264,12 @@ goroutines.
 - Use `golang.org/x/net/icmp`; never execute a shell command.
 - Use unprivileged `udp4` or `udp6` ping sockets where supported.
 - A platform or container without permission reports `permission`.
-- One echo request and matching reply constitute success.
+- Send `packet_count` echo requests (default 5, maximum 20) at a bounded
+  interval and match replies by sequence number.
+- A task succeeds when at least one reply arrives; partial loss remains visible
+  through `loss_percent`, and total loss reports `timeout`.
+- Latency is the average RTT of received replies; jitter and the minimum/maximum
+  RTT range are computed from the received samples.
 
 Current production host evidence:
 
@@ -295,6 +325,10 @@ Public dashboard:
 - A full-width network-quality band appears after node groups.
 - Each public task is one compact row with assigned-node status cells and a
   small latency rail. It is not nested inside another card.
+- Node cards aggregate one public result per node. ICMP is preferred over TCP
+  and HTTP, and Server→Agent is preferred within the same probe type. When a
+  public task is configured but no sample exists yet, the card still shows
+  latency and packet loss as `--`.
 - Selecting a task and node opens history with 1h, 6h, 24h, and 7d ranges.
 - The horizontal domain matches the selected range even when samples are
   sparse. The vertical axis formats sub-second values as milliseconds and

@@ -2,12 +2,12 @@ package store
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"sort"
 	"time"
 
 	"github.com/openmts/mts"
+
+	"github.com/beat/backend/internal/model"
 )
 
 const (
@@ -16,14 +16,21 @@ const (
 )
 
 type NetworkProbeSample struct {
-	TaskID     string
-	NodeID     string
-	TaskType   string
-	FinishedAt time.Time
-	LatencyMS  float64
-	Success    bool
-	StatusCode int
-	ErrorCode  string
+	TaskID          string
+	NodeID          string
+	TaskType        string
+	Direction       string
+	FinishedAt      time.Time
+	LatencyMS       float64
+	Success         bool
+	StatusCode      int
+	ErrorCode       string
+	SentPackets     int
+	ReceivedPackets int
+	LossPercent     *float64
+	JitterMS        *float64
+	MinLatencyMS    *float64
+	MaxLatencyMS    *float64
 }
 
 type NetworkProbePoint struct {
@@ -34,11 +41,17 @@ type NetworkProbePoint struct {
 }
 
 type NetworkProbeLatest struct {
-	Timestamp  time.Time `json:"timestamp"`
-	LatencyMS  float64   `json:"latency_ms"`
-	Success    bool      `json:"success"`
-	StatusCode int64     `json:"status_code"`
-	ErrorCode  string    `json:"error_code"`
+	Timestamp       time.Time `json:"timestamp"`
+	LatencyMS       float64   `json:"latency_ms"`
+	Success         bool      `json:"success"`
+	StatusCode      int64     `json:"status_code"`
+	ErrorCode       string    `json:"error_code"`
+	SentPackets     int64     `json:"sent_packets"`
+	ReceivedPackets int64     `json:"received_packets"`
+	LossPercent     *float64  `json:"loss_percent"`
+	JitterMS        *float64  `json:"jitter_ms"`
+	MinLatencyMS    *float64  `json:"min_latency_ms"`
+	MaxLatencyMS    *float64  `json:"max_latency_ms"`
 }
 
 func (s *MTSStore) WriteNetworkProbes(ctx context.Context, samples []NetworkProbeSample) error {
@@ -56,17 +69,37 @@ func (s *MTSStore) WriteNetworkProbes(ctx context.Context, samples []NetworkProb
 		if sample.Success {
 			success = 1.0
 		}
+		direction := sample.Direction
+		if direction == "" {
+			direction = model.NetworkDirectionAgentToTarget
+		}
+		fields := map[string]mts.FieldValue{
+			"latency_ms":       mts.Float64Value(sample.LatencyMS),
+			"success":          mts.Float64Value(success),
+			"status_code":      mts.Int64Value(int64(sample.StatusCode)),
+			"error_code":       mts.StringValue(sample.ErrorCode),
+			"sent_packets":     mts.Int64Value(int64(sample.SentPackets)),
+			"received_packets": mts.Int64Value(int64(sample.ReceivedPackets)),
+		}
+		if sample.LossPercent != nil {
+			fields["loss_percent"] = mts.Float64Value(*sample.LossPercent)
+		}
+		if sample.JitterMS != nil {
+			fields["jitter_ms"] = mts.Float64Value(*sample.JitterMS)
+		}
+		if sample.MinLatencyMS != nil {
+			fields["min_latency_ms"] = mts.Float64Value(*sample.MinLatencyMS)
+		}
+		if sample.MaxLatencyMS != nil {
+			fields["max_latency_ms"] = mts.Float64Value(*sample.MaxLatencyMS)
+		}
 		points = append(points, mts.Point{
 			Measurement: networkProbeMeasurement,
 			Tags: map[string]string{
 				"task": sample.TaskID, "node": sample.NodeID, "type": sample.TaskType,
+				"direction": direction,
 			},
-			Fields: map[string]mts.FieldValue{
-				"latency_ms":  mts.Float64Value(sample.LatencyMS),
-				"success":     mts.Float64Value(success),
-				"status_code": mts.Int64Value(int64(sample.StatusCode)),
-				"error_code":  mts.StringValue(sample.ErrorCode),
-			},
+			Fields:    fields,
 			Timestamp: sample.FinishedAt.UnixNano(),
 			Precision: mts.PrecisionNanosecond,
 		})
@@ -185,96 +218,8 @@ func (s *MTSStore) queryAggregatedNetworkHistory(
 
 func networkProbeQuery(taskID, nodeID string, start, end time.Time) *mts.QueryBuilder {
 	return mts.NewQuery().From("beat", "", networkProbeMeasurement).
-		Select("latency_ms", "success", "status_code", "error_code").
+		Select("latency_ms", "success", "status_code", "error_code", "sent_packets",
+			"received_packets", "loss_percent", "jitter_ms", "min_latency_ms", "max_latency_ms").
 		TimeRangeTime(start, end).
 		Where(mts.TagEq("task", taskID), mts.TagEq("node", nodeID))
-}
-
-func rawNetworkPoints(rows []mts.Row) ([]NetworkProbePoint, error) {
-	points := make([]NetworkProbePoint, 0, len(rows))
-	for _, row := range rows {
-		latency, ok := row.Fields["latency_ms"]
-		if !ok {
-			return nil, errors.New("network probe row is missing latency_ms")
-		}
-		success, ok := row.Fields["success"]
-		if !ok {
-			return nil, errors.New("network probe row is missing success")
-		}
-		points = append(points, NetworkProbePoint{
-			Timestamp: time.Unix(0, row.Timestamp).UTC(), AverageLatency: latency.Float64,
-			SuccessPercent: success.Float64 * 100, SampleCount: 1,
-		})
-	}
-	return points, nil
-}
-
-func latestFromRow(row mts.Row) (NetworkProbeLatest, error) {
-	latency, latencyOK := row.Fields["latency_ms"]
-	success, successOK := row.Fields["success"]
-	status, statusOK := row.Fields["status_code"]
-	errorCode, errorOK := row.Fields["error_code"]
-	if !latencyOK || !successOK || !statusOK || !errorOK {
-		return NetworkProbeLatest{}, errors.New("network probe row is incomplete")
-	}
-	return NetworkProbeLatest{
-		Timestamp: time.Unix(0, row.Timestamp).UTC(), LatencyMS: latency.Float64,
-		Success: success.Float64 == 1, StatusCode: status.Int64, ErrorCode: errorCode.String,
-	}, nil
-}
-
-func networkHistoryWindow(duration time.Duration) time.Duration {
-	if duration <= 0 {
-		return time.Second
-	}
-	window := duration / maxNetworkHistoryPoints
-	if duration%maxNetworkHistoryPoints != 0 {
-		window++
-	}
-	if window < time.Second {
-		return time.Second
-	}
-	return window
-}
-
-func networkPointsFromColumns(columns []mts.ColumnSeries) []NetworkProbePoint {
-	pointsByTime := map[int64]NetworkProbePoint{}
-	for _, column := range columns {
-		for index, timestamp := range column.Timestamps {
-			point := pointsByTime[timestamp]
-			point.Timestamp = time.Unix(0, timestamp).UTC()
-			value := column.Values[index]
-			switch column.FieldName {
-			case "avg(latency_ms)":
-				point.AverageLatency = value.Float64
-			case "avg(success)":
-				point.SuccessPercent = value.Float64 * 100
-			case "count(latency_ms)":
-				point.SampleCount = value.Int64
-				if value.Type == mts.FieldFloat64 {
-					point.SampleCount = int64(value.Float64)
-				}
-			}
-			pointsByTime[timestamp] = point
-		}
-	}
-	timestamps := make([]int64, 0, len(pointsByTime))
-	for timestamp := range pointsByTime {
-		timestamps = append(timestamps, timestamp)
-	}
-	sort.Slice(timestamps, func(i, j int) bool { return timestamps[i] < timestamps[j] })
-	points := make([]NetworkProbePoint, 0, len(timestamps))
-	for _, timestamp := range timestamps {
-		points = append(points, pointsByTime[timestamp])
-	}
-	return points
-}
-
-// queryNetworkProbeRows 在给定范围内按时间倒序取一条网络探测记录。
-func (s *MTSStore) queryNetworkProbeRows(ctx context.Context, taskID, nodeID string, from, to time.Time) ([]mts.Row, error) {
-	query, err := networkProbeQuery(taskID, nodeID, from, to).OrderByTimeDesc().Limit(1).Build()
-	if err != nil {
-		return nil, fmt.Errorf("build latest network probe query: %w", err)
-	}
-	return s.engine.QueryRows(ctx, query)
 }

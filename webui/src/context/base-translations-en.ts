@@ -60,6 +60,8 @@ export const baseTranslationsEn: Record<string, string> = {
   "node.memory": "Memory",
   "node.disk": "Disk",
   "node.network": "Network",
+  "node.network_latency": "Network latency",
+  "node.network_packet_loss": "Packet loss",
   "node.alias": "Alias",
   "node.ssh_key": "SSH Key",
   "node.ssh_key_distribute_hint": "The key's public key is distributed to the node after saving.",

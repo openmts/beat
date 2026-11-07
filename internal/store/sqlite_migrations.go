@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-const currentSchemaVersion = 31
+const currentSchemaVersion = 32
 
 type sqliteMigration struct {
 	version int
@@ -47,6 +47,7 @@ var sqliteMigrations = []sqliteMigration{
 	{version: 29, name: "agent_release_retention", apply: applyAgentReleaseRetention},
 	{version: 30, name: "accelerator_public_visibility", apply: applyAcceleratorPublicVisibility},
 	{version: 31, name: "egress_proxy_settings", apply: applyEgressProxySettings},
+	{version: 32, name: "network_quality_directions", apply: applyNetworkQualityDirections},
 }
 
 // applyThemePackages 引入主题包、激活历史、市场源与站点活动主题持久化。

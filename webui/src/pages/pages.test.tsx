@@ -15,6 +15,7 @@ const fleet = vi.hoisted(() => ({ nodes: [] as unknown[], groups: [], loading: f
 vi.mock("@/hooks/use-public-fleet", () => ({ usePublicFleet: () => fleet }))
 const site = vi.hoisted(() => ({ showNetworkQuality: true }))
 const publicWorkspace = vi.hoisted(() => ({ value: null as unknown }))
+const network = vi.hoisted(() => ({ calls: [] as boolean[], summaries: {} as Record<string, unknown> }))
 vi.mock("@/hooks/use-public-metric-workspace", () => ({ usePublicMetricWorkspace: () => publicWorkspace.value }))
 vi.mock("@/components/metric-workspace/data-view", () => ({ WorkspaceDataView: ({ panel }: { panel: { title: string } }) => <div data-testid={`chart-${panel.title}`}>{panel.title}</div>, WorkspaceDataTable: () => <p>Data table</p> }))
 
@@ -29,8 +30,11 @@ vi.mock("@/context/site-settings", () => ({
     reportInteraction: vi.fn(),
   }),
 }))
-vi.mock("@/components/network-quality-band", () => ({
-  NetworkQualityBand: () => <div>network-quality-band</div>,
+vi.mock("@/hooks/use-network", () => ({
+  useNodeNetworkSummaries: (enabled: boolean) => {
+    network.calls.push(enabled)
+    return { data: null, loading: false, error: null, summaries: network.summaries }
+  },
 }))
 vi.mock("@/components/metrics-chart", () => ({
   MetricsChart: ({ title, from, to }: { title: string; from: number; to: number }) => (
@@ -56,6 +60,8 @@ describe("public pages", () => {
     vi.mocked(hooks.useNodeCustomMetrics).mockReturnValue(hookState({ data: [] }) as never)
     publicWorkspace.value = pageWorkspace()
     site.showNetworkQuality = true
+    network.calls = []
+    network.summaries = {}
   })
 
   it("renders dashboard loading, errors, empty, and nodes", () => {
@@ -77,10 +83,13 @@ describe("public pages", () => {
     expect(fleet.refresh).toHaveBeenCalledOnce()
   })
 
-  it("hides public network quality when disabled by site settings", () => {
+  it("only requests node network summaries when public quality display is enabled", () => {
     site.showNetworkQuality = false
-    render(<Providers><Dashboard /></Providers>)
-    expect(screen.queryByText("network-quality-band")).not.toBeInTheDocument()
+    const view = render(<Providers><Dashboard /></Providers>)
+    expect(network.calls.at(-1)).toBe(false)
+    site.showNetworkQuality = true
+    view.rerender(<Providers><Dashboard /></Providers>)
+    expect(network.calls.at(-1)).toBe(true)
   })
 
   it("renders node detail loading/error states with the public workspace", () => {

@@ -28,11 +28,13 @@ interface NetworkTaskDialogProps {
 
 const emptyPayload: NetworkTaskPayload = {
   name: "",
+  direction: "agent_to_target",
   type: "icmp",
   target: "",
   ip_family: "auto",
   interval_seconds: 60,
   timeout_milliseconds: 3000,
+  packet_count: 5,
   all_nodes: true,
   enabled: true,
   is_public: true,
@@ -105,11 +107,13 @@ function payloadFromView(view: NetworkTaskView): NetworkTaskPayload {
   const task = view.task
   return {
     name: task.name,
+    direction: task.direction ?? "agent_to_target",
     type: task.type,
     target: task.target,
     ip_family: task.ip_family,
     interval_seconds: task.interval_seconds,
     timeout_milliseconds: task.timeout_milliseconds,
+    packet_count: task.packet_count ?? (task.type === "icmp" ? 5 : 1),
     all_nodes: task.all_nodes,
     enabled: task.enabled,
     is_public: task.is_public,
@@ -120,8 +124,23 @@ function payloadFromView(view: NetworkTaskView): NetworkTaskPayload {
 
 function validatePayload(payload: NetworkTaskPayload, t: (key: string) => string): string | null {
   if (!payload.name.trim() || !payload.target.trim()) return t("network.validation_required")
+  if (payload.type === "icmp" &&
+    (!Number.isInteger(payload.packet_count) || payload.packet_count < 1 || payload.packet_count > 20)) {
+    return t("network.validation_packet_count")
+  }
+  if (payload.direction === "server_to_agent" && !validServerTarget(payload.type, payload.target)) {
+    return t("network.validation_server_target")
+  }
   if (payload.interval_seconds < 10 || payload.interval_seconds > 86400) return t("network.validation_interval")
   if (payload.timeout_milliseconds < 100 || payload.timeout_milliseconds > 30000) return t("network.validation_timeout")
   if (payload.timeout_milliseconds > payload.interval_seconds * 1000) return t("network.validation_timeout_interval")
   return null
+}
+
+function validServerTarget(type: NetworkTaskPayload["type"], target: string): boolean {
+  if (type === "icmp") return target === "{{host}}"
+  if (type === "tcp") return target === "{{host_port}}"
+  if (type !== "http" || (!target.includes("{{host}}") && !target.includes("{{host_port}}"))) return false
+  return !/\{\{/.test(target.replaceAll("{{host}}", "").replaceAll("{{host_port}}", "").replaceAll("{{ssh_port}}", "")) &&
+    !/\}\}/.test(target.replaceAll("{{host}}", "").replaceAll("{{host_port}}", "").replaceAll("{{ssh_port}}", ""))
 }

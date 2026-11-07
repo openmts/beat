@@ -5,6 +5,7 @@ import Dashboard from "./dashboard"
 import { workspaceNode } from "@/test/metric-workspace-fixtures"
 const state = vi.hoisted(() => ({ nodes: [] as ReturnType<typeof workspaceNode>[], groups: [{ id: "group-one", name: "Production", sort_order: 0 }], loading: false, error: "", connected: true, offline: false, receivedAt: 1000, serverTime: 1000, stale: false, refresh: vi.fn() }))
 const settings = vi.hoisted(() => ({ settings: { site_title: "Beat", public_address_mode: "hidden", show_network_quality: true }, loading: false, error: null as string | null }))
+const network = vi.hoisted(() => ({ enabled: [] as boolean[], summaries: {} as Record<string, { latency_ms: number; loss_percent: number | null }> }))
 vi.mock("@/hooks/use-public-fleet", () => ({ usePublicFleet: () => state }))
 vi.mock("@/context/site-settings", () => ({ useSiteSettings: () => ({ ...settings, reportInteraction: vi.fn() }) }))
 vi.mock("@/context/locale", async () => {
@@ -16,13 +17,25 @@ vi.mock("@/components/header", () => ({ Header: () => <header>Header</header> })
 vi.mock("@/components/public-footer", () => ({ PublicFooter: () => <footer>Footer</footer> }))
 vi.mock("@/components/public-theme-boundary", () => ({ PublicThemeBoundary: ({ children }: { children: React.ReactNode }) => children }))
 vi.mock("@/components/node-card", () => ({ NodeCard: ({ loading }: { loading?: boolean }) => <article>{loading ? "Loading card" : "Node card"}</article> }))
-vi.mock("@/components/network-quality-band", () => ({ NetworkQualityBand: () => <aside>Network quality</aside> }))
-vi.mock("@/pages/fleet-results", () => ({ FleetResults: ({ nodes }: { nodes: { host: string }[] }) => <section data-testid="results">{nodes.map(node => node.host).join(",")}</section> }))
-beforeEach(() => { state.nodes = [workspaceNode()]; state.loading = false; state.offline = false; state.error = ""; settings.loading = false; settings.error = null })
+vi.mock("@/hooks/use-network", () => ({
+  useNodeNetworkSummaries: (enabled: boolean) => {
+    network.enabled.push(enabled)
+    return { data: null, loading: false, error: null, summaries: network.summaries }
+  },
+}))
+vi.mock("@/pages/fleet-results", () => ({
+  FleetResults: ({ nodes, networkSummaries }: { nodes: { host: string; id: string }[]; networkSummaries?: Record<string, { latency_ms: number; loss_percent: number | null }> }) => (
+    <section data-testid="results">
+      {nodes.map((node) => `${node.host}:${networkSummaries?.[node.id] ? `${networkSummaries[node.id].latency_ms}ms/${networkSummaries[node.id].loss_percent ?? "--"}` : "none"}`).join(",")}
+    </section>
+  ),
+}))
+beforeEach(() => { state.nodes = [workspaceNode()]; state.loading = false; state.offline = false; state.error = ""; settings.loading = false; settings.error = null; settings.settings.show_network_quality = true; network.enabled = []; network.summaries = {} })
 describe("public overview integration", () => {
  it("keeps host fields hidden until public settings load and masks offline network widgets", () => {
-  const view = render(<MemoryRouter><Dashboard /></MemoryRouter>); expect(screen.getByTestId("results")).not.toHaveTextContent("192.0.2.1"); expect(screen.getByText("Network quality")).toBeInTheDocument()
+  network.summaries = { "node-one": { latency_ms: 12, loss_percent: 5 } }
+  const view = render(<MemoryRouter><Dashboard /></MemoryRouter>); expect(screen.getByTestId("results")).not.toHaveTextContent("192.0.2.1"); expect(screen.getByTestId("results")).toHaveTextContent("12ms/5"); expect(network.enabled.at(-1)).toBe(true)
   state.loading = true; view.rerender(<MemoryRouter><Dashboard /></MemoryRouter>); expect(screen.getAllByText("Loading card")).toHaveLength(8)
-  state.loading = false; state.offline = true; settings.error = "unavailable"; view.rerender(<MemoryRouter><Dashboard /></MemoryRouter>); expect(screen.queryByText("Network quality")).not.toBeInTheDocument()
+  state.loading = false; state.offline = true; settings.error = "unavailable"; view.rerender(<MemoryRouter><Dashboard /></MemoryRouter>); expect(network.enabled.at(-1)).toBe(false)
  })
 })

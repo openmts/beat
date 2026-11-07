@@ -79,6 +79,49 @@ func TestMTSNetworkProbeDuplicateIsIdempotent(t *testing.T) {
 	}
 }
 
+func TestMTSNetworkProbeDirectionAndQualityFields(t *testing.T) {
+	s := setupTestMTS(t)
+	ctx := t.Context()
+	finished := time.Now().UTC().Truncate(time.Nanosecond)
+	loss, jitter, minimum, maximum := 25.0, 1.5, 3.0, 9.0
+	sample := NetworkProbeSample{
+		TaskID: "task-quality", NodeID: "node-quality", TaskType: "icmp",
+		Direction: "server_to_agent", FinishedAt: finished, LatencyMS: 6,
+		Success: true, ErrorCode: "none", SentPackets: 4, ReceivedPackets: 3,
+		LossPercent: &loss, JitterMS: &jitter, MinLatencyMS: &minimum, MaxLatencyMS: &maximum,
+	}
+	if err := s.WriteNetworkProbes(ctx, []NetworkProbeSample{sample}); err != nil {
+		t.Fatalf("write quality sample: %v", err)
+	}
+	rows, err := s.queryNetworkProbeRows(ctx, sample.TaskID, sample.NodeID, finished.Add(-time.Second), finished.Add(time.Second))
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("quality rows = %#v, error = %v", rows, err)
+	}
+	if rows[0].Tags["direction"] != "server_to_agent" || rows[0].Tags["type"] != "icmp" {
+		t.Fatalf("quality tags = %#v", rows[0].Tags)
+	}
+	for field, want := range map[string]float64{"loss_percent": loss, "jitter_ms": jitter, "min_latency_ms": minimum, "max_latency_ms": maximum} {
+		if got, ok := rows[0].Fields[field]; !ok || got.Float64 != want {
+			t.Fatalf("field %s = %#v, want %v", field, got, want)
+		}
+	}
+	latest, err := s.QueryNetworkLatest(ctx, sample.TaskID, sample.NodeID)
+	if err != nil || latest == nil || latest.LossPercent == nil || *latest.LossPercent != loss ||
+		latest.JitterMS == nil || *latest.JitterMS != jitter || latest.SentPackets != 4 || latest.ReceivedPackets != 3 {
+		t.Fatalf("latest quality = %#v, error = %v", latest, err)
+	}
+
+	plain := NetworkProbeSample{TaskID: "task-tcp", NodeID: "node-quality", TaskType: "tcp",
+		FinishedAt: finished.Add(time.Second), LatencyMS: 2, Success: true, ErrorCode: "none"}
+	if err := s.WriteNetworkProbes(ctx, []NetworkProbeSample{plain}); err != nil {
+		t.Fatalf("write plain sample: %v", err)
+	}
+	plainLatest, err := s.QueryNetworkLatest(ctx, plain.TaskID, plain.NodeID)
+	if err != nil || plainLatest == nil || plainLatest.LossPercent != nil || plainLatest.JitterMS != nil {
+		t.Fatalf("plain latest = %#v, error = %v", plainLatest, err)
+	}
+}
+
 func TestMTSNetworkProbeHistoryAggregatesToLimit(t *testing.T) {
 	s := setupTestMTS(t)
 	ctx := context.Background()

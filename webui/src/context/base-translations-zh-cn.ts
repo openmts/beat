@@ -60,6 +60,8 @@ export const baseTranslationsZhCN: Record<string, string> = {
   "node.memory": "内存",
   "node.disk": "磁盘",
   "node.network": "网络",
+  "node.network_latency": "网络延迟",
+  "node.network_packet_loss": "网络丢包",
   "node.alias": "别名",
   "node.ssh_key": "SSH 密钥",
   "node.ssh_key_distribute_hint": "保存后，该密钥的公钥将自动分发到节点。",

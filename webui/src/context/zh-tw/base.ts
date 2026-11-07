@@ -61,6 +61,8 @@ export const zhTWBase: Record<string, string> = {
   "node.memory": "記憶體",
   "node.disk": "磁碟",
   "node.network": "網路",
+  "node.network_latency": "網路延遲",
+  "node.network_packet_loss": "網路封包遺失",
   "node.alias": "別名",
   "node.ssh_key": "SSH 金鑰",
   "node.ssh_key_distribute_hint": "儲存後會將此金鑰的公開金鑰派送到節點。",

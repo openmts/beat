@@ -7,11 +7,13 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/beat/backend/internal/agent"
 	"github.com/beat/backend/internal/alerter"
 	"github.com/beat/backend/internal/fleetsummary"
 	"github.com/beat/backend/internal/maintenance"
 	"github.com/beat/backend/internal/metricserasure"
 	"github.com/beat/backend/internal/metricsfanout"
+	"github.com/beat/backend/internal/networkquality"
 	"github.com/beat/backend/internal/trafficreport"
 )
 
@@ -56,6 +58,7 @@ func startBackgroundTasks(config backgroundConfig) *backgroundTasks {
 	startAcceleratorWorker(config, tasks)
 	startAgentRolloutWorker(config, tasks)
 	startEnrollmentCleanupWorker(config, tasks)
+	startServerNetworkQualityWorker(config, tasks)
 	supervisor.start(&tasks.wait, reportWorker.in(config.ctx), reportScheduler.Run)
 	supervisor.start(&tasks.wait, summaryWorker.in(config.ctx), summaryScheduler.Run)
 	supervisor.start(&tasks.wait, maintenanceWorker.in(config.ctx), maintenanceScheduler.Run)
@@ -85,6 +88,25 @@ func startBackgroundTasks(config backgroundConfig) *backgroundTasks {
 		supervisor.start(&tasks.wait, worker.in(config.ctx), retention.Run)
 	}
 	return tasks
+}
+
+func startServerNetworkQualityWorker(config backgroundConfig, tasks *backgroundTasks) {
+	if config.runtime == nil || config.stores == nil || config.stores.networkTasks == nil || config.stores.mts == nil {
+		return
+	}
+	worker := config.runtime.workers.register("network_quality", 30*time.Second)
+	runner := networkquality.NewRunner(networkquality.RunnerOptions{
+		Tasks: config.stores.networkTasks, Prober: agent.NewNetworkProber(), Writer: config.stores.mts,
+		OnError: func(err error) {
+			slog.ErrorContext(config.ctx, "server network quality probe failed", "error", err)
+		},
+		OnCycle: worker.observe(),
+	})
+	config.runtime.workers.start(&tasks.wait, worker.in(config.ctx), func(ctx context.Context) {
+		if err := runner.Run(ctx); err != nil {
+			worker.observe()(err)
+		}
+	})
 }
 
 // stop先等待共享生产器及被劫持连接，再取消并等待后台任务；调用方随后关闭存储。

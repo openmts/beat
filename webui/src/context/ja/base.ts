@@ -61,6 +61,8 @@ export const jaBase: Record<string, string> = {
   "node.memory": "メモリ",
   "node.disk": "ディスク",
   "node.network": "ネットワーク",
+  "node.network_latency": "ネットワーク遅延",
+  "node.network_packet_loss": "パケット損失",
   "node.alias": "別名",
   "node.ssh_key": "SSH 鍵",
   "node.ssh_key_distribute_hint": "保存すると、この鍵の公開鍵がノードへ配布されます。",

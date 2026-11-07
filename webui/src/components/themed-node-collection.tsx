@@ -13,8 +13,12 @@ import { cn } from "@/lib/utils"
 import { useLocale } from "@/context/locale"
 import { themeFlag, themeResources, usePublicTheme } from "@/lib/theme-presentation"
 import { formatMetricValue as formatPresentMetric, formatDuration } from "@/lib/metric-format"
+import { formatLatency, formatPacketLoss } from "@/lib/network-quality"
 import type { ThemeNode } from "@/types/theme-runtime"
 import type { ThemeResource } from "@/types/theme-definition"
+import type { NodeNetworkSummary } from "@/types"
+
+type NetworkSummaries = Record<string, NodeNetworkSummary>
 
 /** 每个资源行的图标与文案键；作者只能选择已知资源，不会出现未知内容。 */
 const resourceSpec: Record<ThemeResource, { icon: typeof CpuIcon; label: string }> = {
@@ -23,7 +27,7 @@ const resourceSpec: Record<ThemeResource, { icon: typeof CpuIcon; label: string 
   disk: { icon: HardDriveIcon, label: "node.disk" },
 }
 
-export function ThemedNodeCollection({ selectedGroup, fleetLayout, hideGroupHeading = false, accelerators }: { accelerators?: GPUDevices; selectedGroup: string; fleetLayout?: "cards" | "table"; hideGroupHeading?: boolean }) {
+export function ThemedNodeCollection({ selectedGroup, fleetLayout, hideGroupHeading = false, accelerators, networkSummaries }: { accelerators?: GPUDevices; selectedGroup: string; fleetLayout?: "cards" | "table"; hideGroupHeading?: boolean; networkSummaries?: NetworkSummaries }) {
   const theme = usePublicTheme()
   const { t } = useLocale()
   if (!theme) return null
@@ -31,14 +35,14 @@ export function ThemedNodeCollection({ selectedGroup, fleetLayout, hideGroupHead
   if (!nodes.length) return <p className="rounded-xl border border-dashed p-10 text-center text-muted-foreground">{t("node.empty")}</p>
   const layout = fleetLayout === "table" ? "table" : fleetLayout === "cards" && theme.definition.overview === "table" ? "cards" : theme.definition.overview
   return <div data-theme-overview={layout}>
-    {layout === "table" ? <NodeOperationsTable nodes={nodes} accelerators={accelerators} /> : layout === "list" ?
-      <NodeStatusList nodes={nodes} accelerators={accelerators} /> : layout === "tiles" ?
-      <div className={`grid grid-cols-1 lg:grid-cols-2 ${theme.definition.density === "compact" ? "gap-3" : "gap-6"}`}>{nodes.map((node) => <NodeTile key={node.id} node={node} devices={accelerators?.[node.id]} />)}</div> :
-      <GroupedNodeCards nodes={nodes} hideGroupHeading={hideGroupHeading} accelerators={accelerators} />}
+    {layout === "table" ? <NodeOperationsTable nodes={nodes} accelerators={accelerators} networkSummaries={networkSummaries} /> : layout === "list" ?
+      <NodeStatusList nodes={nodes} accelerators={accelerators} networkSummaries={networkSummaries} /> : layout === "tiles" ?
+      <div className={`grid grid-cols-1 lg:grid-cols-2 ${theme.definition.density === "compact" ? "gap-3" : "gap-6"}`}>{nodes.map((node) => <NodeTile key={node.id} node={node} devices={accelerators?.[node.id]} network={networkSummaries?.[node.id]} />)}</div> :
+      <GroupedNodeCards nodes={nodes} hideGroupHeading={hideGroupHeading} accelerators={accelerators} networkSummaries={networkSummaries} />}
   </div>
 }
 
-function GroupedNodeCards({ nodes, hideGroupHeading, accelerators }: { nodes: ThemeNode[]; hideGroupHeading?: boolean; accelerators?: GPUDevices }) {
+function GroupedNodeCards({ nodes, hideGroupHeading, accelerators, networkSummaries }: { nodes: ThemeNode[]; hideGroupHeading?: boolean; accelerators?: GPUDevices; networkSummaries?: NetworkSummaries }) {
   const theme = usePublicTheme()!
   const { t } = useLocale()
   const groups = new Map(theme.snapshot.groups.map((group) => [group.id, group.name]))
@@ -47,7 +51,7 @@ function GroupedNodeCards({ nodes, hideGroupHeading, accelerators }: { nodes: Th
     {!hideGroupHeading && <div className="flex items-center gap-2"><h2 className="text-sm font-semibold">{groups.get(id) || t("theme.other_nodes")}</h2>
       <Badge variant="secondary">{nodes.filter((node) => node.group_id === id).length}</Badge></div>}
     <div className={`grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 ${theme.definition.density === "compact" ? "gap-3" : "gap-5"}`}>
-      {nodes.filter((node) => node.group_id === id).map((node) => <NodeSummaryCard key={node.id} node={node} devices={accelerators?.[node.id]} />)}
+      {nodes.filter((node) => node.group_id === id).map((node) => <NodeSummaryCard key={node.id} node={node} devices={accelerators?.[node.id]} network={networkSummaries?.[node.id]} />)}
     </div>
   </section>)}</div>
 }
@@ -56,14 +60,14 @@ function GroupedNodeCards({ nodes, hideGroupHeading, accelerators }: { nodes: Th
  * 状态列表：一行一个节点，适合手机与告警列表。
  * 与表格不同，它不做表头对齐，只用状态圆点、内联资源读数与可选网络值保持紧凑。
  */
-function NodeStatusList({ nodes, accelerators }: { nodes: ThemeNode[]; accelerators?: GPUDevices }) {
+function NodeStatusList({ nodes, accelerators, networkSummaries }: { nodes: ThemeNode[]; accelerators?: GPUDevices; networkSummaries?: NetworkSummaries }) {
   const { t } = useLocale()
   const definition = usePublicTheme()!.definition
   const resources = themeResources(definition)
   const compact = definition.density === "compact"
   const network = themeFlag(definition, "show_network")
   return <ul className="divide-y overflow-hidden rounded-xl border lg:rounded-2xl">
-    {nodes.map((node) => <li key={node.id} className={cn("flex flex-wrap items-center gap-x-4 gap-y-2 px-4", compact ? "py-2" : "py-3")}>
+    {nodes.map((node) => { const quality = networkSummaries?.[node.id]; return <li key={node.id} className={cn("flex flex-wrap items-center gap-x-4 gap-y-2 px-4", compact ? "py-2" : "py-3")}>
       <span aria-hidden="true" className={cn("size-2 shrink-0 rounded-full", node.status === "online" ? "bg-primary" : "bg-muted-foreground/50")} />
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center gap-2"><NodeLink node={node} /></div>
@@ -73,9 +77,10 @@ function NodeStatusList({ nodes, accelerators }: { nodes: ThemeNode[]; accelerat
       </div>
       <div className="flex flex-wrap items-center gap-x-4 gap-y-1">{resources.map((resource) => <span key={resource} className="flex items-baseline gap-1.5 font-mono text-xs tabular-nums">
         <span className="text-muted-foreground">{t(resourceSpec[resource].label)}</span>{formatMetric(node.metrics[resource], "percent")}</span>)}
+        {quality && <span className="flex items-baseline gap-1.5 font-mono text-xs tabular-nums"><span className="text-muted-foreground">{t("node.network_latency")}</span>{formatLatency(quality.latency_ms)}<span className="text-muted-foreground">{t("node.network_packet_loss")}</span>{formatPacketLoss(quality.loss_percent)}</span>}
         {network && <span className="font-mono text-xs tabular-nums text-muted-foreground">↓ {formatMetric(node.metrics.net_recv, "bytes-per-second")} ↑ {formatMetric(node.metrics.net_sent, "bytes-per-second")}</span>}</div>
       <div className="flex items-center gap-2">{themeFlag(definition, "show_remark") && node.public_remark && <span className="hidden max-w-48 truncate text-xs text-muted-foreground lg:inline" title={node.public_remark}>{node.public_remark}</span>}<NodeStatus node={node} /></div>
-    </li>)}
+    </li> })}
   </ul>
 }
 
@@ -93,7 +98,7 @@ function NodeStatus({ node }: { node: ThemeNode }) {
   return <Badge variant={node.status === "online" ? "default" : "secondary"}>{t(node.status === "online" ? "node.online" : "node.offline")}</Badge>
 }
 
-function NodeSummaryCard({ node, devices }: { node: ThemeNode; devices?: AcceleratorDevicePublic[] }) {
+function NodeSummaryCard({ node, devices, network }: { node: ThemeNode; devices?: AcceleratorDevicePublic[]; network?: NodeNetworkSummary }) {
   const { t } = useLocale()
   const definition = usePublicTheme()!.definition
   return <Card className="overflow-hidden"><CardHeader className="flex flex-row items-center justify-between gap-3">
@@ -102,6 +107,7 @@ function NodeSummaryCard({ node, devices }: { node: ThemeNode; devices?: Acceler
     <TelemetryStatus node={node} /><AcceleratorSummary devices={devices} />
     {themeFlag(definition, "show_host") && node.host && <p className="truncate font-mono text-xs text-muted-foreground" title={node.host}>{node.host}</p>}
     {themeResources(definition).map((resource) => <ResourceLine key={resource} label={t(resourceSpec[resource].label)} value={node.metrics[resource]} />)}
+    {network && <dl className="grid grid-cols-2 gap-3 border-t pt-3"><div><dt className="text-xs text-muted-foreground">{t("node.network_latency")}</dt><dd className="font-mono text-sm tabular-nums">{formatLatency(network.latency_ms)}</dd></div><div><dt className="text-xs text-muted-foreground">{t("node.network_packet_loss")}</dt><dd className="font-mono text-sm tabular-nums">{formatPacketLoss(network.loss_percent)}</dd></div></dl>}
     {themeFlag(definition, "show_network") && <div className="flex justify-between border-t pt-3 font-mono text-xs text-muted-foreground"><span>↓ {formatMetric(node.metrics.net_recv, "bytes-per-second")}</span><span>↑ {formatMetric(node.metrics.net_sent, "bytes-per-second")}</span></div>}
   </CardContent></Card>
 }
@@ -111,7 +117,7 @@ function ResourceLine({ label, value }: { label: string; value: number | undefin
     {value !== undefined && <Progress value={Math.max(0, Math.min(100, value))} aria-label={label} />}</div>
 }
 
-function NodeTile({ node, devices }: { node: ThemeNode; devices?: AcceleratorDevicePublic[] }) {
+function NodeTile({ node, devices, network }: { node: ThemeNode; devices?: AcceleratorDevicePublic[]; network?: NodeNetworkSummary }) {
   const { t } = useLocale()
   const definition = usePublicTheme()!.definition
   const spacing = definition.density === "compact" ? "p-4 sm:p-5" : "p-6 sm:p-8"
@@ -126,28 +132,32 @@ function NodeTile({ node, devices }: { node: ThemeNode; devices?: AcceleratorDev
       const Icon = resourceSpec[resource].icon
       return <div key={resource} className="space-y-2"><Icon className="size-4 text-muted-foreground" /><ResourceLine label={t(resourceSpec[resource].label)} value={node.metrics[resource]} /></div>
     })}</div>}
+    {network && <dl className="grid grid-cols-2 gap-3 border-t pt-4"><div><dt className="text-xs text-muted-foreground">{t("node.network_latency")}</dt><dd className="font-mono text-sm tabular-nums">{formatLatency(network.latency_ms)}</dd></div><div><dt className="text-xs text-muted-foreground">{t("node.network_packet_loss")}</dt><dd className="font-mono text-sm tabular-nums">{formatPacketLoss(network.loss_percent)}</dd></div></dl>}
     {themeFlag(definition, "show_remark") && node.public_remark && <p className="line-clamp-3 text-sm text-muted-foreground">{node.public_remark}</p>}
     {themeFlag(definition, "show_tags") && <div className="flex flex-wrap gap-2">{node.tags.map((tag) => <Badge key={tag} variant="outline">{tag}</Badge>)}</div>}
     {themeFlag(definition, "show_host") && node.host && <p className="truncate font-mono text-xs text-muted-foreground" title={node.host}>{node.host}</p>}
   </CardContent></Card>
 }
 
-function NodeOperationsTable({ nodes, accelerators }: { nodes: ThemeNode[]; accelerators?: GPUDevices }) {
+function NodeOperationsTable({ nodes, accelerators, networkSummaries }: { nodes: ThemeNode[]; accelerators?: GPUDevices; networkSummaries?: NetworkSummaries }) {
   const { t } = useLocale()
   const definition = usePublicTheme()!.definition
   const compact = definition.density === "compact"
   const resources = themeResources(definition)
   const network = themeFlag(definition, "show_network")
+  const hasQuality = nodes.some((node) => networkSummaries?.[node.id])
   // 前两个资源列在小屏可见，其余从 md 起显示，保持默认主题在手机上的既有密度。
   const resourceCell = (index: number, value: string) => <TableCell key={resources[index]} className={cn("font-mono tabular-nums", index > 1 && "hidden md:table-cell")}>{value}</TableCell>
   return <Card className="overflow-hidden py-0"><Table><TableHeader><TableRow>
     <TableHead>{t("app.nodes")}</TableHead><TableHead>{t("node.status")}</TableHead>
     {resources.map((resource, index) => <TableHead key={resource} className={index > 1 ? "hidden md:table-cell" : undefined}>{t(resourceSpec[resource].label)}</TableHead>)}
+    {hasQuality && <><TableHead className="hidden lg:table-cell">{t("node.network_latency")}</TableHead><TableHead className="hidden lg:table-cell">{t("node.network_packet_loss")}</TableHead></>}
     {network && <TableHead className="hidden lg:table-cell">{t("node.network")}</TableHead>}
     <TableHead className="hidden xl:table-cell">{t("node.uptime")}</TableHead>
   </TableRow></TableHeader><TableBody>{nodes.map((node) => <TableRow key={node.id} className={compact ? "[&>td]:py-2" : "[&>td]:py-4"}>
     <TableCell className="max-w-48"><NodeLink node={node} /><AcceleratorSummary devices={accelerators?.[node.id]} />{themeFlag(definition, "show_host") && node.host && <p className="truncate font-mono text-xs text-muted-foreground" title={node.host}>{node.host}</p>}<div className="mt-1"><TelemetryStatus node={node} className="max-w-36 text-[10px] [&>span]:hidden md:[&>span]:inline" /></div></TableCell><TableCell><NodeStatus node={node} /></TableCell>
     {resources.map((resource, index) => resourceCell(index, formatMetric(node.metrics[resource], "percent")))}
+    {hasQuality && <><TableCell className="hidden font-mono text-xs lg:table-cell">{networkSummaries?.[node.id] ? formatLatency(networkSummaries[node.id].latency_ms) : "--"}</TableCell><TableCell className="hidden font-mono text-xs lg:table-cell">{formatPacketLoss(networkSummaries?.[node.id]?.loss_percent)}</TableCell></>}
     {network && <TableCell className="hidden font-mono text-xs lg:table-cell">↓ {formatMetric(node.metrics.net_recv, "bytes-per-second")}<br />↑ {formatMetric(node.metrics.net_sent, "bytes-per-second")}</TableCell>}
     <TableCell className="hidden font-mono text-xs xl:table-cell">{node.metrics.uptime === undefined ? "--" : formatDuration(node.metrics.uptime)}</TableCell>
   </TableRow>)}</TableBody></Table></Card>

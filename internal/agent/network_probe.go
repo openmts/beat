@@ -22,6 +22,12 @@ type NetworkProber struct {
 	now      func() time.Time
 }
 
+type icmpProbeStats struct {
+	sent     int
+	received int
+	rtts     []time.Duration
+}
+
 func NewNetworkProber() *NetworkProber {
 	return &NetworkProber{resolver: net.DefaultResolver, now: model.NowUTC}
 }
@@ -31,27 +37,82 @@ func (p *NetworkProber) Probe(ctx context.Context, task model.NetworkAssignment)
 	probeCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	started := p.now()
-	statusCode, err := p.execute(probeCtx, task)
+	statusCode, icmpStats, err := p.execute(probeCtx, task)
 	finished := p.now()
 	result := model.NetworkProbeResult{
 		TaskID: task.ID, FinishedAt: finished,
 		LatencyMS: float64(finished.Sub(started).Nanoseconds()) / float64(time.Millisecond),
 		Success:   err == nil, StatusCode: statusCode, ErrorCode: networkProbeErrorCode(err),
 	}
+	if icmpStats != nil {
+		applyICMPStats(&result, *icmpStats)
+	}
 	return result
 }
 
-func (p *NetworkProber) execute(ctx context.Context, task model.NetworkAssignment) (int, error) {
+func (p *NetworkProber) execute(
+	ctx context.Context,
+	task model.NetworkAssignment,
+) (int, *icmpProbeStats, error) {
 	switch task.Type {
 	case model.NetworkProbeICMP:
-		return 0, p.probeICMP(ctx, task.Target, task.IPFamily)
+		stats, err := p.probeICMP(ctx, task.Target, task.IPFamily, task.PacketCount)
+		return 0, &stats, err
 	case model.NetworkProbeTCP:
-		return 0, p.probeTCP(ctx, task.Target, task.IPFamily)
+		return 0, nil, p.probeTCP(ctx, task.Target, task.IPFamily)
 	case model.NetworkProbeHTTP:
-		return p.probeHTTP(ctx, task.Target, task.IPFamily)
+		statusCode, err := p.probeHTTP(ctx, task.Target, task.IPFamily)
+		return statusCode, nil, err
 	default:
-		return 0, errInvalidProbeTarget
+		return 0, nil, errInvalidProbeTarget
 	}
+}
+
+func applyICMPStats(result *model.NetworkProbeResult, stats icmpProbeStats) {
+	result.SentPackets = stats.sent
+	result.ReceivedPackets = stats.received
+	if stats.sent > 0 {
+		loss := float64(stats.sent-stats.received) / float64(stats.sent) * 100
+		result.LossPercent = &loss
+	}
+	if len(stats.rtts) == 0 {
+		return
+	}
+	minimum, maximum := stats.rtts[0], stats.rtts[0]
+	total := time.Duration(0)
+	jitterTotal := time.Duration(0)
+	for index, rtt := range stats.rtts {
+		if rtt < minimum {
+			minimum = rtt
+		}
+		if rtt > maximum {
+			maximum = rtt
+		}
+		total += rtt
+		if index > 0 {
+			delta := rtt - stats.rtts[index-1]
+			if delta < 0 {
+				delta = -delta
+			}
+			jitterTotal += delta
+		}
+	}
+	average := total / time.Duration(len(stats.rtts))
+	jitter := time.Duration(0)
+	if len(stats.rtts) > 1 {
+		jitter = jitterTotal / time.Duration(len(stats.rtts)-1)
+	}
+	result.LatencyMS = durationMilliseconds(average)
+	minimumMS := durationMilliseconds(minimum)
+	maximumMS := durationMilliseconds(maximum)
+	jitterMS := durationMilliseconds(jitter)
+	result.MinLatencyMS = &minimumMS
+	result.MaxLatencyMS = &maximumMS
+	result.JitterMS = &jitterMS
+}
+
+func durationMilliseconds(value time.Duration) float64 {
+	return float64(value.Nanoseconds()) / float64(time.Millisecond)
 }
 
 var errInvalidProbeTarget = errors.New("invalid probe target")

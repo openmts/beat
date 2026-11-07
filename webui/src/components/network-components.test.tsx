@@ -207,6 +207,7 @@ describe("network admin components", () => {
       />,
     )
     expect(screen.getByText("100%")).toBeInTheDocument()
+    expect(screen.getByText("Agent → target")).toBeInTheDocument()
     ;["Move up", "Move down", "History", "Edit", "Delete"].forEach((name) => fireEvent.click(screen.getByRole("button", { name })))
     actions.forEach((action) => expect(action).toHaveBeenCalled())
   })
@@ -226,8 +227,9 @@ describe("network admin components", () => {
       />,
     )
     const selects = screen.getAllByTestId("select")
-    expect(selects[0]).toHaveAttribute("data-selected-label", "ICMP")
-    expect(selects[1]).toHaveAttribute("data-selected-label", "Automatic")
+    expect(selects[0]).toHaveAttribute("data-selected-label", "Agent → target")
+    expect(selects[1]).toHaveAttribute("data-selected-label", "ICMP")
+    expect(selects[2]).toHaveAttribute("data-selected-label", "Automatic")
     expect(screen.queryByText("node-secret-id")).not.toBeInTheDocument()
     fireEvent.change(screen.getByLabelText("Task name"), { target: { value: "Probe" } })
     fireEvent.change(screen.getByLabelText("Target"), { target: { value: "example.com" } })
@@ -239,7 +241,9 @@ describe("network admin components", () => {
     fireEvent.click(screen.getByRole("button", { name: "Save" }))
     await waitFor(() => expect(onSave).toHaveBeenCalledWith(expect.objectContaining({
       name: "Probe",
+      direction: "agent_to_target",
       target: "example.com",
+      packet_count: 5,
       all_nodes: false,
       enabled: false,
       is_public: false,
@@ -255,6 +259,23 @@ describe("network admin components", () => {
     expect(screen.getByText("server failed")).toBeInTheDocument()
     fireEvent.click(screen.getByRole("button", { name: "Save" }))
     expect(screen.getByText("Task name and target are required.")).toBeInTheDocument()
+  })
+
+  it("supports server-side targets and validates ICMP packet counts", async () => {
+    const onSave = vi.fn().mockResolvedValue(undefined)
+    providers(<NetworkTaskDialog open view={null} nodes={[]} loading={false} error={null} nextSortOrder={0} onOpenChange={vi.fn()} onSave={onSave} />)
+    fireEvent.change(screen.getByLabelText("Task name"), { target: { value: "Server probe" } })
+    const selects = screen.getAllByTestId("select")
+    fireEvent.change(selects[0], { target: { value: "server_to_agent" } })
+    expect(screen.getByLabelText("Target")).toHaveValue("{{host}}")
+    fireEvent.change(screen.getByLabelText("ICMP packets"), { target: { value: "21" } })
+    fireEvent.click(screen.getByRole("button", { name: "Save" }))
+    expect(screen.getByText("ICMP packet count must be between 1 and 20.")).toBeInTheDocument()
+    fireEvent.change(screen.getByLabelText("ICMP packets"), { target: { value: "3" } })
+    fireEvent.click(screen.getByRole("button", { name: "Save" }))
+    await waitFor(() => expect(onSave).toHaveBeenCalledWith(expect.objectContaining({
+      direction: "server_to_agent", target: "{{host}}", packet_count: 3,
+    })))
   })
 
   it("loads edit labels, filters nodes, and validates every timing boundary", async () => {
@@ -274,8 +295,9 @@ describe("network admin components", () => {
     }
     providers(<NetworkTaskDialog open view={editView} nodes={nodes} loading={false} error={null} nextSortOrder={9} onOpenChange={vi.fn()} onSave={onSave} />)
     const selects = screen.getAllByTestId("select")
-    expect(selects[0]).toHaveAttribute("data-selected-label", "TCP")
-    expect(selects[1]).toHaveAttribute("data-selected-label", "IPv6")
+    expect(selects[0]).toHaveAttribute("data-selected-label", "Agent → target")
+    expect(selects[1]).toHaveAttribute("data-selected-label", "TCP")
+    expect(selects[2]).toHaveAttribute("data-selected-label", "IPv6")
     expect(screen.getByLabelText("Edge (node-one)")).toBeChecked()
     fireEvent.change(screen.getByPlaceholderText("Search"), { target: { value: "missing" } })
     expect(screen.queryByLabelText("Edge (node-one)")).not.toBeInTheDocument()
@@ -305,11 +327,13 @@ function networkView(): NetworkTaskView {
     task: {
       id: "task-id",
       name: "Primary API",
+      direction: "agent_to_target",
       type: "http",
       target: "https://example.com/health",
       ip_family: "auto",
       interval_seconds: 60,
       timeout_milliseconds: 3000,
+      packet_count: 1,
       all_nodes: true,
       enabled: true,
       is_public: true,

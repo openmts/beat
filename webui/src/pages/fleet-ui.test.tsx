@@ -16,18 +16,20 @@ vi.mock("@/context/locale", async () => {
   return { useLocale: () => testLocaleValue("en"), useOptionalLocale: () => testLocaleValue("en") }
 })
 vi.mock("@/lib/theme-presentation", () => ({ usePublicTheme: () => null }))
-vi.mock("@/components/node-card", () => ({ NodeCard: ({ node }: { node: { name: string } }) => <article>{node.name}</article> }))
+vi.mock("@/components/node-card", () => ({ NodeCard: ({ node, network }: { node: { name: string }; network?: { latency_ms: number; loss_percent: number | null } }) => <article>{node.name}{network ? ` · ${network.latency_ms} ms / ${network.loss_percent ?? "--"}%` : ""}</article> }))
 vi.mock("@/components/telemetry-status", () => ({ TelemetryStatus: () => <span>Fresh</span> }))
 const node = { ...workspaceNode("one"), name: "Visible host", tags: ["edge"], telemetry_state: "fresh" as const, metrics: { cpu: 10, cpu_used: 1, cpu_total: 4, memory: 20, memory_used: 1024, memory_total: 4096, disk: 30, disk_used: 2048, disk_total: 8192, net_sent: 100, net_recv: 200 }, location: { scope: "public", country_code: "JP" }, lifecycle: { status: "expired", expires_on: "2026-01-01", price_micros: "1234567", currency: "USD", interval_unit: "month", interval_count: 1 } }
 const groups = [{ id: "group-one", name: "Production", sort_order: 0 }] as Group[]
 beforeEach(() => vi.clearAllMocks())
 describe("public fleet UI", () => {
  it("renders groups in both layouts and pauses ordering during pointer/focus interaction", () => {
-  const interaction = vi.fn(), view = render(<MemoryRouter><FleetResults nodes={[node]} allNodes={[node]} groups={groups} layout="cards" onInteraction={interaction} /></MemoryRouter>)
+  const interaction = vi.fn(), networkSummaries = { one: { task_id: "task", task_name: "Server probe", direction: "server_to_agent" as const, type: "icmp" as const, latency_ms: 12, loss_percent: 5, success: true, timestamp: "" } }
+  const view = render(<MemoryRouter><FleetResults nodes={[node]} allNodes={[node]} groups={groups} layout="cards" onInteraction={interaction} networkSummaries={networkSummaries} /></MemoryRouter>)
   expect(screen.getByRole("heading", { name: "Production" })).toBeInTheDocument(); expect(screen.getByRole("article")).toHaveTextContent("Visible host")
+  expect(screen.getByRole("article")).toHaveTextContent("12 ms / 5%")
   const results = document.getElementById("fleet-results")!; fireEvent.pointerOver(results); fireEvent.pointerLeave(results); fireEvent.focus(results); fireEvent.blur(results, { relatedTarget: document.body }); expect(interaction.mock.calls.map(call => call[0])).toEqual([true, false, true, false])
-  view.rerender(<MemoryRouter><FleetResults nodes={[node, { ...workspaceNode("two"), status: "offline" }]} allNodes={[node]} groups={groups} layout="table" onInteraction={interaction} /></MemoryRouter>)
-  expect(screen.getByRole("table")).toBeInTheDocument(); expect(screen.getByRole("link", { name: "Visible host" })).toHaveAttribute("href", "/node/one"); expect(screen.getByRole("link", { name: "Visible host" })).toHaveAttribute("title", "Visible host"); expect(screen.getAllByText("linux / amd64")[0]).toHaveAttribute("title", "linux / amd64"); expect(screen.getByText("Japan")).toBeInTheDocument(); expect(screen.getByText(/\$1.234567/)).toBeInTheDocument()
+  view.rerender(<MemoryRouter><FleetResults nodes={[node, { ...workspaceNode("two"), status: "offline" }]} allNodes={[node]} groups={groups} layout="table" onInteraction={interaction} networkSummaries={networkSummaries} /></MemoryRouter>)
+  expect(screen.getByRole("table")).toBeInTheDocument(); expect(screen.getByRole("link", { name: "Visible host" })).toHaveAttribute("href", "/node/one"); expect(screen.getByRole("link", { name: "Visible host" })).toHaveAttribute("title", "Visible host"); expect(screen.getAllByText("linux / amd64")[0]).toHaveAttribute("title", "linux / amd64"); expect(screen.getByText("Japan")).toBeInTheDocument(); expect(screen.getByText(/\$1.234567/)).toBeInTheDocument(); expect(screen.getByText("Network latency")).toBeInTheDocument(); expect(screen.getByText("Packet loss")).toBeInTheDocument(); expect(screen.getByText("12 ms")).toBeInTheDocument(); expect(screen.getByText("5.0%")).toBeInTheDocument()
   view.rerender(<MemoryRouter><FleetResults nodes={[]} allNodes={[]} groups={[]} layout="table" onInteraction={interaction} /></MemoryRouter>); expect(screen.getByText(/No matching public nodes/)).toBeInTheDocument()
  })
  it("exposes bounded filters, clear and layout without a wallboard entry", async () => {

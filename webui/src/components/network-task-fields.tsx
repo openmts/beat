@@ -15,7 +15,7 @@ import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectVa
 import { Switch } from "@/components/ui/switch"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { networkNodeLabel } from "@/lib/network-quality"
-import type { NetworkIPFamily, NetworkProbeType, NetworkTaskPayload, Node } from "@/types"
+import type { NetworkDirection, NetworkIPFamily, NetworkProbeType, NetworkTaskPayload, Node } from "@/types"
 
 interface NetworkTaskFieldsProps {
   payload: NetworkTaskPayload
@@ -39,6 +39,20 @@ export function NetworkTaskFields(props: NetworkTaskFieldsProps) {
 
 function IdentityFields({ payload, t, onChange }: NetworkTaskFieldsProps) {
   const options = typeOptions(t)
+  const directions = directionOptions(t)
+  const changeType = (value: NetworkProbeType) => {
+    onChange({
+      type: value,
+      target: payload.direction === "server_to_agent" ? serverTarget(value) : "",
+      packet_count: value === "icmp" ? Math.max(payload.packet_count, 5) : 1,
+    })
+  }
+  const changeDirection = (value: NetworkDirection) => {
+    onChange({
+      direction: value,
+      target: value === "server_to_agent" ? serverTarget(payload.type) : "",
+    })
+  }
   return (
     <>
       <div className="grid gap-4 sm:grid-cols-2">
@@ -47,24 +61,37 @@ function IdentityFields({ payload, t, onChange }: NetworkTaskFieldsProps) {
           <Input id="network-task-name" value={payload.name} maxLength={100} onChange={(event) => onChange({ name: event.target.value })} />
         </Field>
         <Field>
+          <FieldLabel htmlFor="network-task-direction">{t("network.direction")}</FieldLabel>
+          <Select items={directions} value={payload.direction} onValueChange={(value) => changeDirection((value ?? "agent_to_target") as NetworkDirection)}>
+            <SelectTrigger id="network-task-direction" className="w-full"><SelectValue /></SelectTrigger>
+            <SelectContent><SelectGroup>{directions.map((option) => (
+              <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
+            ))}</SelectGroup></SelectContent>
+          </Select>
+        </Field>
+      </div>
+      <div className="grid gap-4 sm:grid-cols-2">
+        <Field>
           <FieldLabel htmlFor="network-task-type">{t("app.type")}</FieldLabel>
-          <Select items={options} value={payload.type} onValueChange={(value) => onChange({ type: (value ?? "icmp") as NetworkProbeType })}>
+          <Select items={options} value={payload.type} onValueChange={(value) => changeType((value ?? "icmp") as NetworkProbeType)}>
             <SelectTrigger id="network-task-type" className="w-full"><SelectValue /></SelectTrigger>
             <SelectContent><SelectGroup>{options.map((option) => (
               <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
             ))}</SelectGroup></SelectContent>
           </Select>
         </Field>
+        <Field>
+          <FieldLabel htmlFor="network-task-target">{t("network.target")}</FieldLabel>
+          <Input
+            id="network-task-target"
+            value={payload.target}
+            onChange={(event) => onChange({ target: event.target.value })}
+            placeholder={payload.direction === "server_to_agent"
+              ? t("network.target_hint.server")
+              : t(`network.target_hint.${payload.type}`)}
+          />
+        </Field>
       </div>
-      <Field>
-        <FieldLabel htmlFor="network-task-target">{t("network.target")}</FieldLabel>
-        <Input
-          id="network-task-target"
-          value={payload.target}
-          onChange={(event) => onChange({ target: event.target.value })}
-          placeholder={t(`network.target_hint.${payload.type}`)}
-        />
-      </Field>
     </>
   )
 }
@@ -72,7 +99,7 @@ function IdentityFields({ payload, t, onChange }: NetworkTaskFieldsProps) {
 function ScheduleFields({ payload, t, onChange }: NetworkTaskFieldsProps) {
   const options = familyOptions(t)
   return (
-    <div className="grid gap-4 sm:grid-cols-3">
+    <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
       <Field>
         <FieldLabel htmlFor="network-ip-family">{t("network.ip_family")}</FieldLabel>
         <Select items={options} value={payload.ip_family} onValueChange={(value) => onChange({ ip_family: (value ?? "auto") as NetworkIPFamily })}>
@@ -84,6 +111,7 @@ function ScheduleFields({ payload, t, onChange }: NetworkTaskFieldsProps) {
       </Field>
       <NumberField id="network-interval" label={t("network.interval_seconds")} value={payload.interval_seconds} min={10} max={86400} onChange={(value) => onChange({ interval_seconds: value })} />
       <NumberField id="network-timeout" label={t("network.timeout_ms")} value={payload.timeout_milliseconds} min={100} max={30000} onChange={(value) => onChange({ timeout_milliseconds: value })} />
+      {payload.type === "icmp" && <NumberField id="network-packet-count" label={t("network.packet_count")} value={payload.packet_count} min={1} max={20} onChange={(value) => onChange({ packet_count: value })} />}
     </div>
   )
 }
@@ -175,4 +203,14 @@ function typeOptions(t: (key: string) => string) {
 
 function familyOptions(t: (key: string) => string) {
   return (["auto", "ipv4", "ipv6"] as const).map((value) => ({ label: t(`network.family.${value}`), value }))
+}
+
+function directionOptions(t: (key: string) => string) {
+  return (["agent_to_target", "server_to_agent"] as const).map((value) => ({ label: t(`network.direction.${value}`), value }))
+}
+
+function serverTarget(type: NetworkProbeType): string {
+  if (type === "tcp") return "{{host_port}}"
+  if (type === "http") return "http://{{host}}/"
+  return "{{host}}"
 }

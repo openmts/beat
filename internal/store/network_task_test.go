@@ -239,6 +239,7 @@ func TestNetworkTaskStoreClosedDatabaseErrors(t *testing.T) {
 		{name: "update", run: func() error { _, err := tasks.UpdateTask(ctx, "task", task, nil); return err }},
 		{name: "get", run: func() error { _, err := tasks.GetTask(ctx, "task"); return err }},
 		{name: "list", run: func() error { _, err := tasks.ListTasks(ctx, false); return err }},
+		{name: "server tasks", run: func() error { _, err := tasks.ListServerTasks(ctx); return err }},
 		{name: "delete", run: func() error { _, err := tasks.DeleteTask(ctx, "task"); return err }},
 		{name: "sort", run: func() error { return tasks.UpdateSortOrder(ctx, []string{"task"}) }},
 		{name: "task nodes", run: func() error { _, err := tasks.listTaskNodes(ctx, "task"); return err }},
@@ -279,6 +280,66 @@ func TestNetworkTaskStoreAssignedTaskState(t *testing.T) {
 	missing, err := store.GetAssignedTask(ctx, "missing", task.ID)
 	if err != nil || missing != nil {
 		t.Fatalf("missing assignment = %#v, error = %v", missing, err)
+	}
+}
+
+func TestNetworkTaskStoreServerTasksAndDirectionLock(t *testing.T) {
+	s := setupTestDB(t)
+	ctx := t.Context()
+	nodeStore := NewNodeStore(s.DB)
+	first, err := nodeStore.UpsertNode(ctx, "server-target-one", "192.0.2.10", 2222)
+	if err != nil {
+		t.Fatalf("create first node: %v", err)
+	}
+	second, err := nodeStore.UpsertNode(ctx, "server-target-two", "2001:db8::10", 22)
+	if err != nil {
+		t.Fatalf("create second node: %v", err)
+	}
+	tasks := NewNetworkTaskStore(s.DB)
+
+	agentTask, err := tasks.CreateTask(ctx, validNetworkTask(), []string{first.ID})
+	if err != nil {
+		t.Fatalf("create agent task: %v", err)
+	}
+	serverInput := validNetworkTask()
+	serverInput.Name = "Server to nodes"
+	serverInput.Direction = model.NetworkDirectionServerToAgent
+	serverInput.Target = "{{host}}"
+	serverInput.PacketCount = 4
+	serverTask, err := tasks.CreateTask(ctx, serverInput, []string{first.ID, second.ID})
+	if err != nil {
+		t.Fatalf("create server task: %v", err)
+	}
+
+	serverTasks, err := tasks.ListServerTasks(ctx)
+	if err != nil {
+		t.Fatalf("list server tasks: %v", err)
+	}
+	if len(serverTasks) != 1 || serverTasks[0].ID != serverTask.ID || len(serverTasks[0].Targets) != 2 {
+		t.Fatalf("server tasks = %#v", serverTasks)
+	}
+	targets := map[string]model.NetworkProbeTarget{}
+	for _, target := range serverTasks[0].Targets {
+		targets[target.NodeID] = target
+	}
+	if targets[first.ID].Host != "192.0.2.10" || targets[first.ID].Port != 2222 ||
+		targets[second.ID].Host != "2001:db8::10" || targets[second.ID].Port != 22 {
+		t.Fatalf("server targets = %#v", targets)
+	}
+
+	assignments, err := tasks.ListAssignments(ctx, first.ID)
+	if err != nil {
+		t.Fatalf("list agent assignments: %v", err)
+	}
+	if len(assignments) != 1 || assignments[0].ID != agentTask.ID || assignments[0].Direction != model.NetworkDirectionAgentToTarget {
+		t.Fatalf("agent assignments = %#v", assignments)
+	}
+
+	changed := *serverTask
+	changed.Direction = model.NetworkDirectionAgentToTarget
+	changed.Target = "192.0.2.10"
+	if _, err := tasks.UpdateTask(ctx, serverTask.ID, changed, []string{first.ID}); err == nil {
+		t.Fatal("expected direction change rejection")
 	}
 }
 

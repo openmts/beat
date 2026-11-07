@@ -1,8 +1,9 @@
 import { act, renderHook, waitFor } from "@testing-library/react"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 
-import { useAdminNetworkTasks, useNetworkHistory, usePublicNetworkQuality } from "@/hooks/use-network"
+import { useAdminNetworkTasks, useNetworkHistory, useNodeNetworkSummaries, usePublicNetworkQuality } from "@/hooks/use-network"
 import * as networkApi from "@/lib/network-api"
+import type { NetworkTaskView } from "@/types"
 
 vi.mock("@/lib/network-api")
 
@@ -109,4 +110,33 @@ describe("network hooks", () => {
     }))
     await waitFor(() => expect(failed.result.current.error).toBe("history failed"))
   })
+
+  it("aggregates node summaries and avoids requests when disabled", async () => {
+    vi.mocked(networkApi.listPublicNetworkQuality).mockResolvedValueOnce([qualityView] as never)
+    const enabled = renderHook(() => useNodeNetworkSummaries(true))
+    await waitFor(() => expect(enabled.result.current.loading).toBe(false))
+    expect(enabled.result.current.summaries["node-one"]).toMatchObject({
+      type: "icmp", direction: "server_to_agent", latency_ms: 12, loss_percent: 5,
+    })
+    enabled.unmount()
+
+    vi.mocked(networkApi.listPublicNetworkQuality).mockClear()
+    const disabled = renderHook(() => useNodeNetworkSummaries(false))
+    await act(async () => { await Promise.resolve() })
+    expect(disabled.result.current.loading).toBe(false)
+    expect(networkApi.listPublicNetworkQuality).not.toHaveBeenCalled()
+  })
 })
+
+const qualityView: NetworkTaskView = {
+  task: {
+    id: "task", name: "Server probe", direction: "server_to_agent", type: "icmp", target: "{{host}}",
+    ip_family: "auto", interval_seconds: 60, timeout_milliseconds: 3000, packet_count: 5,
+    all_nodes: true, enabled: true, is_public: true, sort_order: 0, nodes: [], created_at: "", updated_at: "",
+  },
+  nodes: [{
+    node: { id: "node-one", name: "node-one", alias: "" },
+    latest: { timestamp: "2026-07-29T00:00:00Z", latency_ms: 12, success: true, status_code: 0,
+      error_code: "none", loss_percent: 5 },
+  }],
+}

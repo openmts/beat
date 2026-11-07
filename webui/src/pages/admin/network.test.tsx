@@ -81,11 +81,13 @@ const refresh = vi.fn().mockResolvedValue(undefined)
 const views = [taskView("one", "One", true, 0), taskView("two", "Two", true, 1), taskView("three", "Three", false, 2)]
 const taskPayload: NetworkTaskPayload = {
   name: "Saved",
+  direction: "agent_to_target",
   type: "icmp",
   target: "example.com",
   ip_family: "auto",
   interval_seconds: 60,
   timeout_milliseconds: 3000,
+  packet_count: 5,
   all_nodes: true,
   enabled: true,
   is_public: true,
@@ -201,11 +203,13 @@ function taskView(id: string, name: string, enabled: boolean, sortOrder: number)
     task: {
       id,
       name,
+      direction: "agent_to_target",
       type: "icmp",
       target: "example.com",
       ip_family: "auto",
       interval_seconds: 60,
       timeout_milliseconds: 3000,
+      packet_count: 5,
       all_nodes: true,
       enabled,
       is_public: true,

@@ -10,11 +10,12 @@ import (
 )
 
 type AssignedNetworkTask struct {
-	TaskID   string
-	NodeID   string
-	TaskType string
-	Enabled  bool
-	Assigned bool
+	TaskID    string
+	NodeID    string
+	TaskType  string
+	Direction string
+	Enabled   bool
+	Assigned  bool
 }
 
 func replaceTaskNodes(ctx context.Context, tx *sql.Tx, taskID string, allNodes bool, nodeIDs []string) error {
@@ -60,10 +61,10 @@ func (s *NetworkTaskStore) ListAssignments(
 	ctx context.Context,
 	nodeID string,
 ) ([]model.NetworkAssignment, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT t.id, t.name, t.type, t.target, t.ip_family,
-		t.interval_seconds, t.timeout_milliseconds
+	rows, err := s.db.QueryContext(ctx, `SELECT t.id, t.name, t.direction, t.type, t.target, t.ip_family,
+		t.interval_seconds, t.timeout_milliseconds, t.packet_count
 		FROM network_tasks t JOIN nodes n ON n.id = ?
-		WHERE t.enabled = 1 AND (t.all_nodes = 1 OR EXISTS (
+		WHERE t.enabled = 1 AND t.direction = 'agent_to_target' AND (t.all_nodes = 1 OR EXISTS (
 			SELECT 1 FROM network_task_nodes a WHERE a.task_id = t.id AND a.node_id = n.id
 		)) ORDER BY t.sort_order ASC, t.name ASC`, nodeID)
 	if err != nil {
@@ -73,8 +74,9 @@ func (s *NetworkTaskStore) ListAssignments(
 	assignments := []model.NetworkAssignment{}
 	for rows.Next() {
 		var assignment model.NetworkAssignment
-		if err := rows.Scan(&assignment.ID, &assignment.Name, &assignment.Type, &assignment.Target,
-			&assignment.IPFamily, &assignment.IntervalSeconds, &assignment.TimeoutMilliseconds); err != nil {
+		if err := rows.Scan(&assignment.ID, &assignment.Name, &assignment.Direction, &assignment.Type,
+			&assignment.Target, &assignment.IPFamily, &assignment.IntervalSeconds,
+			&assignment.TimeoutMilliseconds, &assignment.PacketCount); err != nil {
 			return nil, fmt.Errorf("scan network assignment: %w", err)
 		}
 		assignments = append(assignments, assignment)
@@ -91,12 +93,13 @@ func (s *NetworkTaskStore) GetAssignedTask(
 	taskID string,
 ) (*AssignedNetworkTask, error) {
 	var assigned AssignedNetworkTask
-	err := s.db.QueryRowContext(ctx, `SELECT t.id, n.id, t.type, t.enabled,
+	err := s.db.QueryRowContext(ctx, `SELECT t.id, n.id, t.type, t.direction, t.enabled,
 		(t.all_nodes = 1 OR EXISTS (
 			SELECT 1 FROM network_task_nodes a WHERE a.task_id = t.id AND a.node_id = n.id
 		))
 		FROM network_tasks t JOIN nodes n ON n.id = ? WHERE t.id = ?`, nodeID, taskID).
-		Scan(&assigned.TaskID, &assigned.NodeID, &assigned.TaskType, &assigned.Enabled, &assigned.Assigned)
+		Scan(&assigned.TaskID, &assigned.NodeID, &assigned.TaskType, &assigned.Direction,
+			&assigned.Enabled, &assigned.Assigned)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}

@@ -90,8 +90,9 @@ func TestSQLiteSchemaContainsOnlyApplicationData(t *testing.T) {
 	}
 
 	wantNetworkColumns := []string{
-		"all_nodes", "created_at", "enabled", "id", "interval_seconds", "ip_family",
-		"is_public", "lifecycle_state", "name", "sort_order", "target", "timeout_milliseconds", "type", "updated_at",
+		"all_nodes", "created_at", "direction", "enabled", "id", "interval_seconds", "ip_family",
+		"is_public", "lifecycle_state", "name", "packet_count", "sort_order", "target",
+		"timeout_milliseconds", "type", "updated_at",
 	}
 	rows, err = store.DB.Query("SELECT name FROM pragma_table_info('network_tasks') ORDER BY name")
 	if err != nil {

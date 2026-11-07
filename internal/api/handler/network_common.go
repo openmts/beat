@@ -35,11 +35,13 @@ type NetworkHandler struct {
 
 type networkTaskRequest struct {
 	Name                string   `json:"name"`
+	Direction           string   `json:"direction"`
 	Type                string   `json:"type"`
 	Target              string   `json:"target"`
 	IPFamily            string   `json:"ip_family"`
 	IntervalSeconds     int      `json:"interval_seconds"`
 	TimeoutMilliseconds int      `json:"timeout_milliseconds"`
+	PacketCount         int      `json:"packet_count"`
 	AllNodes            bool     `json:"all_nodes"`
 	Enabled             bool     `json:"enabled"`
 	IsPublic            bool     `json:"is_public"`
@@ -77,8 +79,9 @@ func NewNetworkHandler(
 
 func (body networkTaskRequest) task() model.NetworkTask {
 	return model.NetworkTask{
-		Name: body.Name, Type: body.Type, Target: body.Target, IPFamily: body.IPFamily,
-		IntervalSeconds: body.IntervalSeconds, TimeoutMilliseconds: body.TimeoutMilliseconds,
+		Name: body.Name, Direction: body.Direction, Type: body.Type, Target: body.Target,
+		IPFamily: body.IPFamily, IntervalSeconds: body.IntervalSeconds,
+		TimeoutMilliseconds: body.TimeoutMilliseconds, PacketCount: body.PacketCount,
 		AllNodes: body.AllNodes, Enabled: body.Enabled, IsPublic: body.IsPublic, SortOrder: body.SortOrder,
 	}
 }

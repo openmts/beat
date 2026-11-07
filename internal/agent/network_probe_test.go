@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"errors"
+	"math"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -119,14 +120,51 @@ func TestNetworkProberICMPLoopback(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 			defer cancel()
-			if err := prober.probeICMP(ctx, test.target, test.family); err != nil {
+			stats, err := prober.probeICMP(ctx, test.target, test.family, 3)
+			if err != nil {
 				if isICMPPrivilegeError(err) {
 					t.Skipf("ICMP socket unavailable in this environment: %v", err)
 				}
 				t.Fatalf("probe ICMP %s: %v", test.target, err)
 			}
+			if stats.sent != 3 || stats.received != 3 || len(stats.rtts) != 3 {
+				t.Fatalf("ICMP stats = %#v", stats)
+			}
 		})
 	}
+}
+
+func TestApplyICMPStats(t *testing.T) {
+	t.Run("partial loss and jitter", func(t *testing.T) {
+		result := model.NetworkProbeResult{LatencyMS: 999}
+		applyICMPStats(&result, icmpProbeStats{
+			sent: 4, received: 2, rtts: []time.Duration{10 * time.Millisecond, 30 * time.Millisecond},
+		})
+		if result.SentPackets != 4 || result.ReceivedPackets != 2 || result.LossPercent == nil || *result.LossPercent != 50 {
+			t.Fatalf("packet stats = %#v", result)
+		}
+		if result.LatencyMS != 20 || result.MinLatencyMS == nil || *result.MinLatencyMS != 10 ||
+			result.MaxLatencyMS == nil || *result.MaxLatencyMS != 30 ||
+			result.JitterMS == nil || *result.JitterMS != 20 {
+			t.Fatalf("latency stats = %#v", result)
+		}
+	})
+
+	t.Run("zero packets keeps latency and omits loss", func(t *testing.T) {
+		result := model.NetworkProbeResult{LatencyMS: 12}
+		applyICMPStats(&result, icmpProbeStats{})
+		if result.SentPackets != 0 || result.ReceivedPackets != 0 || result.LossPercent != nil || result.LatencyMS != 12 {
+			t.Fatalf("empty stats = %#v", result)
+		}
+	})
+
+	t.Run("single reply has zero jitter", func(t *testing.T) {
+		result := model.NetworkProbeResult{}
+		applyICMPStats(&result, icmpProbeStats{sent: 3, received: 1, rtts: []time.Duration{15 * time.Millisecond}})
+		if result.LossPercent == nil || math.Abs(*result.LossPercent-200.0/3) > 1e-9 || result.JitterMS == nil || *result.JitterMS != 0 {
+			t.Fatalf("single reply stats = %#v", result)
+		}
+	})
 }
 
 func TestNetworkProberResolutionAndValidation(t *testing.T) {
@@ -192,7 +230,7 @@ func TestNetworkProbeAdditionalBranches(t *testing.T) {
 		resolver: fakeIPResolver{addresses: []netip.Addr{netip.MustParseAddr("192.0.2.1")}},
 		now:      model.NowUTC,
 	}
-	if _, err := prober.execute(t.Context(), networkAssignment("unknown", "target")); !errors.Is(err, errInvalidProbeTarget) {
+	if _, _, err := prober.execute(t.Context(), networkAssignment("unknown", "target")); !errors.Is(err, errInvalidProbeTarget) {
 		t.Fatalf("unknown probe error = %v", err)
 	}
 	if _, err := prober.resolve(t.Context(), "127.0.0.1", model.IPFamilyIPv6); !errors.Is(err, errInvalidProbeTarget) {
@@ -204,7 +242,7 @@ func TestNetworkProbeAdditionalBranches(t *testing.T) {
 	if !matchesIPFamily(netip.MustParseAddr("127.0.0.1"), model.IPFamilyAuto) {
 		t.Fatal("auto family should accept IPv4")
 	}
-	if err := prober.probeICMP(t.Context(), "0.0.0.0", model.IPFamilyIPv4); !errors.Is(err, errInvalidProbeTarget) {
+	if _, err := prober.probeICMP(t.Context(), "0.0.0.0", model.IPFamilyIPv4, 1); !errors.Is(err, errInvalidProbeTarget) {
 		t.Fatalf("unspecified ICMP error = %v", err)
 	}
 	if _, err := prober.probeHTTP(t.Context(), "ftp://example.test", model.IPFamilyAuto); !errors.Is(err, errInvalidProbeTarget) {

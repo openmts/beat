@@ -328,6 +328,11 @@ export const zhCNPublicCatalog: Catalog = {
     "network.target_hint.icmp": "example.com 或 2001:db8::1",
     "network.target_hint.tcp": "example.com:443 或 [2001:db8::1]:443",
     "network.target_hint.http": "https://example.com/health",
+    "network.target_hint.server": "服务端探测使用已登记节点地址。",
+    "network.direction": "探测方向",
+    "network.direction.agent_to_target": "Agent → 目标",
+    "network.direction.server_to_agent": "Server → Agent",
+    "network.packet_count": "ICMP 包数",
     "network.type.icmp": "ICMP",
     "network.type.tcp": "TCP",
     "network.type.http": "HTTP",
@@ -365,6 +370,8 @@ export const zhCNPublicCatalog: Catalog = {
     "network.validation_interval": "执行间隔必须在 10 到 86400 秒之间。",
     "network.validation_timeout": "超时时间必须在 100 到 30000 毫秒之间。",
     "network.validation_timeout_interval": "超时时间不能超过执行间隔。",
+    "network.validation_packet_count": "ICMP 包数必须在 1 到 20 之间。",
+    "network.validation_server_target": "服务端目标必须使用支持的节点地址占位符。",
     "agent.releases": "Agent 版本与灰度升级",
 
 

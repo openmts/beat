@@ -340,6 +340,7 @@ export interface MetricDataPoint {
 
 export type NetworkProbeType = "icmp" | "tcp" | "http"
 export type NetworkIPFamily = "auto" | "ipv4" | "ipv6"
+export type NetworkDirection = "agent_to_target" | "server_to_agent"
 
 export interface NetworkNode {
   id: string
@@ -353,6 +354,23 @@ export interface NetworkProbeLatest {
   success: boolean
   status_code: number
   error_code: string
+  sent_packets?: number
+  received_packets?: number
+  loss_percent?: number | null
+  jitter_ms?: number | null
+  min_latency_ms?: number | null
+  max_latency_ms?: number | null
+}
+
+export interface NodeNetworkSummary {
+  task_id: string
+  task_name: string
+  direction: NetworkDirection
+  type: NetworkProbeType
+  latency_ms: number | null
+  loss_percent: number | null
+  success: boolean
+  timestamp: string
 }
 
 export interface NetworkNodeState {
@@ -363,11 +381,13 @@ export interface NetworkNodeState {
 export interface NetworkTask {
   id: string
   name: string
+  direction: NetworkDirection
   type: NetworkProbeType
   target: string
   ip_family: NetworkIPFamily
   interval_seconds: number
   timeout_milliseconds: number
+  packet_count: number
   all_nodes: boolean
   enabled: boolean
   is_public: boolean
@@ -399,11 +419,13 @@ export interface NetworkHistoryResponse {
 
 export interface NetworkTaskPayload {
   name: string
+  direction: NetworkDirection
   type: NetworkProbeType
   target: string
   ip_family: NetworkIPFamily
   interval_seconds: number
   timeout_milliseconds: number
+  packet_count: number
   all_nodes: boolean
   enabled: boolean
   is_public: boolean

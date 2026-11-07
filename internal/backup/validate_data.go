@@ -106,14 +106,64 @@ func validCatalogMetricRecord(record metricRecord, cutoff int64, definitions map
 		return err == nil
 	}
 	if record.Measurement == "network_probe" {
-		return exactKeys(record.Tags, "task", "node", "type") &&
-			exactFields(record.Fields, map[string]mts.FieldType{"latency_ms": mts.FieldFloat64,
-				"success": mts.FieldFloat64, "status_code": mts.FieldInt64, "error_code": mts.FieldString})
+		return validNetworkProbeArchiveRecord(record)
 	}
 	if !exactKeys(record.Tags, "node") {
 		return false
 	}
 	return validScalarMetricRecord(record, definitions)
+}
+
+// validNetworkProbeArchiveRecord accepts the v31 schema and the v32 schema.
+// v32 adds direction plus optional packet-loss, jitter, and latency-range fields;
+// keeping the v31 shape readable preserves restore compatibility for old backups.
+func validNetworkProbeArchiveRecord(record metricRecord) bool {
+	if !validNetworkProbeTags(record.Tags) || len(record.Fields) < 4 {
+		return false
+	}
+	required := map[string]mts.FieldType{
+		"latency_ms": mts.FieldFloat64, "success": mts.FieldFloat64,
+		"status_code": mts.FieldInt64, "error_code": mts.FieldString,
+	}
+	for name, fieldType := range required {
+		if record.Fields[name].Type != fieldType {
+			return false
+		}
+	}
+	allowed := map[string]mts.FieldType{
+		"latency_ms": mts.FieldFloat64, "success": mts.FieldFloat64,
+		"status_code": mts.FieldInt64, "error_code": mts.FieldString,
+		"sent_packets": mts.FieldInt64, "received_packets": mts.FieldInt64,
+		"loss_percent": mts.FieldFloat64, "jitter_ms": mts.FieldFloat64,
+		"min_latency_ms": mts.FieldFloat64, "max_latency_ms": mts.FieldFloat64,
+	}
+	for name, field := range record.Fields {
+		fieldType, ok := allowed[name]
+		if !ok || field.Type != fieldType {
+			return false
+		}
+		if fieldType == mts.FieldFloat64 && (math.IsNaN(field.Float64) || math.IsInf(field.Float64, 0)) {
+			return false
+		}
+	}
+	return true
+}
+
+func validNetworkProbeTags(tags map[string]string) bool {
+	if len(tags) != 3 && len(tags) != 4 {
+		return false
+	}
+	for _, key := range []string{"task", "node", "type"} {
+		if tags[key] == "" || len(tags[key]) > 128 {
+			return false
+		}
+	}
+	direction, hasDirection := tags["direction"]
+	if !hasDirection {
+		return len(tags) == 3
+	}
+	return len(tags) == 4 && (direction == model.NetworkDirectionAgentToTarget ||
+		direction == model.NetworkDirectionServerToAgent)
 }
 
 func validScalarMetricRecord(record metricRecord, definitions map[string]model.MetricDefinition) bool {

@@ -16,8 +16,8 @@ type NetworkTaskStore struct {
 	db *sql.DB
 }
 
-const networkTaskColumns = `id, name, type, target, ip_family, interval_seconds,
-	timeout_milliseconds, all_nodes, enabled, is_public, sort_order, created_at, updated_at`
+const networkTaskColumns = `id, name, direction, type, target, ip_family, interval_seconds,
+	timeout_milliseconds, packet_count, all_nodes, enabled, is_public, sort_order, created_at, updated_at`
 
 func NewNetworkTaskStore(db *sql.DB) *NetworkTaskStore {
 	return &NetworkTaskStore{db: db}
@@ -28,6 +28,7 @@ func (s *NetworkTaskStore) CreateTask(
 	task model.NetworkTask,
 	nodeIDs []string,
 ) (*model.NetworkTask, error) {
+	task.Normalize()
 	if err := validateTaskWrite(task, nodeIDs); err != nil {
 		return nil, err
 	}
@@ -61,8 +62,16 @@ func (s *NetworkTaskStore) UpdateTask(
 	task model.NetworkTask,
 	nodeIDs []string,
 ) (*model.NetworkTask, error) {
+	task.Normalize()
 	if err := validateTaskWrite(task, nodeIDs); err != nil {
 		return nil, err
+	}
+	existing, err := s.GetTask(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if existing != nil && existing.Direction != task.Direction {
+		return nil, errors.New("network task direction cannot be changed")
 	}
 	task.ID = id
 	task.UpdatedAt = model.NowUTC()
@@ -71,11 +80,11 @@ func (s *NetworkTaskStore) UpdateTask(
 		return nil, fmt.Errorf("begin network task update: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
-	result, err := tx.ExecContext(ctx, `UPDATE network_tasks SET name = ?, type = ?, target = ?,
-		ip_family = ?, interval_seconds = ?, timeout_milliseconds = ?, all_nodes = ?, enabled = ?,
+	result, err := tx.ExecContext(ctx, `UPDATE network_tasks SET name = ?, direction = ?, type = ?, target = ?,
+		ip_family = ?, interval_seconds = ?, timeout_milliseconds = ?, packet_count = ?, all_nodes = ?, enabled = ?,
 		is_public = ?, sort_order = ?, updated_at = ? WHERE id = ?`,
-		task.Name, task.Type, task.Target, task.IPFamily, task.IntervalSeconds,
-		task.TimeoutMilliseconds, task.AllNodes, task.Enabled, task.IsPublic,
+		task.Name, task.Direction, task.Type, task.Target, task.IPFamily, task.IntervalSeconds,
+		task.TimeoutMilliseconds, task.PacketCount, task.AllNodes, task.Enabled, task.IsPublic,
 		task.SortOrder, task.UpdatedAt, id)
 	if err != nil {
 		return nil, fmt.Errorf("update network task: %w", err)
@@ -185,9 +194,10 @@ func (s *NetworkTaskStore) UpdateSortOrder(ctx context.Context, ids []string) er
 
 func insertNetworkTask(ctx context.Context, tx *sql.Tx, task model.NetworkTask) error {
 	_, err := tx.ExecContext(ctx, `INSERT INTO network_tasks (`+networkTaskColumns+`)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, task.ID, task.Name, task.Type,
-		task.Target, task.IPFamily, task.IntervalSeconds, task.TimeoutMilliseconds,
-		task.AllNodes, task.Enabled, task.IsPublic, task.SortOrder, task.CreatedAt, task.UpdatedAt)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, task.ID, task.Name, task.Direction,
+		task.Type, task.Target, task.IPFamily, task.IntervalSeconds, task.TimeoutMilliseconds,
+		task.PacketCount, task.AllNodes, task.Enabled, task.IsPublic, task.SortOrder,
+		task.CreatedAt, task.UpdatedAt)
 	if err != nil {
 		return fmt.Errorf("insert network task: %w", err)
 	}
@@ -196,9 +206,10 @@ func insertNetworkTask(ctx context.Context, tx *sql.Tx, task model.NetworkTask) 
 
 func scanNetworkTask(scanner rowScanner) (model.NetworkTask, error) {
 	var task model.NetworkTask
-	err := scanner.Scan(&task.ID, &task.Name, &task.Type, &task.Target, &task.IPFamily,
-		&task.IntervalSeconds, &task.TimeoutMilliseconds, &task.AllNodes, &task.Enabled,
-		&task.IsPublic, &task.SortOrder, &task.CreatedAt, &task.UpdatedAt)
+	err := scanner.Scan(&task.ID, &task.Name, &task.Direction, &task.Type, &task.Target,
+		&task.IPFamily, &task.IntervalSeconds, &task.TimeoutMilliseconds, &task.PacketCount,
+		&task.AllNodes, &task.Enabled, &task.IsPublic, &task.SortOrder,
+		&task.CreatedAt, &task.UpdatedAt)
 	return task, err
 }
 

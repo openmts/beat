@@ -858,16 +858,15 @@ unshipped resumable-upload session status endpoint moved to
 path and every other upload endpoint are unchanged. The frontend
 (`webui/src/lib/backup-api.ts`) and the handler test follow the new path.
 
-## Schema ledger, 2026-10-23
+## Schema ledger, 2026-11-07
 
 The allocation table above lists reviewed batches. It is **not** a status board:
-every number from `v8` to `v31` now exists as a real migration. Schema `v31`
-adds encrypted outbound proxy settings and was applied by the v239 preview
-deployment. Evidence:
+every number from `v8` to `v32` now exists as a real migration. Schema `v32`
+adds network-quality probe directions and ICMP packet counts. Evidence:
 
-- `internal/store/sqlite_migrations.go` — `currentSchemaVersion = 31`, with the
-  inventory `v1`…`v31` in order (`application_schema_baseline` …
-  `egress_proxy_settings`).
+- `internal/store/sqlite_migrations.go` — `currentSchemaVersion = 32`, with the
+  inventory `v1`…`v32` in order (`application_schema_baseline` …
+  `network_quality_directions`).
 - Live preview database (`/var/lib/beat-preview/data/beat.db`, opened read-only):
   `schema_migrations` held 31 contiguous rows with `max(version) = 31` and
   `egress_proxy_settings` as the latest migration at the last recorded
@@ -891,12 +890,13 @@ Deployed migration names (authoritative; `sqlite_migrations.go` is the source):
 | `v29` | `agent_release_retention` | `v29` agent-release-retention |
 | `v30` | `accelerator_public_visibility` | `v30` accelerator-public-visibility |
 | `v31` | `egress_proxy_settings` | outbound proxy settings |
+| `v32` | `network_quality_directions` | network quality directions |
 
 Backup envelope: the writer emits `format_version: 4`
 (`internal/backup/archive_create.go`) and the validator accepts `1`–`4`
 (`internal/backup/manifest.go`), so `v26`–`v28` extend the archive payload
 through `platform.sqlite` without changing the envelope. Next free number is
-schema `v32`; backup format `v5` remains unallocated until a design needs it.
+schema `v33`; backup format `v5` remains unallocated until a design needs it.
 
 Rule that keeps this ledger honest: a number is *deployed* only when the
 migration exists in `sqlite_migrations.go` and the preview database reports it;

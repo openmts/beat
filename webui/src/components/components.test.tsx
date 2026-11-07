@@ -101,6 +101,32 @@ describe("shared components", () => {
     expect(screen.getAllByText("--").length).toBeGreaterThan(0)
   })
 
+  it("shows network latency and packet loss only when node quality is provided", () => {
+    const network = {
+      task_id: "task", task_name: "Server probe", direction: "server_to_agent" as const,
+      type: "icmp" as const, latency_ms: 12, loss_percent: 5, success: true,
+      timestamp: "2026-07-29T00:00:00Z",
+    }
+    const { rerender } = render(<Providers><NodeCard node={baseNode} /></Providers>)
+    expect(screen.queryByText("Network latency")).not.toBeInTheDocument()
+    rerender(<Providers><NodeCard node={baseNode} network={network} /></Providers>)
+    expect(screen.getByText("Network latency")).toBeInTheDocument()
+    expect(screen.getByText("12 ms")).toBeInTheDocument()
+    expect(screen.getByText("Packet loss")).toBeInTheDocument()
+    expect(screen.getByText("5.0%")).toBeInTheDocument()
+  })
+
+  it("shows pending placeholders for a configured network task", () => {
+    const network = {
+      task_id: "task", task_name: "Server probe", direction: "server_to_agent" as const,
+      type: "icmp" as const, latency_ms: null, loss_percent: null, success: false, timestamp: "",
+    }
+    render(<Providers><NodeCard node={baseNode} network={network} /></Providers>)
+    expect(screen.getByText("Network latency")).toBeInTheDocument()
+    expect(screen.getByText("Packet loss")).toBeInTheDocument()
+    expect(screen.getAllByText("--").length).toBeGreaterThanOrEqual(2)
+  })
+
   it("renders empty and populated metric charts", () => {
     const { rerender } = render(
       <Providers>

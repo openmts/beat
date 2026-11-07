@@ -13,15 +13,17 @@ import { useLocale } from "@/context/locale"
 import { formatInteger } from "@/lib/intl-format"
 import { TelemetryStatus } from "@/components/telemetry-status"
 import { formatBytes, formatDuration, formatMetricValue } from "@/lib/metric-format"
+import { formatLatency, formatPacketLoss } from "@/lib/network-quality"
 import { cn } from "@/lib/utils"
-import type { Node } from "@/types"
+import type { Node, NodeNetworkSummary } from "@/types"
 
 interface NodeCardProps {
   node?: Node
+  network?: NodeNetworkSummary
   loading?: boolean
 }
 
-export function NodeCard({ node, loading = false }: NodeCardProps) {
+export function NodeCard({ node, network, loading = false }: NodeCardProps) {
   const { locale, t } = useLocale()
   if (loading || !node) return <NodeCardSkeleton />
 
@@ -81,6 +83,12 @@ export function NodeCard({ node, loading = false }: NodeCardProps) {
               detail={formatPercent(metrics.swap, locale)}
             />
           </dl>
+          {network ? (
+            <dl className="grid grid-cols-2 gap-2 border-t pt-3" title={network.task_name}>
+              <CompactStat label={t("node.network_latency")} value={formatLatency(network.latency_ms)} />
+              <CompactStat label={t("node.network_packet_loss")} value={formatPacketLoss(network.loss_percent)} />
+            </dl>
+          ) : null}
           <dl className="grid grid-cols-1 gap-2 border-t pt-3 sm:grid-cols-2">
             <NetworkRow
               label={t("node.network")}
