@@ -32,7 +32,7 @@ jobs:
       - name: Install quality tools
         run: |
           go install github.com/incu6us/goimports-reviser/v3@v3.12.6
-          go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.2
+          go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.14.0
           go install golang.org/x/vuln/cmd/govulncheck@v1.4.0
       - name: Backend format, lint, security and build gate
         run: scripts/check.sh backend-static
