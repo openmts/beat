@@ -5,6 +5,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert"
 import { MetricsChart } from "@/components/metrics-chart"
 import { ThemedNodeCollection } from "@/components/themed-node-collection"
 import { NodeOverview } from "@/pages/node-detail-overview"
+import { FleetOverview } from "@/pages/fleet-overview"
 import { useLocale } from "@/context/locale"
 import { usePublicTheme } from "@/lib/theme-presentation"
 import type { Node } from "@/types"
@@ -22,7 +23,7 @@ export function ThemePreviewContent({ onBack }: { onBack: () => void }) {
       <h2 className="text-xl font-semibold">{selected.alias || selected.name}</h2>
       <div data-theme-detail-layout={definition.detail} className={definition.detail === "compact" ? "grid items-start gap-5 lg:grid-cols-[minmax(16rem,22rem)_1fr]" : "space-y-5"}>
         <NodeOverview node={previewNode(selected)} /><PreviewCharts />
-      </div></> : <ThemedNodeCollection selectedGroup="" />}
+      </div></> : <><FleetOverview nodes={snapshot.nodes.map(previewNode)} unavailable={false} /><ThemedNodeCollection selectedGroup="" /></>}
   </main></div>
 }
 

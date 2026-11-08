@@ -2,11 +2,10 @@ package main
 
 import (
 	"bytes"
-	"crypto/sha256"
-	"encoding/hex"
 	"image/png"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -15,20 +14,12 @@ import (
 )
 
 const (
+	deliveredThemeName   = "default"
 	minimumPreviewWidth  = 320
 	minimumPreviewHeight = 180
 )
 
-// deliveredThemes 是随前端发布的声明式主题，必须能由 themes/<name> 源码逐字节复现。
-var deliveredThemes = []string{"slate", "operations", "canvas", "graphite", "aurora", "terminal", "paper", "midnight", "solar"}
-
-// deliveredSandboxThemes 是随前端发布的脚本主题（iframe 沙箱），同样要求逐字节复现。
-var deliveredSandboxThemes = []string{"pulse"}
-
-// shippedThemeNames 汇总全部已发布主题，供预览图与分发资产核对共用。
-func shippedThemeNames() []string {
-	return append(append([]string{}, deliveredThemes...), deliveredSandboxThemes...)
-}
+var deliveredThemeNames = []string{"default", "paper"}
 
 // shippedCopies 是构建脚本复制到前端的说明、SDK 与许可文件。
 var shippedCopies = []struct{ shipped, source string }{
@@ -39,47 +30,23 @@ var shippedCopies = []struct{ shipped, source string }{
 	{"webui/public/themes/LICENSE", "themes/LICENSE"},
 }
 
-func TestDeliveredThemesAreDistinctDeclarativePackages(t *testing.T) {
-	digests := make(map[string]string, len(deliveredThemes))
-	definitions := make(map[string]string, len(deliveredThemes))
-	for _, name := range deliveredThemes {
-		validated, packed := packDeliveredTheme(t, name)
-		if validated.Manifest.Runtime != "declarative" || validated.Manifest.SchemaVersion != 1 {
-			t.Fatalf("theme %s must be a declarative schema 1 package", name)
-		}
-		if _, err := theme.ParseDefinition(validated.Content["theme.json"]); err != nil {
-			t.Fatalf("theme %s definition is rejected: %v", name, err)
-		}
-		digests[name] = digestOf(t, packed)
-		definitions[name] = digestOf(t, validated.Content["theme.json"])
+func TestDefaultThemeIsAValidSandboxPackage(t *testing.T) {
+	validated, _ := packDeliveredTheme(t)
+	if validated.Manifest.SchemaVersion != 1 || validated.Manifest.Runtime != model.ThemeRuntimeSandboxed {
+		t.Fatalf("default theme must be a sandboxed schema 1 package")
 	}
-	if len(distinctValues(digests)) != len(deliveredThemes) {
-		t.Fatalf("delivered theme archives are not distinct: %v", digests)
+	entry, html := sandboxEntryOf(t, validated)
+	for _, referenced := range []string{"theme.css", "components.css", "theme.js"} {
+		if !bytes.Contains(html, []byte(referenced)) {
+			t.Fatalf("default theme entry %s does not reference %s", entry, referenced)
+		}
 	}
-	if len(distinctValues(definitions)) != len(deliveredThemes) {
-		t.Fatalf("delivered theme definitions are not distinct: %v", definitions)
+	sdk, err := os.ReadFile(repositoryPath("themes", "sdk", "bridge.js"))
+	if err != nil {
+		t.Fatalf("theme SDK source is unreadable: %v", err)
 	}
-}
-
-func TestDeliveredSandboxThemesAreValidIframePackages(t *testing.T) {
-	for _, name := range deliveredSandboxThemes {
-		validated, _ := packDeliveredTheme(t, name)
-		if validated.Manifest.Runtime != model.ThemeRuntimeSandboxed || validated.Manifest.SchemaVersion != 1 {
-			t.Fatalf("theme %s must be a sandboxed schema 1 package", name)
-		}
-		entry, html := sandboxEntryOf(t, validated)
-		for _, referenced := range []string{"theme.css", "theme.js"} {
-			if !bytes.Contains(html, []byte(referenced)) {
-				t.Fatalf("theme %s entry %s does not reference %s", name, entry, referenced)
-			}
-		}
-		sdk, err := os.ReadFile(repositoryPath("themes", "sdk", "bridge.js"))
-		if err != nil {
-			t.Fatalf("theme SDK source is unreadable: %v", err)
-		}
-		if !bytes.Equal(validated.Content[filepath.Join(filepath.Dir(entry), "beat-sdk.js")], sdk) {
-			t.Fatalf("theme %s must ship the repository SDK copy beside its entry", name)
-		}
+	if !bytes.Equal(validated.Content[filepath.Join(filepath.Dir(entry), "beat-sdk.js")], sdk) {
+		t.Fatal("default theme must ship a byte-identical SDK beside its entry")
 	}
 }
 
@@ -101,31 +68,76 @@ func sandboxEntryOf(t *testing.T, validated *theme.ValidatedPackage) (string, []
 	return entry, validated.Content[entry]
 }
 
-func TestDeliveredThemePreviewsAreUsableRasters(t *testing.T) {
-	for _, name := range shippedThemeNames() {
-		validated, _ := packDeliveredTheme(t, name)
-		preview := validated.Content[validated.Manifest.Preview]
-		if len(preview) == 0 {
-			t.Fatalf("theme %s does not ship the declared preview %q", name, validated.Manifest.Preview)
+func TestDefaultThemePreviewIsUsable(t *testing.T) {
+	validated, _ := packDeliveredTheme(t)
+	assertThemePreview(t, validated)
+}
+
+func TestPaperThemeIsAValidSandboxPackage(t *testing.T) {
+	validated, _ := packTheme(t, "paper")
+	if validated.Manifest.SchemaVersion != 1 || validated.Manifest.Runtime != model.ThemeRuntimeSandboxed {
+		t.Fatalf("paper theme must be a sandboxed schema 1 package")
+	}
+	entry, html := sandboxEntryOf(t, validated)
+	for _, referenced := range []string{"theme.css", "theme.js"} {
+		if !bytes.Contains(html, []byte(referenced)) {
+			t.Fatalf("paper theme entry %s does not reference %s", entry, referenced)
 		}
-		config, err := png.DecodeConfig(bytes.NewReader(preview))
-		if err != nil {
-			t.Fatalf("theme %s preview is not a PNG: %v", name, err)
-		}
-		if config.Width < minimumPreviewWidth || config.Height < minimumPreviewHeight {
-			t.Fatalf("theme %s preview is too small: %dx%d", name, config.Width, config.Height)
-		}
+	}
+	sdk, err := os.ReadFile(repositoryPath("themes", "sdk", "bridge.js"))
+	if err != nil {
+		t.Fatalf("theme SDK source is unreadable: %v", err)
+	}
+	if !bytes.Equal(validated.Content[filepath.Join(filepath.Dir(entry), "beat-sdk.js")], sdk) {
+		t.Fatal("paper theme must ship a byte-identical SDK beside its entry")
+	}
+}
+
+func TestPaperThemePreviewIsUsable(t *testing.T) {
+	validated, _ := packTheme(t, "paper")
+	assertThemePreview(t, validated)
+}
+
+func assertThemePreview(t *testing.T, validated *theme.ValidatedPackage) {
+	t.Helper()
+	preview := validated.Content[validated.Manifest.Preview]
+	config, err := png.DecodeConfig(bytes.NewReader(preview))
+	if err != nil {
+		t.Fatalf("theme preview is not a PNG: %v", err)
+	}
+	if config.Width < minimumPreviewWidth || config.Height < minimumPreviewHeight {
+		t.Fatalf("theme preview is too small: %dx%d", config.Width, config.Height)
+	}
+}
+
+func TestThemeModuleGraphsAreSelfContained(t *testing.T) {
+	for _, name := range deliveredThemeNames {
+		t.Run(name, func(t *testing.T) {
+			validated, _ := packTheme(t, name)
+			relativeImport := regexp.MustCompile(`from\s+["'](\.[^"']+)["']`)
+			for path, content := range validated.Content {
+				if strings.ToLower(filepath.Ext(path)) != ".js" {
+					continue
+				}
+				for _, match := range relativeImport.FindAllStringSubmatch(string(content), -1) {
+					target := filepath.ToSlash(filepath.Clean(filepath.Join(filepath.Dir(path), match[1])))
+					if _, ok := validated.Content[target]; !ok {
+						t.Errorf("%s imports missing module %s", path, target)
+					}
+				}
+			}
+		})
 	}
 }
 
 func TestShippedThemeAssetsMatchSources(t *testing.T) {
 	compared := 0
-	for _, name := range shippedThemeNames() {
-		_, packed := packDeliveredTheme(t, name)
+	for _, name := range deliveredThemeNames {
+		_, packed := packTheme(t, name)
 		compared += compareShippedFile(t, filepath.Join("webui", "public", "themes", name+".theme.zip"), packed)
 		preview, err := os.ReadFile(repositoryPath("themes", name, "preview.png"))
 		if err != nil {
-			t.Fatalf("theme %s preview source is unreadable: %v", name, err)
+			t.Fatalf("%s theme preview source is unreadable: %v", name, err)
 		}
 		compared += compareShippedFile(t, filepath.Join("webui", "public", "themes", name+".preview.png"), preview)
 	}
@@ -137,7 +149,30 @@ func TestShippedThemeAssetsMatchSources(t *testing.T) {
 		compared += compareShippedFile(t, copy.shipped, source)
 	}
 	if compared == 0 {
-		t.Log("no prebuilt theme assets found; run scripts/build-themes.sh to build and verify the shipped copies")
+		t.Log("no generated theme assets found; run scripts/build-themes.sh to verify the shipped copies")
+	}
+}
+
+func TestShippedThemeDistributionHasNoUnexpectedPackages(t *testing.T) {
+	paths, err := filepath.Glob(repositoryPath("webui", "public", "themes", "*"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range paths {
+		name := filepath.Base(path)
+		if !strings.HasSuffix(name, ".theme.zip") && !strings.HasSuffix(name, ".preview.png") {
+			continue
+		}
+		allowed := false
+		for _, themeName := range deliveredThemeNames {
+			if name == themeName+".theme.zip" || name == themeName+".preview.png" {
+				allowed = true
+				break
+			}
+		}
+		if !allowed {
+			t.Errorf("unexpected bundled theme artifact: %s", path)
+		}
 	}
 }
 
@@ -157,51 +192,27 @@ func compareShippedFile(t *testing.T, shipped string, expected []byte) int {
 	return 1
 }
 
-func packDeliveredTheme(t *testing.T, name string) (*theme.ValidatedPackage, []byte) {
+func packDeliveredTheme(t *testing.T) (*theme.ValidatedPackage, []byte) {
 	t.Helper()
-	options := theme.PackOptions{
+	return packTheme(t, deliveredThemeName)
+}
+
+func packTheme(t *testing.T, name string) (*theme.ValidatedPackage, []byte) {
+	t.Helper()
+	packed, err := theme.BuildArchive(theme.PackOptions{
 		Source: repositoryPath("themes", name),
-		Output: repositoryPath("webui", "public", "themes", name+".theme.zip"),
-	}
-	packed, err := theme.BuildArchive(options)
+		Output: filepath.Join(t.TempDir(), name+".theme.zip"),
+	})
 	if err != nil {
-		t.Fatalf("theme %s cannot be packed: %v", name, err)
+		t.Fatalf("%s theme cannot be packed: %v", name, err)
 	}
 	validated, err := theme.ValidateArchive(packed)
 	if err != nil {
-		t.Fatalf("theme %s cannot be validated: %v", name, err)
+		t.Fatalf("%s theme cannot be validated: %v", name, err)
 	}
 	return validated, packed
 }
 
 func repositoryPath(parts ...string) string {
 	return filepath.Join(append([]string{"..", ".."}, parts...)...)
-}
-
-func digestOf(t *testing.T, content []byte) string {
-	t.Helper()
-	if len(content) == 0 {
-		t.Fatal("content is empty")
-	}
-	sum := sha256.Sum256(content)
-	return hex.EncodeToString(sum[:])
-}
-
-func distinctValues(values map[string]string) []string {
-	seen := make([]string, 0, len(values))
-	for _, value := range values {
-		if !containsValue(seen, value) {
-			seen = append(seen, value)
-		}
-	}
-	return seen
-}
-
-func containsValue(values []string, candidate string) bool {
-	for _, value := range values {
-		if value == candidate {
-			return true
-		}
-	}
-	return false
 }

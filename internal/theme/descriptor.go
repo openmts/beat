@@ -27,7 +27,7 @@ func (service *Service) describeStoredPackage(ctx context.Context, pkg *model.Th
 		return model.ActiveThemeDescriptor{}, ErrContentUnavailable
 	}
 	descriptor := model.ActiveThemeDescriptor{PackageID: pkg.ID, ThemeID: pkg.ThemeID, Name: pkg.Name, Version: pkg.Version,
-		Runtime: pkg.Runtime, Protocol: 2, Configuration: pkg.ConfigurationJSON, ArchiveDigest: pkg.ArchiveDigest,
+		Runtime: pkg.Runtime, Protocol: 3, Configuration: pkg.ConfigurationJSON, ArchiveDigest: pkg.ArchiveDigest,
 		PreviewURL: themeAssetPath(pkg.ArchiveDigest, manifest.Preview)}
 	if pkg.Runtime == model.ThemeRuntimeSandboxed {
 		descriptor.SandboxEntry, err = sandboxEntry(manifest)

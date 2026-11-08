@@ -23,6 +23,7 @@ vi.mock("@/pages/admin/ssh-keys", () => ({ default: () => <div>keys-page</div> }
 vi.mock("@/pages/admin/terminal", () => ({ default: () => <div>terminal-page</div> }))
 vi.mock("@/pages/admin/alerts", () => ({ default: () => <div>alerts-page</div> }))
 vi.mock("@/pages/admin/settings", () => ({ default: () => <div>settings-page</div> }))
+vi.mock("@/pages/admin/themes", () => ({ default: () => <div>themes-page</div> }))
 vi.mock("@/pages/admin/security", () => ({ default: () => <div>security-page</div> }))
 vi.mock("@/components/ui/sidebar", () => ({
   SidebarProvider: ({ children }: { children: ReactNode }) => <div>{children}</div>,
@@ -91,12 +92,21 @@ describe("admin shell", () => {
     expect(await screen.findByText("agent-setup-page")).toBeInTheDocument()
   })
 
+  it("routes the theme library as an independent admin page", async () => {
+    auth.authenticated = true
+    render(providers(<Routes><Route path="/admin/*" element={<Admin />} /></Routes>, "/admin/themes"))
+    expect(await screen.findByText("themes-page")).toBeInTheDocument()
+    expect(screen.queryByText("settings-page")).not.toBeInTheDocument()
+  })
+
   it("renders sidebar navigation", () => {
     render(providers(<AdminSidebar />, "/admin/nodes"))
     expect(screen.getByText("Manage Groups")).toBeInTheDocument()
     expect(screen.getByText("Dashboard")).toBeInTheDocument()
     expect(screen.getByText("Site settings")).toBeInTheDocument()
+    expect(screen.getByText("Themes")).toBeInTheDocument()
     expect(document.querySelector('a[href="/admin/nodes"]')).toBeInTheDocument()
+    expect(document.querySelector('a[href="/admin/themes"]')).toBeInTheDocument()
     expect(screen.getByText("Node setup")).toBeInTheDocument()
     expect(document.querySelector('a[href="/admin/agent-setup"]')).toBeInTheDocument()
     expect(screen.getByText("Nodes & access")).toBeInTheDocument()

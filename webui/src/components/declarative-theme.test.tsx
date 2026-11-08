@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest"
 import { LocaleProvider } from "@/context/locale"
 import { PublicThemeProvider } from "@/components/public-theme-provider"
 import { ThemedNodeCollection } from "@/components/themed-node-collection"
-import { publicThemeStyles } from "@/lib/theme-presentation"
+import { publicThemeStyles, themeShell, themeSummary } from "@/lib/theme-presentation"
 import { buildThemeSnapshot } from "@/lib/theme-snapshot"
 import { defaultSiteSettings } from "@/context/site-settings"
 import { THEME_PALETTE_TOKENS, type ThemeDefinition } from "@/types/theme-definition"
@@ -16,7 +16,7 @@ function definition(overview: ThemeDefinition["overview"], content: Partial<Them
 }
 const snapshot = (mode: "hidden" | "full" = "hidden") => buildThemeSnapshot({ route: { kind: "dashboard" }, site: { ...defaultSiteSettings, public_address_mode: mode },
   nodes: [{ id: "node", name: "Visible node", status: "online", is_public: true, group_id: "g", tags: ["edge"], public_remark: "Rack 12", host: "192.0.2.9",
-    metrics: { cpu: 10, memory: 20, disk: 30 } } as unknown as Node,
+    location: { scope: "public", country_code: "JP" }, metrics: { cpu: 10, memory: 20, disk: 30 } } as unknown as Node,
     { id: "hidden", name: "Hidden node", is_public: false } as Node], groups: [{ id: "g", name: "Group", sort_order: 0 } as never], locale: "en", theme: "light" })
 
 function renderCollection(
@@ -40,6 +40,34 @@ describe("declarative public themes", () => {
     expect(document.documentElement.getAttribute("style")).toBe(root)
     expect(() => publicThemeStyles({ ...definition("cards"), light: { ...definition("cards").light, background: "url(https://evil)" } }, "light")).toThrow()
   })
+
+  it("exposes the author-declared summary, surface and shell through the scoped root", () => {
+    const themed = definition("cards", {
+      surface: "outline",
+      summary: { layout: "strip", metrics: ["availability", "groups"] },
+      shell: { background: "grid", header: "solid", footer: "minimal" },
+    })
+    render(<PublicThemeProvider definition={themed} snapshot={snapshot()}><div>content</div></PublicThemeProvider>)
+    const scoped = document.querySelector("[data-public-theme]") as HTMLElement
+    expect(scoped).toHaveAttribute("data-theme-surface", "outline")
+    expect(scoped).toHaveAttribute("data-theme-summary", "strip")
+    expect(scoped).toHaveAttribute("data-theme-shell-background", "grid")
+    expect(scoped).toHaveAttribute("data-theme-shell-header", "solid")
+    expect(scoped).toHaveAttribute("data-theme-shell-footer", "minimal")
+    expect(themeSummary(themed)).toEqual({ layout: "strip", metrics: ["availability", "groups"] })
+    expect(themeShell(themed)).toEqual({ background: "grid", header: "solid", footer: "minimal" })
+  })
+
+  it("uses stable public defaults when optional presentation fields are omitted", () => {
+    const plain = definition("cards")
+    expect(themeSummary(plain)).toEqual({ layout: "cards", metrics: ["availability", "busiest", "traffic", "throughput"] })
+    expect(themeShell(plain)).toEqual({ background: "plain", header: "glass", footer: "plain" })
+    render(<PublicThemeProvider definition={plain} snapshot={snapshot()}><div>content</div></PublicThemeProvider>)
+    const scoped = document.querySelector("[data-public-theme]") as HTMLElement
+    expect(scoped).toHaveAttribute("data-theme-surface", "solid")
+    expect(scoped).toHaveAttribute("data-theme-summary", "cards")
+    expect(scoped).toHaveAttribute("data-theme-shell-background", "plain")
+  })
   it.each(["cards", "table", "tiles", "list"] as const)("renders a real %s layout using public values", (layout) => {
     render(<LocaleProvider><MemoryRouter><PublicThemeProvider definition={definition(layout)} snapshot={snapshot()}>
       <ThemedNodeCollection selectedGroup="" />
@@ -59,6 +87,13 @@ describe("declarative public themes", () => {
     const labels = screen.getAllByText(/CPU|Memory|Root filesystem/)
     expect(labels.map((label) => label.textContent)).toEqual(["Memory", "CPU"])
     expect(screen.queryByText("Root filesystem")).not.toBeInTheDocument()
+  })
+
+  it.each(["cards", "table", "tiles", "list"] as const)("puts the country badge before node names in %s layouts", (layout) => {
+    renderCollection(definition(layout), layout)
+    const link = screen.getByRole("link", { name: "Visible node" })
+    expect(link.firstElementChild).toHaveAttribute("data-country-code", "JP")
+    expect(link).toHaveTextContent("JPVisible node")
   })
 
   it("shows the declared content by default", () => {
@@ -97,6 +132,17 @@ describe("declarative public themes", () => {
     expect(() => publicThemeStyles({ ...palette, resources: [] }, "light")).toThrow()
     expect(() => publicThemeStyles({ ...palette, show_network: "no" as never }, "light")).toThrow()
     expect((publicThemeStyles({ ...palette, resources: ["disk"] }, "light") as Record<string, string>)["--radius"]).toBe("6px")
+  })
+
+  it("rejects presentation values outside the renderer contract", () => {
+    const palette = definition("cards")
+    expect(() => publicThemeStyles({ ...palette, surface: "glass" as never }, "light")).toThrow()
+    expect(() => publicThemeStyles({ ...palette, summary: { layout: "wall" as never } }, "light")).toThrow()
+    expect(() => publicThemeStyles({ ...palette, summary: { metrics: ["availability", "availability"] } }, "light")).toThrow()
+    expect(() => publicThemeStyles({ ...palette, summary: { metrics: ["unknown" as never] } }, "light")).toThrow()
+    expect(() => publicThemeStyles({ ...palette, shell: { background: "image" as never } }, "light")).toThrow()
+    expect(() => publicThemeStyles({ ...palette, shell: { header: "fixed" as never } }, "light")).toThrow()
+    expect(() => publicThemeStyles({ ...palette, shell: { footer: "sticky" as never } }, "light")).toThrow()
   })
   it("applies author-declared font stacks and keeps the default when omitted", () => {
     const palette = definition("cards")

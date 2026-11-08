@@ -22,7 +22,7 @@ func TestDeclarativeThemeBrowserFixture(t *testing.T) {
 		t.Skip("browser fixture not requested")
 	}
 	handler, service, _ := setupThemeHandler(t)
-	packages := installBrowserExamples(t, service)
+	packages := installBrowserDeclarativeThemes(t, service)
 	mux := http.NewServeMux()
 	registerThemeFixtureRoutes(mux, handler)
 	mux.HandleFunc("GET /fixture/info", func(w http.ResponseWriter, _ *http.Request) {
@@ -79,19 +79,15 @@ func themeFixtureStatic(t *testing.T, fallback string) http.HandlerFunc {
 	}
 }
 
-func installBrowserExamples(t *testing.T, service *theme.Service) map[string]*model.ThemePackage {
+func installBrowserDeclarativeThemes(t *testing.T, service *theme.Service) map[string]*model.ThemePackage {
 	t.Helper()
 	packages := make(map[string]*model.ThemePackage)
-	for _, name := range []string{"slate", "operations", "canvas"} {
-		raw, err := theme.BuildArchive(theme.PackOptions{Source: filepath.Join("../../../themes", name)})
+	for _, spec := range declarativeBrowserThemes {
+		pkg, err := service.Install(t.Context(), syntheticDeclarativeArchive(t, spec), model.ThemeSourceUpload, "", "fixture-owner")
 		if err != nil {
 			t.Fatal(err)
 		}
-		pkg, err := service.Install(t.Context(), raw, model.ThemeSourceUpload, "", "fixture-owner")
-		if err != nil {
-			t.Fatal(err)
-		}
-		packages[name] = pkg
+		packages[spec.id] = pkg
 	}
 	return packages
 }

@@ -7,17 +7,22 @@ import (
 
 func TestThemeConfigurationKeyTypeFollowsServerDerivedTypes(t *testing.T) {
 	cases := map[string]string{
-		"overview":     ThemeConfigurationSelect,
-		"detail":       ThemeConfigurationSelect,
-		"density":      ThemeConfigurationSelect,
-		"font":         ThemeConfigurationSelect,
-		"radius":       ThemeConfigurationNumber,
-		"show_network": ThemeConfigurationSwitch,
-		"show_host":    ThemeConfigurationSwitch,
-		"show_tags":    ThemeConfigurationSwitch,
-		"show_remark":  ThemeConfigurationSwitch,
-		"resources":    "",
-		"":             "",
+		"overview":         ThemeConfigurationSelect,
+		"detail":           ThemeConfigurationSelect,
+		"density":          ThemeConfigurationSelect,
+		"font":             ThemeConfigurationSelect,
+		"surface":          ThemeConfigurationSelect,
+		"summary_layout":   ThemeConfigurationSelect,
+		"shell_background": ThemeConfigurationSelect,
+		"shell_header":     ThemeConfigurationSelect,
+		"shell_footer":     ThemeConfigurationSelect,
+		"radius":           ThemeConfigurationNumber,
+		"show_network":     ThemeConfigurationSwitch,
+		"show_host":        ThemeConfigurationSwitch,
+		"show_tags":        ThemeConfigurationSwitch,
+		"show_remark":      ThemeConfigurationSwitch,
+		"resources":        "",
+		"":                 "",
 	}
 	for key, want := range cases {
 		if got := ThemeConfigurationKeyType(key); got != want {
@@ -28,10 +33,15 @@ func TestThemeConfigurationKeyTypeFollowsServerDerivedTypes(t *testing.T) {
 
 func TestThemeConfigurationKeyValuesAndNarrowing(t *testing.T) {
 	cases := map[string][]string{
-		"overview": {"cards", "table", "tiles", "list"},
-		"detail":   {"balanced", "compact", "spotlight"},
-		"density":  {"comfortable", "compact"},
-		"font":     ThemeFonts,
+		"overview":         {"cards", "table", "tiles", "list"},
+		"detail":           {"balanced", "compact", "spotlight"},
+		"density":          {"comfortable", "compact"},
+		"font":             ThemeFonts,
+		"surface":          ThemeSurfaces,
+		"summary_layout":   ThemeSummaryLayouts,
+		"shell_background": ThemeShellBackgrounds,
+		"shell_header":     ThemeShellHeaders,
+		"shell_footer":     ThemeShellFooters,
 	}
 	for key, want := range cases {
 		if got := ThemeConfigurationKeyValues(key); !slices.Equal(got, want) {

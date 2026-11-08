@@ -121,7 +121,7 @@ func TestAssetInvalidStoredMetadata(t *testing.T) {
 		t.Fatal(err)
 	}
 	descriptor, err := service.ActiveDescriptor(context.Background())
-	if err != nil || descriptor.Protocol != 2 || descriptor.SandboxEntry != "index.html" {
+	if err != nil || descriptor.Protocol != 3 || descriptor.SandboxEntry != "index.html" {
 		t.Fatalf("descriptor: %+v, %v", descriptor, err)
 	}
 	for _, digest := range []string{"", "bad", strings.Repeat("g", 64)} {

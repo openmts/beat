@@ -11,18 +11,21 @@ import { useAcceleratorText } from "@/pages/accelerator-text"
 import { acceleratorDeviceName, publicAccelerators } from "@/lib/accelerator-public"
 import { acceleratorDefinition } from "@/lib/accelerator-history"
 import { isRowPanel } from "@/lib/workspace-row"
+import { themeSurfaceClass, usePublicTheme } from "@/lib/theme-presentation"
+import { cn } from "@/lib/utils"
 import type { Node } from "@/types"
 import type { AcceleratorDevicePublic } from "@/types/accelerator"
 import type { MetricDefinition, WorkspaceRange } from "@/types/metric-workspace"
 interface Props { node: Node; catalog?: MetricDefinition[]; range: WorkspaceRange; refreshSeconds: number; onRange: (value: WorkspaceRange) => void; onInterval: (value: number) => void }
 export function AcceleratorDetail(props: Props) {
  const t = useAcceleratorText(), devices = publicAccelerators(props.node.accelerators) ?? []
+ const definition = usePublicTheme()?.definition
  const [selected, setSelected] = useState(() => devices[0]?.device_id ?? ""), first = devices[0]?.device_id ?? ""
  useEffect(() => { if (!selected && first) setSelected(first) }, [selected, first])
  const device = devices.find(value => value.device_id === selected)
  const options = devices.map(value => ({ value: value.device_id, label: acceleratorDeviceName(value) }))
  if (selected && !device) options.unshift({ value: selected, label: t("inactive") })
- return <section className="min-w-0 space-y-4 rounded-lg border p-4"><div className="flex flex-wrap items-center justify-between gap-3"><h2 className="font-semibold">{t("title")}</h2>{options.length > 0 && <WorkspaceSelect label={t("device")} value={selected} options={options} onChange={setSelected} />}</div>
+ return <section className={cn("min-w-0 space-y-4 rounded-lg p-4", definition ? themeSurfaceClass(definition) : "border")}><div className="flex flex-wrap items-center justify-between gap-3"><h2 className="font-semibold">{t("title")}</h2>{options.length > 0 && <WorkspaceSelect label={t("device")} value={selected} options={options} onChange={setSelected} />}</div>
   {!devices.length && <p className="text-sm text-muted-foreground">{t("publicUnavailable")}</p>}
   {selected && !device && <p role="status" className="text-sm text-muted-foreground">{t("inactive")}</p>}
   {device && <Tabs defaultValue="current"><TabsList><TabsTrigger value="current">{t("current")}</TabsTrigger><TabsTrigger value="history">{t("history")}</TabsTrigger></TabsList><TabsContent value="current" className="mt-4"><AcceleratorCurrent device={device} catalog={props.catalog} /></TabsContent><TabsContent value="history" className="mt-4">{props.catalog ? <AcceleratorHistory key={device.device_id} {...props} catalog={props.catalog} device={device} /> : <Skeleton className="h-64" />}</TabsContent></Tabs>}

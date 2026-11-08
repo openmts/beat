@@ -22,7 +22,7 @@ func TestThemeCommandPackValidateAndInputErrors(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if strings.Count(output.String(), "sha256") != 2 || !strings.Contains(output.String(), "beat-slate") {
+	if strings.Count(output.String(), "sha256") != 2 || !strings.Contains(output.String(), "beat-cli-test") {
 		t.Fatal(output.String())
 	}
 	for _, args := range [][]string{
@@ -74,15 +74,10 @@ func (failingWriter) Write([]byte) (int, error) { return 0, errors.New("output u
 
 func commandSource(t *testing.T) string {
 	t.Helper()
-	directory := t.TempDir()
-	for _, name := range []string{"beat-theme.json", "theme.json", "preview.png"} {
-		content, err := os.ReadFile(filepath.Join("../../themes/slate", name))
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(filepath.Join(directory, name), content, 0o600); err != nil {
-			t.Fatal(err)
-		}
+	options := initOptions{name: "CLI test", output: filepath.Join(t.TempDir(), "theme"), overview: "cards",
+		detail: "balanced", density: "comfortable", accent: "blue", radius: 6}
+	if err := runInit(options, io.Discard); err != nil {
+		t.Fatal(err)
 	}
-	return directory
+	return options.output
 }

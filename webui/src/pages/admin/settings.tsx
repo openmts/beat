@@ -35,7 +35,6 @@ import { PageHeader } from "@/components/page-header";
 import DataStorageSection from "@/pages/admin/data-storage-section";
 import { EgressProxyPanel } from "@/pages/admin/egress-proxy-panel";
 import { PublicTelemetryPanel } from "@/pages/admin/public-telemetry-panel";
-import { ThemesPanel } from "@/pages/admin/theme-panels";
 
 function Settings() {
   const { t } = useLocale();
@@ -288,7 +287,6 @@ function Settings() {
       <EgressProxyPanel />
       <PublicTelemetryPanel />
       <DataStorageSection />
-      <ThemesPanel />
     </div>
   );
 }

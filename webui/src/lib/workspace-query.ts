@@ -9,6 +9,8 @@ const maximumRange = 31 * 24 * 60 * 60 * 1000
 export const minimumQueryPoints = 2
 export const maximumQueryPoints = 600
 export const defaultQueryPoints = maximumQueryPoints
+// Agent 默认约每 5 秒上报一次；更细的查询步长只会产生孤立样本，无法连成有效曲线。
+const minimumSampleIntervalSeconds = 5
 // 看板 now delay 上限，与服务端 model.MaxDashboardNowDelaySeconds 一致。
 export const maximumNowDelaySeconds = 3600
 
@@ -27,6 +29,15 @@ export function dashboardQueryPoints(definition: DashboardQueryDefaults): number
 export function panelQueryPoints(panel: { max_points?: number }, definition: DashboardQueryDefaults): number {
   const value = panel.max_points
   return Number.isInteger(value) && (value as number) >= minimumQueryPoints && (value as number) <= maximumQueryPoints ? (value as number) : dashboardQueryPoints(definition)
+}
+
+/** 短时间范围按采样间隔限制点数，避免固定 600 点把真实样本切成孤立空档。 */
+export function timeRangeQueryPoints(domain: { from: string; to: string }, requested: number): number {
+  const from = Date.parse(domain.from)
+  const to = Date.parse(domain.to)
+  if (!Number.isFinite(from) || !Number.isFinite(to) || to <= from) return requested
+  const usefulPoints = Math.max(minimumQueryPoints, Math.ceil((to - from) / 1000 / minimumSampleIntervalSeconds))
+  return Math.min(requested, maximumQueryPoints, usefulPoints)
 }
 
 /** 相对范围的 now 会按看板 now delay 整体回退；绝对范围不受影响。 */

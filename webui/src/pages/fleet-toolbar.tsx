@@ -37,7 +37,7 @@ export function FleetToolbar({ value, change, nodes, groups, count }: FleetToolb
   const labels = (keys: string[]) => keys.map(key => ({ value: key || "*", label: key === "offline" ? t("offlineStatus") : t(key || "all") }))
   const field = (key: "status" | "freshness" | "expiry" | "sort" | "direction" | "offline", choices: string[]) => <AdminSelectField id={`fleet-${key}`} label={t(key)} options={labels(choices)} value={value[key] || "*"} onValueChange={next => change({ [key]: next === "*" ? "" : next })} />
   const activeAdvanced = advancedFilterCount(value)
-  return <section aria-label={t("search")} className="border-y py-3">
+  return <section aria-label={t("search")} className="py-1">
     <div className="flex flex-col gap-2 xl:flex-row xl:items-center">
       <div className="flex min-w-0 flex-1 flex-wrap gap-2">
         <Input aria-label={t("search")} placeholder={t("search")} maxLength={128} className="min-w-40 flex-1" value={value.search} onChange={event => change({ search: event.target.value })} />

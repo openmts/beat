@@ -45,6 +45,7 @@ const baseNode: Node = {
   cpu_model: "Test CPU", os: "linux", platform: "ubuntu", os_version: "24.04",
   kernel: "6.8.0", arch: "x86_64", virtualization: "kvm guest", agent_version: "1.2.3",
   sort_order: 0, tags: ["edge", "prod"], is_public: true,
+  location: { scope: "public", country_code: "JP", resolved_at: "2026-01-01T00:00:00Z" },
   public_remark: "Customer-facing edge node",
   traffic_limit: 100 * 1024 ** 3, traffic_limit_type: "sum", traffic_reset_day: 1,
   traffic: {
@@ -88,6 +89,9 @@ describe("shared components", () => {
     expect(screen.getByText("edge")).toBeInTheDocument()
     expect(screen.getByText("prod")).toBeInTheDocument()
     expect(screen.getByText("Customer-facing edge node")).toBeInTheDocument()
+    const flag = document.querySelector('[data-country-code="JP"]')
+    expect(flag).toHaveAttribute("title", "Japan")
+    expect(flag?.parentElement).toHaveTextContent("JPalias")
     fireEvent.click(screen.getByText("alias"))
     expect(screen.getByText("detail")).toBeInTheDocument()
   })

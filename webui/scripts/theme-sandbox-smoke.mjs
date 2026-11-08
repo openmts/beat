@@ -28,10 +28,24 @@ async function verifyPublic(context) {
   const snapshot = JSON.parse(await frame.locator("#snapshot").innerText())
   assert.equal(snapshot.site.site_title, "Beat theme fixture")
   assert.equal(snapshot.nodes.length, 1)
+  assert.equal(snapshot.nodes[0].country_code, "JP")
   for (const forbidden of ["IP_MUST_BE_HIDDEN", "PRIVATE_KEY_SENTINEL", "PRIVATE_REMARK_SENTINEL", "TOKEN_SENTINEL", "HIDDEN_NODE"]) assert.ok(!JSON.stringify(snapshot).includes(forbidden))
   for (const field of ["cookies", "storage", "network"]) assert.equal(await frame.locator("body").getAttribute(`data-${field}`), "blocked")
   assert.equal(await frame.locator("body").getAttribute("data-module"), "loaded")
   assert.equal(await frame.locator("body").evaluate(async () => { await document.fonts.ready; return document.fonts.check("16px Fixture") }), true)
+  await page.addInitScript(() => {
+    window.__builtinPublicShellSeen = false
+    const observe = () => {
+      if (!document.documentElement) { setTimeout(observe, 0); return }
+      const scan = () => { if (document.querySelector('a[href="#fleet-results"]')) window.__builtinPublicShellSeen = true }
+      scan()
+      new MutationObserver(scan).observe(document.documentElement, { childList: true, subtree: true })
+    }
+    observe()
+  })
+  await page.reload({ waitUntil: "networkidle" })
+  await page.frameLocator("iframe").locator("body[data-snapshots]").waitFor()
+  assert.equal(await page.evaluate(() => window.__builtinPublicShellSeen), false, "refresh must not render the built-in public shell before the sandbox theme")
   const previous = Number(await frame.locator("body").getAttribute("data-snapshots"))
   await page.waitForTimeout(5200)
   assert.ok(Number(await frame.locator("body").getAttribute("data-snapshots")) > previous)
@@ -72,7 +86,7 @@ async function verifyDirect(context) {
 
 async function verifyUpload(context) {
   const page = await context.newPage()
-  await page.goto(`${base}/admin/settings`, { waitUntil: "networkidle" })
+  await page.goto(`${base}/admin/themes`, { waitUntil: "networkidle" })
   assert.equal(await page.locator("iframe").count(), 0)
   const archive = await (await context.request.get(`${base}/fixture/upload-archive`)).body()
   await page.getByRole("button", { name: "Upload theme", exact: true }).click()
@@ -102,7 +116,7 @@ try {
   await page.goto(base, { waitUntil: "networkidle" })
   await page.frameLocator("iframe").locator("body[data-snapshots]").waitFor()
   await privateScreenshot(page, { path: `${values.output}/mobile.png`, fullPage: true })
-  console.log(JSON.stringify({ passed: ["opaque bridge", "ES modules", "WOFF2 CORS", "privacy", "heartbeat", "public navigation", "history", "fallback", "direct URL isolation", "real UI raw ZIP upload", "mobile"], screenshots: values.output }))
+  console.log(JSON.stringify({ passed: ["opaque bridge", "ES modules", "WOFF2 CORS", "privacy", "no built-in flash on refresh", "heartbeat", "public navigation", "history", "fallback", "direct URL isolation", "real UI raw ZIP upload", "mobile"], screenshots: values.output }))
 } finally {
   await browser.close()
   await fetch(`${base}/fixture/stop`, { method: "POST" })

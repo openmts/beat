@@ -4,12 +4,12 @@ import { APIError } from "@/lib/api-error"
 import { LocaleProvider } from "@/context/locale"
 import { ThemesPanel } from "@/pages/admin/theme-panels"
 import * as themes from "@/lib/theme-api"
+import { readBundledTheme } from "@/lib/theme-bundled"
 import { reauthenticateAdmin } from "@/lib/security-api"
 import type { ThemePackage } from "@/types/theme"
-import { readExampleArchive } from "@/lib/theme-examples"
 
 vi.mock("@/lib/theme-api")
-vi.mock("@/lib/theme-examples", async (original) => ({ ...await original<object>(), readExampleArchive: vi.fn() }))
+vi.mock("@/lib/theme-bundled", async (original) => ({ ...await original<object>(), readBundledTheme: vi.fn() }))
 vi.mock("@/lib/security-api", () => ({ reauthenticateAdmin: vi.fn() }))
 vi.mock("@/pages/admin/theme-preview", () => ({ ThemePreview: ({ theme }: { theme: ThemePackage }) => <p>Previewing {theme.name}</p> }))
 const pkg = { id: "pkg", name: "Slate", version: "1.0.0", description: "Grouped public cards", author: "Beat", runtime: "declarative", preview_url: "/themes/assets/hash/preview.png" } as ThemePackage
@@ -20,23 +20,25 @@ describe("installed theme operations", () => {
     vi.resetAllMocks()
     vi.mocked(themes.listAdminThemes).mockResolvedValue([pkg])
   })
-  it("shows real previews, bundled downloads and the author guide", async () => {
+  it("shows the installed preview, bundled default and author guide", async () => {
     panel()
-    // 示例卡片也带预览图，因此按 src 断言：安装卡片用服务端地址，示例卡片用打包资源。
     await waitFor(() => expect(document.querySelector(`img[src="${pkg.preview_url}"]`)).not.toBeNull())
-    expect(document.querySelector('img[src="/themes/slate.preview.png"]')).not.toBeNull()
-    expect(screen.getAllByRole("img", { name: "Slate preview" })).toHaveLength(2)
+    expect(screen.getAllByRole("img", { name: "Slate preview" })).toHaveLength(1)
+    expect(document.querySelector('img[src="/themes/default.preview.png"]')).not.toBeNull()
+    expect(screen.getByRole("heading", { name: "Default" })).toBeInTheDocument()
     expect(screen.getByRole("link", { name: "Theme author guide" })).toHaveAttribute("href", expect.stringContaining("theme-author-guide.md"))
-    expect(screen.getAllByRole("link", { name: /Download .* ZIP/ })).toHaveLength(10)
-    expect(screen.getByRole("link", { name: "Download Pulse ZIP" })).toHaveAttribute("href", "/themes/pulse.theme.zip")
-    expect(screen.getByRole("link", { name: "Download Midnight ZIP" })).toHaveAttribute("href", "/themes/midnight.theme.zip")
-    expect(screen.getByRole("link", { name: "Download Solar ZIP" })).toHaveAttribute("href", "/themes/solar.theme.zip")
-    expect(screen.getByRole("link", { name: "Download Graphite ZIP" })).toHaveAttribute("href", "/themes/graphite.theme.zip")
-    expect(screen.getByRole("link", { name: "Download Aurora ZIP" })).toHaveAttribute("href", "/themes/aurora.theme.zip")
-    expect(screen.getByRole("link", { name: "Download Terminal ZIP" })).toHaveAttribute("href", "/themes/terminal.theme.zip")
-    expect(screen.getByRole("link", { name: "Download Paper ZIP" })).toHaveAttribute("href", "/themes/paper.theme.zip")
+    expect(screen.getByRole("link", { name: "Download Default ZIP" })).toHaveAttribute("href", "/themes/default.theme.zip")
     fireEvent.click(screen.getByRole("button", { name: "Preview" }))
     expect(screen.getByText("Previewing Slate")).toBeInTheDocument()
+    expect(themes.activateTheme).not.toHaveBeenCalled()
+  })
+  it("installs the bundled default without activating it", async () => {
+    const archive = new Blob(["zip"])
+    vi.mocked(readBundledTheme).mockResolvedValue(archive)
+    panel()
+    fireEvent.click((await screen.findAllByRole("button", { name: "Install" }))[0])
+    await waitFor(() => expect(themes.uploadTheme).toHaveBeenCalledWith(archive))
+    expect(readBundledTheme).toHaveBeenCalledWith("default")
     expect(themes.activateTheme).not.toHaveBeenCalled()
   })
   it("can cancel a destructive operation before any request", async () => {
@@ -76,15 +78,6 @@ describe("installed theme operations", () => {
     fireEvent.click(screen.getByRole("button", { name: "Confirm" }))
     await waitFor(() => expect(themes.useBuiltInTheme).toHaveBeenCalledOnce())
     expect(themes.rollbackTheme).not.toHaveBeenCalled()
-  })
-  it("installs a bundled ZIP and leaves activation unchanged", async () => {
-    const archive = new Blob(["zip"])
-    vi.mocked(readExampleArchive).mockResolvedValue(archive)
-    panel()
-    fireEvent.click((await screen.findAllByRole("button", { name: "Install" }))[0])
-    await waitFor(() => expect(themes.uploadTheme).toHaveBeenCalledWith(archive))
-    expect(readExampleArchive).toHaveBeenCalledWith("slate")
-    expect(themes.activateTheme).not.toHaveBeenCalled()
   })
   it("reports logical deletion with pending cleanup and supports a retry", async () => {
     vi.mocked(themes.deleteTheme).mockResolvedValueOnce({ package_id: pkg.id, state: "deleted", cleanup_pending: true }).mockResolvedValue(undefined)

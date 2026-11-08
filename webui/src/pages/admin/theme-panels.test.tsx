@@ -69,7 +69,7 @@ describe("themes panel installed view", () => {
   it("shows the declared site-configurable fields in the package declaration", async () => {
     const palette = Object.fromEntries(THEME_PALETTE_TOKENS.map((key) => [key, "#172033"]))
     api.preview.mockResolvedValue({
-      package_id: "p1", theme_id: "t1", name: "Corporate", version: "1.0.0", runtime: "declarative", built_in: false, protocol: 2,
+      package_id: "p1", theme_id: "t1", name: "Corporate", version: "1.0.0", runtime: "declarative", built_in: false, protocol: 3,
       declarative: { schema_version: 1, overview: "cards", detail: "balanced", density: "comfortable", radius: 6, light: palette, dark: palette },
       configuration_schema: { type: "managed", items: [
         { key: "overview", type: "select", options: ["cards", "table"] },

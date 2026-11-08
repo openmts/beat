@@ -136,7 +136,8 @@ class QualityGateTests(unittest.TestCase):
         smokes = [call[1] for call in calls if call[0] == "node" and len(call) > 1
                   and str(call[1]).startswith("scripts/theme-") and str(call[1]).endswith("-smoke.mjs")]
         self.assertEqual(["scripts/theme-declarative-smoke.mjs", "scripts/theme-sandbox-smoke.mjs",
-                          "scripts/theme-market-smoke.mjs"], smokes)
+                          "scripts/theme-market-smoke.mjs", "scripts/theme-default-smoke.mjs",
+                          "scripts/theme-paper-smoke.mjs"], smokes)
 
     def test_frontend_gate_can_retain_a_release_bundle(self):
         release_static = self.root / "release-static"
@@ -147,10 +148,10 @@ class QualityGateTests(unittest.TestCase):
         self.assertTrue((release_static / "index.html").is_file())
         self.assertEqual([], list(self.temporary.iterdir()))
 
-    def test_missing_theme_asset_fails_the_frontend_gate(self):
-        result = self.run_gate("frontend", BEAT_GATE_MISSING_THEME="slate")
+    def test_stale_bundled_theme_fails_the_frontend_gate(self):
+        result = self.run_gate("frontend", BEAT_GATE_STALE_THEME="legacy")
         self.assertNotEqual(0, result.returncode)
-        self.assertIn("missing theme archive: slate", result.stderr)
+        self.assertIn("unexpected bundled theme asset: legacy.theme.zip", result.stderr)
         self.assertTrue(any(call[:3] == ["npm", "run", "build"] for call in self.calls()))
         self.assertEqual([], list(self.temporary.iterdir()))
 

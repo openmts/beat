@@ -11,8 +11,10 @@ import type { ThemeSnapshotInput } from "@/types/theme-runtime"
 
 vi.mock("@/lib/public-workspace-api")
 vi.mock("@/lib/metric-workspace-api", () => ({ queryWorkspaceMetrics: vi.fn() }))
-const boundary = vi.hoisted(() => ({ input: null as unknown }))
-vi.mock("@/components/public-theme-boundary", () => ({ PublicThemeBoundary: (props: ThemeSnapshotInput) => { boundary.input = props; return <p>Script theme is active</p> } }))
+const boundary = vi.hoisted(() => ({ input: null as unknown, props: null as unknown }))
+vi.mock("@/components/public-theme-boundary", () => ({ PublicThemeBoundary: (props: ThemeSnapshotInput & { onRangeChange?: (range: { mode: "relative"; seconds: number }) => void }) => {
+  boundary.input = props; boundary.props = props; return <p>Script theme is active</p>
+} }))
 const sources = () => ({ ...workspaceSources(), dashboard: { ...workspaceDashboard(), scope: "public" as const, definition: { ...workspaceDashboard().definition, refresh_seconds: 5 } } })
 
 describe("public node metric workspace lifecycle", () => {
@@ -78,8 +80,11 @@ describe("public node metric workspace lifecycle", () => {
     render(<MemoryRouter initialEntries={["/node/node-one"]}><Routes><Route path="/node/:id" element={<NodeDetail />} /></Routes></MemoryRouter>)
     expect(screen.getByText("Script theme is active")).toBeInTheDocument()
     await waitFor(() => expect((boundary.input as ThemeSnapshotInput).history?.series?.cpu[1].value).toBeNull())
+    expect((boundary.input as ThemeSnapshotInput).range).toEqual({ mode: "relative", seconds: 3600 })
     expect((boundary.input as ThemeSnapshotInput).history?.series_info?.cpu).toEqual({ aggregation: "avg", unit: "percent" })
     expect(queryWorkspaceMetrics).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ public: true }))
+    act(() => (boundary.props as { onRangeChange: (range: { mode: "relative"; seconds: number }) => void }).onRangeChange({ mode: "relative", seconds: 21600 }))
+    await waitFor(() => expect((boundary.input as ThemeSnapshotInput).range).toEqual({ mode: "relative", seconds: 21600 }))
   })
   it("retries a transient source failure until the server recovers", async () => {
     vi.useFakeTimers()

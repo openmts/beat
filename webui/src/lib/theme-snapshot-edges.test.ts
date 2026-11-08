@@ -46,11 +46,13 @@ describe("bounded public JSON", () => {
 describe("public snapshot edge cases", () => {
   it("preserves finite traffic, system fields and zero values", () => {
     const input = source()
-    input.nodes[0] = { ...input.nodes[0], cpu_model: "CPU", last_seen: "2026-01-01", metrics: { cpu: 0, memory: NaN },
+    input.nodes[0] = { ...input.nodes[0], cpu_model: "CPU", agent_version: "1.2.3", last_seen: "2026-01-01", metrics: { cpu: 0, memory: NaN },
       traffic: { sent: 0, received: 4, used: 4, limit: 0, remaining: null, percentage: null, limit_type: "sum", reset_day: 1, period_start: "start", next_reset: "next", tracked_since: null, status: "unlimited", private_data: "DO_NOT_SEND" } } as Node
     const snapshot = buildThemeSnapshot(input)
     expect(snapshot.nodes[0].metrics).toEqual({ cpu: 0 })
     expect(snapshot.nodes[0].system.cpu_model).toBe("CPU")
+    expect(snapshot.nodes[0].system).not.toHaveProperty("agent_version")
+    expect(JSON.stringify(snapshot)).not.toContain("1.2.3")
     expect(snapshot.nodes[0].traffic).toMatchObject({ sent: 0, remaining: null, tracked_since: null })
     expect(JSON.stringify(snapshot)).not.toContain("DO_NOT_SEND")
   })
@@ -72,7 +74,7 @@ describe("public snapshot edge cases", () => {
     const snapshot = buildThemeSnapshot(input)
     expect(snapshot.history).toEqual({ from: 0, to: 2, series: { cpu: [{ timestamp: 1, value: 0 }], "custom_requests.total": [{ timestamp: 1, value: 9 }] } })
     const unloaded = buildThemeSnapshot({ ...input, route: { kind: "node", node_id: "other" } })
-    expect(unloaded.nodes).toEqual([]); expect(unloaded.history).toBeUndefined()
+    expect(unloaded.nodes.map((entry) => entry.id)).toEqual(["node"]); expect(unloaded.history).toBeUndefined()
   })
   it("preserves explicit history gaps and public aggregation metadata without admitting unknown series", () => {
     const input = source()
@@ -110,6 +112,27 @@ describe("public snapshot edge cases", () => {
     view.nodes[0].latest = { timestamp: "now", success: false, latency_ms: Infinity, status_code: NaN, error_code: "private" }
     expect(buildThemeSnapshot(input).network.tasks[0]).toMatchObject({ nodes: [{ latest: { timestamp: "now", success: false } }] })
     input.network = Array.from({ length: 201 }, (_, i) => task({ id: `task-${i}` }))
+    expect(() => buildThemeSnapshot(input)).toThrow("snapshot_budget")
+  })
+  it("exports bounded, target-free network latency history only for visible public tasks", () => {
+    const input = source()
+    input.network = [task()]
+    input.networkHistory = {
+      from: 100, to: 200,
+      tasks: [
+        { task_id: "task", points: [{ timestamp: 100, latency_ms: 12.5 }, { timestamp: 130, latency_ms: null }, { timestamp: -1, latency_ms: 99 }] },
+        { task_id: "private-task", points: [{ timestamp: 100, latency_ms: 999 }] },
+        { task_id: "task", points: [{ timestamp: 200, latency_ms: 2 }] },
+      ],
+    }
+    const history = buildThemeSnapshot(input).network_history
+    expect(history).toEqual({ from: 100, to: 200, tasks: [{ id: "task", points: [{ timestamp: 100, latency_ms: 12.5 }, { timestamp: 130, latency_ms: null }] }] })
+    expect(JSON.stringify(history)).not.toMatch(/DO_NOT_SEND|private-task|999/)
+    input.networkHistory = { from: 200, to: 100, tasks: [] }
+    expect(() => buildThemeSnapshot(input)).toThrow("invalid_data")
+    input.networkHistory = { from: 100, to: 200, tasks: Array.from({ length: 17 }, (_, index) => ({ task_id: `task-${index}`, points: [] })) }
+    expect(() => buildThemeSnapshot(input)).toThrow("snapshot_budget")
+    input.networkHistory = { from: 100, to: 200, tasks: [{ task_id: "task", points: Array.from({ length: 601 }, (_, index) => ({ timestamp: index, latency_ms: 1 })) }] }
     expect(() => buildThemeSnapshot(input)).toThrow("snapshot_budget")
   })
 })

@@ -1,8 +1,6 @@
 package handler
 
 import (
-	"archive/zip"
-	"bytes"
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/x509"
@@ -122,58 +120,7 @@ func (market *browserMarket) setMode(w http.ResponseWriter, request *http.Reques
 
 func marketBrowserArchive(t *testing.T, version string) []byte {
 	t.Helper()
-	raw, err := theme.BuildArchive(theme.PackOptions{Source: "../../../themes/slate"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	archive, err := zip.NewReader(bytes.NewReader(raw), int64(len(raw)))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var output bytes.Buffer
-	writer := zip.NewWriter(&output)
-	for _, file := range archive.File {
-		copyMarketEntry(t, writer, marketArchiveEntry{file: file, version: version})
-	}
-	if err := writer.Close(); err != nil {
-		t.Fatal(err)
-	}
-	return output.Bytes()
-}
-
-type marketArchiveEntry struct {
-	file    *zip.File
-	version string
-}
-
-func copyMarketEntry(t *testing.T, writer *zip.Writer, input marketArchiveEntry) {
-	t.Helper()
-	file, version := input.file, input.version
-	reader, err := file.Open()
-	if err != nil {
-		t.Fatal(err)
-	}
-	raw, err := io.ReadAll(reader)
-	closeErr := reader.Close()
-	if err != nil || closeErr != nil {
-		t.Fatalf("read fixture archive: %v %v", err, closeErr)
-	}
-	if file.Name == "beat-theme.json" {
-		var manifest model.ThemeManifest
-		if err := json.Unmarshal(raw, &manifest); err != nil {
-			t.Fatal(err)
-		}
-		manifest.Version, manifest.Name = version, "Market Slate"
-		raw, err = json.Marshal(manifest)
-		if err != nil {
-			t.Fatal(err)
-		}
-	}
-	entry, err := writer.Create(file.Name)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := entry.Write(raw); err != nil {
-		t.Fatal(err)
-	}
+	return syntheticDeclarativeArchive(t, syntheticDeclarativeTheme{id: "browser-market-theme", name: "Browser market theme",
+		version: version, overview: "cards", detail: "balanced", summary: "cards", metrics: []string{"availability", "busiest", "traffic", "throughput"},
+		surface: "solid", background: "plain", header: "glass", footer: "plain"})
 }

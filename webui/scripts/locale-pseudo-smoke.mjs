@@ -14,6 +14,7 @@ const adminMarkerKeys = {
   workspace: "workspace.title",
   security: "security.title",
   settings: "settings.site",
+  theme: "theme.title",
   enrollment: "discovery.title",
   operations: "operations.title",
   lifecycle: "lifecycle.country_location_and_lifecycle",
@@ -75,7 +76,7 @@ const browser = await chromium.launch({ headless: true, executablePath: process.
 const viewports = [{ name: "mobile", width: 390, height: 844 }, { name: "tablet", width: 768, height: 1024 }, { name: "desktop", width: 1440, height: 1000 }]
 const publicPages = [["fleet", "/"], ["wallboard", "/wallboard"]]
 const adminPages = [["metrics", "/admin/metrics", "workspace"], ["security", "/admin/security", "security"],
-  ["settings", "/admin/settings", "settings"], ["enrollment", "/admin/enrollment", "enrollment"],
+  ["settings", "/admin/settings", "settings"], ["themes", "/admin/themes", "theme"], ["enrollment", "/admin/enrollment", "enrollment"],
   ["operations", "/admin/operations", "operations"], ["lifecycle", "/admin/lifecycle", "lifecycle"],
   ["agent-releases", "/admin/agent-releases", "agentReleases"], ["accelerators", "/admin/accelerators", "accelerators"],
   ["network", "/admin/network", "network"], ["terminal", "/admin/terminal", "terminal"],

@@ -31,7 +31,8 @@ vi.mock("@/context/site-settings", async (original) => {
 })
 vi.mock("@/components/metric-workspace/data-view", () => ({ WorkspaceDataView: ({ result }: { result: unknown }) => <pre data-testid="data-view">{JSON.stringify(result)}</pre>, WorkspaceDataTable: () => <p>Data table</p> }))
 function workspace(): PublicMetricWorkspace {
-  return { node: { nodeId: "node-one", data: workspaceNode(), loading: false, error: null, refresh: vi.fn() }, source: { nodeId: "node-one", data: { ...workspaceSources(), dashboard: { ...workspaceDashboard(), scope: "public" } }, loading: false, error: null, reload: vi.fn() },
+  const node = { ...workspaceNode(), location: { scope: "public", country_code: "JP" } }
+  return { node: { nodeId: "node-one", data: node, loading: false, error: null, refresh: vi.fn() }, source: { nodeId: "node-one", data: { ...workspaceSources(), dashboard: { ...workspaceDashboard(), scope: "public" } }, loading: false, error: null, reload: vi.fn() },
     definition: workspaceDashboard().definition, queries: { dashboardId: "public", domain: { from: workspaceQuery().from, to: workspaceQuery().to }, panels: { cpu: { loading: false, result: workspaceResult(), resultQuery: workspaceQuery(), updatedAt: 1 } }, refresh: vi.fn(), retryPanel: vi.fn() },
     range: { mode: "relative", seconds: 3600 }, refreshSeconds: 5, values: { node: ["node-one"] }, history: undefined, historyMetricNames: [], metricsState: "ready",
     setRange: vi.fn(), setRefreshSeconds: vi.fn(), setVariable: vi.fn(), toggleRow: vi.fn(), refresh: vi.fn() }
@@ -39,7 +40,7 @@ function workspace(): PublicMetricWorkspace {
 function show(state: PublicMetricWorkspace, detail: ThemeDefinition["detail"] = "balanced") {
   const palette = Object.fromEntries(THEME_PALETTE_TOKENS.map((key) => [key, "#172033"])) as ThemeDefinition["light"]
   const definition: ThemeDefinition = { schema_version: 1, overview: "cards", detail, density: "comfortable", radius: 6, light: palette, dark: palette }
-  const snapshot = buildThemeSnapshot({ route: { kind: "node", node_id: "node-one" }, site: defaultSiteSettings, groups: [], nodes: [workspaceNode()], locale: "en", theme: "light" })
+  const snapshot = buildThemeSnapshot({ route: { kind: "node", node_id: "node-one" }, site: defaultSiteSettings, groups: [], nodes: [workspace().node.data!], locale: "en", theme: "light" })
   return render(<LocaleProvider><MemoryRouter><PublicThemeProvider definition={definition} snapshot={snapshot}><NodeDetailView workspace={state} /></PublicThemeProvider></MemoryRouter></LocaleProvider>)
 }
 
@@ -48,6 +49,8 @@ describe("public node workspace view", () => {
   it.each(["balanced", "compact", "spotlight"] as const)("keeps %s layout and exposes read-only inspection", (detail) => {
     show(workspace(), detail)
     expect(document.querySelector(`[data-theme-detail-layout='${detail}']`)).toBeInTheDocument()
+    const title = screen.getByRole("heading", { level: 1, name: "Production host" })
+    expect(title.querySelector('[data-country-code="JP"]')).toHaveTextContent("JP")
     expect(screen.queryByRole("button", { name: /Edit panel/ })).not.toBeInTheDocument()
     expect(document.querySelector('[draggable="true"]')).toBeNull()
     fireEvent.click(screen.getByRole("button", { name: /Inspect.*CPU usage/ }))

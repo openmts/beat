@@ -9,7 +9,7 @@ import { useLocale } from "@/context/locale"
 import { useThemeOperation } from "@/hooks/use-theme-operation"
 import { useThemePreview } from "@/hooks/use-theme-preview"
 import { configureTheme, previewTheme } from "@/lib/theme-api"
-import { configurationFromDefinition } from "@/lib/theme-configuration-schema"
+import { applyThemeConfiguration, configurationFromDefinition } from "@/lib/theme-configuration-schema"
 import { publicThemeStyles } from "@/lib/theme-presentation"
 import { ThemeSettingsForm } from "@/pages/admin/theme-settings-form"
 import { ThemePreviewContent } from "@/pages/admin/theme-preview-content"
@@ -47,7 +47,7 @@ function PreviewWorkspace({ descriptor, onSaved, onDescriptor }: { descriptor: A
   const [draft, setDraft] = useState<ThemeConfiguration>({})
   const flow = useThemeOperation()
   const preview = useThemePreview(descriptor, mode, selected)
-  const definition = descriptor.declarative ? { ...descriptor.declarative, ...draft } : undefined
+  const definition = descriptor.declarative ? applyThemeConfiguration(descriptor.declarative, draft) : undefined
   const save = (reset: boolean) => flow.request({ label: t(reset ? "theme.reset" : "theme.save"), description: t(reset ? "theme.confirm_reset" : "theme.confirm_save"), run: async () => {
     const configured = await configureTheme(descriptor.package_id!, reset ? {} :
       configurationFromDefinition(definition!, descriptor.configuration_schema))

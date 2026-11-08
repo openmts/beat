@@ -1,9 +1,13 @@
-import { useCallback, useEffect, useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 
 import * as networkApi from "@/lib/network-api"
 import { networkSummaryByNode } from "@/lib/network-quality"
 import { retryAfterDelay } from "@/lib/retry-after"
-import type { NetworkHistoryResponse, NetworkTaskView } from "@/types"
+import { MAX_THEME_NETWORK_TASKS } from "@/lib/theme-network-snapshot"
+import { workspaceDomain } from "@/lib/workspace-query"
+import type { NetworkHistoryPoint, NetworkHistoryResponse, NetworkTaskView } from "@/types"
+import type { ThemeNetworkHistoryInput } from "@/types/theme-runtime"
+import type { WorkspaceRange } from "@/types/metric-workspace"
 
 interface NetworkState<T> {
   data: T | null
@@ -23,6 +27,13 @@ interface RefreshOptions {
   silent?: boolean
 }
 
+interface NodeNetworkHistoryState {
+  key: string
+  data: ThemeNetworkHistoryInput | null
+  loading: boolean
+  error: string | null
+}
+
 export function usePublicNetworkQuality(enabled = true) {
   return useNetworkTaskViews(networkApi.listPublicNetworkQuality, 15_000, enabled)
 }
@@ -35,6 +46,92 @@ export function useNodeNetworkSummaries(enabled = true) {
   const quality = usePublicNetworkQuality(enabled)
   const summaries = useMemo(() => networkSummaryByNode(quality.data), [quality.data])
   return { ...quality, summaries }
+}
+
+/** 节点详情只请求当前节点、当前范围所需的公开网络历史。 */
+export function usePublicNodeNetwork(nodeId: string | undefined, range: WorkspaceRange | undefined, enabled = true) {
+  const quality = usePublicNetworkQuality(Boolean(nodeId) && enabled)
+  const rangeKey = range ? `${range.mode}:${range.mode === "relative" ? range.seconds : `${range.from}:${range.to}`}` : "none"
+  const rangeRef = useRef(range)
+  rangeRef.current = range
+  const requestID = useRef(0)
+  const [history, setHistory] = useState<NodeNetworkHistoryState>({ key: rangeKey, data: null, loading: Boolean(nodeId && enabled), error: null })
+
+  useEffect(() => {
+    const currentRequest = ++requestID.current
+    const currentRange = rangeRef.current
+    if (!enabled || !nodeId || !currentRange) {
+      setHistory({ key: rangeKey, data: null, loading: false, error: null })
+      return
+    }
+    const tasks = publicNodeNetworkTasks(quality.data, nodeId)
+    if (!tasks.length) {
+      setHistory({ key: rangeKey, data: null, loading: false, error: null })
+      return
+    }
+    let domain: { from: string; to: string }
+    try {
+      domain = workspaceDomain(currentRange)
+    } catch {
+      setHistory({ key: rangeKey, data: null, loading: false, error: "network.invalid_range" })
+      return
+    }
+    const controller = new AbortController()
+    setHistory((previous) => ({
+      key: rangeKey,
+      data: previous.key === rangeKey ? previous.data : null,
+      loading: previous.key !== rangeKey || previous.data === null,
+      error: null,
+    }))
+    void loadNodeNetworkHistory(tasks, nodeId, domain, controller.signal).then((data) => {
+      if (controller.signal.aborted || currentRequest !== requestID.current) return
+      setHistory({ key: rangeKey, data, loading: false, error: null })
+    }).catch((error: unknown) => {
+      if (controller.signal.aborted || currentRequest !== requestID.current) return
+      setHistory((previous) => ({ ...previous, loading: false, error: error instanceof Error ? error.message : "Unknown error" }))
+    })
+    return () => controller.abort()
+  }, [enabled, nodeId, quality.data, rangeKey])
+
+  return {
+    quality,
+    history: { data: history.data, loading: history.loading, error: history.error },
+  }
+}
+
+export function publicNodeNetworkTasks(views: NetworkTaskView[] | null, nodeId?: string): NetworkTaskView[] {
+  if (!views || !nodeId) return []
+  return views.filter((view) => view.task.enabled === true && view.task.is_public === true &&
+    view.nodes.some((state) => state.node.id === nodeId)).slice(0, MAX_THEME_NETWORK_TASKS)
+}
+
+async function loadNodeNetworkHistory(tasks: NetworkTaskView[], nodeId: string, domain: { from: string; to: string }, signal: AbortSignal): Promise<ThemeNetworkHistoryInput> {
+  const settled = await Promise.allSettled(tasks.map(async (view) => {
+    const response = await networkApi.getPublicNetworkHistory(view.task.id, { nodeId, from: domain.from, to: domain.to, signal })
+    return { task_id: view.task.id, points: publicNetworkHistoryPoints(response.points) }
+  }))
+  const historyTasks = settled.flatMap((result) => result.status === "fulfilled" ? [result.value] : [])
+  if (!historyTasks.length && settled.length) {
+    const failure = settled.find((result) => result.status === "rejected")
+    throw failure?.status === "rejected" ? failure.reason : new Error("network history unavailable")
+  }
+  return {
+    from: Math.floor(Date.parse(domain.from) / 1000),
+    to: Math.floor(Date.parse(domain.to) / 1000),
+    tasks: historyTasks,
+  }
+}
+
+function publicNetworkHistoryPoints(points: NetworkHistoryPoint[]): ThemeNetworkHistoryInput["tasks"][number]["points"] {
+  return points.flatMap((point) => {
+    const timestamp = Math.floor(Date.parse(point.timestamp) / 1000)
+    if (!Number.isFinite(timestamp) || timestamp < 0) return []
+    const reachable = Number.isFinite(point.success_percent) && point.success_percent > 0
+    const latency = reachable && Number.isFinite(point.average_latency_ms) && point.average_latency_ms >= 0
+      ? point.average_latency_ms
+      : null
+    return [{ timestamp, latency_ms: latency }]
+  })
 }
 
 function useNetworkTaskViews(

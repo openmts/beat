@@ -1,5 +1,5 @@
 #!/bin/bash
-# 三套主题宿主浏览器门禁的一键运行器：每个 fixture 由 Go 用例起停（打印 FIXTURE=<url>），
+# 主题宿主浏览器门禁的一键运行器：每个 fixture 由 Go 用例起停（打印 FIXTURE=<url>），
 # 读到 URL 后用 Playwright 跑对应的冒烟脚本，脚本结束时 POST /fixture/stop 让用例收尾。
 #
 # Playwright 由 webui 的 devDependency 提供（`npm ci` 即装好），浏览器缺省用 Playwright 自带的
@@ -59,4 +59,20 @@ run_gate() {
 run_gate TestDeclarativeThemeBrowserFixture theme-declarative-smoke.mjs declarative declarative
 run_gate TestThemeBrowserFixture theme-sandbox-smoke.mjs sandbox sandbox
 run_gate TestThemeMarketBrowserFixture theme-market-smoke.mjs market market
-printf 'theme-browser-gates: 三套门禁全部通过，截图与 fixture 日志在 %s\n' "$output"
+
+# 默认主题由独立 harness 直接喂入公开快照，覆盖真实包内的入口、模块、响应式布局与 Canvas 图表。
+default_output="$output/default"
+mkdir -p "$default_output"
+default_args=( --output "$default_output" --playwright "$playwright" )
+[[ -z "$chromium" ]] || default_args+=( --chromium "$chromium" )
+( cd "$webui" && node scripts/theme-default-smoke.mjs "${default_args[@]}" )
+printf 'PASS default（%s）\n' "$default_output"
+
+paper_output="$output/paper"
+mkdir -p "$paper_output"
+paper_args=( --output "$paper_output" --playwright "$playwright" )
+[[ -z "$chromium" ]] || paper_args+=( --chromium "$chromium" )
+( cd "$webui" && node scripts/theme-paper-smoke.mjs "${paper_args[@]}" )
+printf 'PASS paper（%s）\n' "$paper_output"
+
+printf 'theme-browser-gates: 五套门禁全部通过，截图与 fixture 日志在 %s\n' "$output"

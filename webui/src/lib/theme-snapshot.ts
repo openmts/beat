@@ -1,10 +1,14 @@
-import { MAX_THEME_SNAPSHOT_BYTES, type ThemeHistoryPoint, type ThemeHistorySeriesInfo, type ThemeSnapshot, type ThemeSnapshotInput } from "@/types/theme-runtime"
+import { MAX_THEME_SNAPSHOT_BYTES, THEME_RELATIVE_RANGE_SECONDS, type ThemeHistoryPoint, type ThemeHistorySeriesInfo, type ThemeRange, type ThemeSnapshot, type ThemeSnapshotInput } from "@/types/theme-runtime"
 import { assertCount, boundedJSON, finiteNumber, publicConfiguration, publicID, publicText, ThemeDataError } from "@/lib/theme-json"
 import { THEME_METRICS, themeNode } from "@/lib/theme-node-snapshot"
-import { themeNetwork } from "@/lib/theme-network-snapshot"
+import { themeNetwork, themeNetworkHistory } from "@/lib/theme-network-snapshot"
+import type { WorkspaceRange } from "@/types/metric-workspace"
+
+const MAX_RANGE_SECONDS = 31 * 24 * 60 * 60
 
 export function buildThemeSnapshot(source: ThemeSnapshotInput): ThemeSnapshot {
-  const publicNodes = source.nodes.filter((node) => node.is_public === true && (source.route.kind === "dashboard" || node.id === source.route.node_id))
+  // 单页主题需要在任意路由同时展示公开节点列表；route.node_id 只决定当前详情与历史数据。
+  const publicNodes = source.nodes.filter((node) => node.is_public === true)
   assertCount(publicNodes, 1000)
   const nodes = publicNodes.map((node) => themeNode(node, source.site.public_address_mode !== "hidden"))
   const visible = new Set(nodes.map((node) => node.id))
@@ -20,10 +24,28 @@ export function buildThemeSnapshot(source: ThemeSnapshotInput): ThemeSnapshot {
     network: { visible: source.site.show_network_quality === true, tasks: [] },
     state: { nodes: source.state?.nodes ?? "ready", metrics: source.state?.metrics ?? "ready", network: source.state?.network ?? "ready" },
   }
+  if (selected) snapshot.range_options = [...THEME_RELATIVE_RANGE_SECONDS]
+  if (selected && source.range) snapshot.range = publicRange(source.range)
   if (snapshot.network.visible) snapshot.network.tasks = themeNetwork(source.network ?? [], visible)
+  if (selected && snapshot.network.visible) {
+    const taskIDs = new Set(snapshot.network.tasks.flatMap((task) => typeof task === "object" && task !== null && !Array.isArray(task) && typeof task.id === "string" ? [task.id] : []))
+    const networkHistory = themeNetworkHistory(source.networkHistory, taskIDs)
+    if (networkHistory) snapshot.network_history = networkHistory
+  }
   if (selected && source.history) snapshot.history = themeHistory(source)
   boundedJSON(snapshot, { depth: 12, keys: 100000, bytes: MAX_THEME_SNAPSHOT_BYTES })
   return snapshot
+}
+
+function publicRange(source: WorkspaceRange): ThemeRange {
+  if (source.mode === "relative") {
+    if (!Number.isInteger(source.seconds) || source.seconds <= 0 || source.seconds > MAX_RANGE_SECONDS) throw new ThemeDataError("invalid_data")
+    return { mode: "relative", seconds: source.seconds }
+  }
+  const from = Date.parse(source.from)
+  const to = Date.parse(source.to)
+  if (![from, to].every(Number.isFinite) || from < 0 || from >= to || to - from > MAX_RANGE_SECONDS * 1000) throw new ThemeDataError("invalid_data")
+  return { mode: "absolute", from: new Date(from).toISOString(), to: new Date(to).toISOString() }
 }
 
 function publicSite(source: ThemeSnapshotInput): ThemeSnapshot["site"] {

@@ -7,6 +7,7 @@ import {
 } from "@/components/ui/card"
 import { Skeleton } from "@/components/ui/skeleton"
 import { AcceleratorSummary } from "@/components/accelerator-summary"
+import { CountryBadge } from "@/components/country-badge"
 import { PublicNodeMetadata } from "@/components/public-node-metadata"
 import { TrafficUsage } from "@/components/traffic-usage"
 import { useLocale } from "@/context/locale"
@@ -35,7 +36,10 @@ export function NodeCard({ node, network, loading = false }: NodeCardProps) {
     <Link to={`/node/${encodeURIComponent(node.id)}`} onMouseEnter={preloadNodeDetail} onFocus={preloadNodeDetail} className="block h-full min-w-0">
       <Card size="sm" className="h-full min-w-0 transition-shadow hover:shadow-md">
         <CardHeader>
-          <CardTitle className="truncate" title={displayName}>{displayName}</CardTitle>
+          <CardTitle className="flex min-w-0 items-center gap-1.5" title={displayName}>
+            <CountryBadge code={node.location?.country_code} />
+            <span className="truncate">{displayName}</span>
+          </CardTitle>
           <CardDescription className="min-w-0">
             <p className="truncate" title={formatSystem(node)}>{formatSystem(node)}</p>
             <p className="truncate text-xs" title={node.cpu_model}>{node.cpu_model || node.host}</p>

@@ -34,6 +34,10 @@ func TestInitScaffoldPacksCleanlyForEveryAccent(t *testing.T) {
 				t.Fatalf("accent %s file %s: %v %v", accent, name, info, err)
 			}
 		}
+		definition, err := os.ReadFile(filepath.Join(options.output, initThemeFile))
+		if err != nil || !strings.Contains(string(definition), `"summary"`) || !strings.Contains(string(definition), `"shell"`) {
+			t.Fatalf("accent %s scaffold omitted extended controls: %s %v", accent, definition, err)
+		}
 		info, err := os.Stat(options.output)
 		if err != nil || info.Mode().Perm() != 0o700 {
 			t.Fatalf("accent %s directory mode: %v %v", accent, info, err)

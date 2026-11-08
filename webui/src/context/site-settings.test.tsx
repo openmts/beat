@@ -3,6 +3,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest"
 import {
   SiteSettingsProvider,
   defaultSiteSettings,
+  preloadSiteSettings,
+  resetSiteSettingsCache,
   useSiteSettings,
 } from "@/context/site-settings"
 import * as api from "@/lib/api"
@@ -36,7 +38,16 @@ function Harness() {
 describe("site settings context", () => {
   beforeEach(() => {
     vi.resetAllMocks()
+    resetSiteSettingsCache()
     document.head.querySelectorAll("meta[name='description'], link[rel~='icon']").forEach((node) => node.remove())
+  })
+  it("starts from preloaded settings without another request", async () => {
+    vi.mocked(api.getSiteSettings).mockResolvedValue(customSettings)
+    await preloadSiteSettings()
+    render(<SiteSettingsProvider><Harness /></SiteSettingsProvider>)
+    expect(screen.getByText("Infrastructure")).toBeInTheDocument()
+    expect(screen.queryByText("loading")).not.toBeInTheDocument()
+    expect(api.getSiteSettings).toHaveBeenCalledOnce()
   })
 
   it("loads settings and applies document metadata", async () => {

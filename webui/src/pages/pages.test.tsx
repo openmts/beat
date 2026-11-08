@@ -17,6 +17,7 @@ const site = vi.hoisted(() => ({ showNetworkQuality: true }))
 const publicWorkspace = vi.hoisted(() => ({ value: null as unknown }))
 const network = vi.hoisted(() => ({ calls: [] as boolean[], summaries: {} as Record<string, unknown> }))
 vi.mock("@/hooks/use-public-metric-workspace", () => ({ usePublicMetricWorkspace: () => publicWorkspace.value }))
+vi.mock("@/hooks/use-active-theme", () => ({ useActiveThemeState: () => ({ status: "ready", descriptor: null }) }))
 vi.mock("@/components/metric-workspace/data-view", () => ({ WorkspaceDataView: ({ panel }: { panel: { title: string } }) => <div data-testid={`chart-${panel.title}`}>{panel.title}</div>, WorkspaceDataTable: () => <p>Data table</p> }))
 
 vi.mock("@/hooks/use-api")
@@ -35,6 +36,10 @@ vi.mock("@/hooks/use-network", () => ({
     network.calls.push(enabled)
     return { data: null, loading: false, error: null, summaries: network.summaries }
   },
+  usePublicNodeNetwork: () => ({
+    quality: { data: null, loading: false, error: null },
+    history: { data: null, loading: false, error: null },
+  }),
 }))
 vi.mock("@/components/metrics-chart", () => ({
   MetricsChart: ({ title, from, to }: { title: string; from: number; to: number }) => (

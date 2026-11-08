@@ -103,7 +103,8 @@ func browserFixtureAPI(w http.ResponseWriter, request *http.Request, counter *at
 func browserFixtureNode(value int64) map[string]any {
 	return map[string]any{"id": "public-node", "name": "Public node", "alias": "Fixture", "group_id": "group", "status": "online", "is_public": true,
 		"telemetry_at": time.Now().UTC().Format(time.RFC3339), "telemetry_age_seconds": 0, "telemetry_state": "fresh",
-		"host": "IP_MUST_BE_HIDDEN", "ssh_public_key": "PRIVATE_KEY_SENTINEL", "private_remark": "PRIVATE_REMARK_SENTINEL", "agent_token": "TOKEN_SENTINEL",
+		"location": map[string]any{"scope": "public", "country_code": "JP", "resolved_at": time.Now().UTC().Format(time.RFC3339)},
+		"host":     "IP_MUST_BE_HIDDEN", "ssh_public_key": "PRIVATE_KEY_SENTINEL", "private_remark": "PRIVATE_REMARK_SENTINEL", "agent_token": "TOKEN_SENTINEL",
 		"tags": []string{"public"}, "public_remark": "Visible remark", "metrics": map[string]any{"cpu": value, "memory": 40, "private_metric": 999}}
 }
 

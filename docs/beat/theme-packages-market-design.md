@@ -122,7 +122,7 @@ authority.
 
 The sandbox has no direct API or network access. Response-level sandbox and CSP
 restrict assets to the validated package's digest path, including when the entry
-HTML is opened directly. The implemented policy and protocol 2 messages are defined
+HTML is opened directly. The implemented policy and protocol 3 messages are defined
 in [theme-sandbox-contract.md](theme-sandbox-contract.md).
 
 A trusted parent runtime sends only sanitized public site, group, node, metric,

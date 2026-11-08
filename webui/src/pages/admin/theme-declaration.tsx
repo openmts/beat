@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button"
 import { useLocale } from "@/context/locale"
 import { useThemeOperation } from "@/hooks/use-theme-operation"
 import { configureTheme, previewTheme } from "@/lib/theme-api"
-import { configurationFromDefinition } from "@/lib/theme-configuration-schema"
+import { applyThemeConfiguration, configurationFromDefinition } from "@/lib/theme-configuration-schema"
 import { configurationSummary, declarationResources, hiddenSwitches, paletteEntries } from "@/lib/theme-declaration"
 import { ThemeOperationDialog } from "@/pages/admin/theme-operation-dialog"
 import { ThemeSettingsForm } from "@/pages/admin/theme-settings-form"
@@ -51,7 +51,7 @@ function DeclarationBody({ descriptor, draft, flow, onDraft, onDescriptor }: Bod
   const definition = descriptor.declarative
   const schema = descriptor.configuration_schema
   // 编辑中的值覆盖当前生效定义，表单与摘要都读同一份草稿，与预览弹窗的口径一致。
-  const edited = definition ? { ...definition, ...draft } : undefined
+  const edited = definition ? applyThemeConfiguration(definition, draft) : undefined
   // 内置主题没有包 ID，没有可写的配置行，因此保持只读摘要。
   const editable = Boolean(definition && descriptor.package_id)
   const save = (reset: boolean) => flow.request({

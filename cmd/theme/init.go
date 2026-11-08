@@ -108,7 +108,10 @@ func initDefinition(options initOptions) (initScaffold, error) {
 		return initScaffold{}, fmt.Errorf("unknown accent %q, choose one of %s", options.accent, strings.Join(accentNames, ", "))
 	}
 	definition := map[string]any{"schema_version": 1, "overview": options.overview, "detail": options.detail,
-		"density": options.density, "radius": options.radius, "light": light, "dark": dark}
+		"density": options.density, "radius": options.radius, "surface": "solid",
+		"summary": map[string]any{"layout": "cards", "metrics": []string{"availability", "busiest", "traffic", "throughput"}},
+		"shell":   map[string]any{"background": "plain", "header": "glass", "footer": "plain"},
+		"light":   light, "dark": dark}
 	if options.font != "" {
 		definition["font"] = options.font
 	}

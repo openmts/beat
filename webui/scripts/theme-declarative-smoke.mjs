@@ -24,31 +24,41 @@ try {
   // control 是公共车队工具条上的访客视图开关：它缺省为 Cards，并覆盖声明 table 的主题
   // （公共面设计刻意保留「用户批准的卡片缺省视图」，见 public-fleet-experience-design.md），
   // 因此脚本按主题显式驱动开关，再断言主题声明的布局确实渲染出来。
-  const layouts = {
-    slate: { overview: "cards", detail: "balanced", control: "Cards" },
-    operations: { overview: "table", detail: "compact", control: "Table" },
-    canvas: { overview: "tiles", detail: "spotlight", control: "Cards" },
+  const themes = {
+    "fixture-cards": { overview: "cards", detail: "balanced", control: "Cards", summary: "cards", metrics: ["availability", "busiest", "traffic", "throughput"], surface: "solid", background: "plain", header: "glass", footer: "plain" },
+    "fixture-table": { overview: "table", detail: "compact", control: "Table", summary: "strip", metrics: ["availability", "busiest", "throughput", "traffic", "groups"], surface: "outline", background: "grid", header: "solid", footer: "minimal" },
+    "fixture-tiles": { overview: "tiles", detail: "spotlight", control: "Cards", summary: "focus", metrics: ["availability", "busiest", "traffic", "throughput"], surface: "soft", background: "wash", header: "transparent", footer: "plain" },
   }
-  for (const [name, { overview, detail, control }] of Object.entries(layouts)) {
+  for (const [name, theme] of Object.entries(themes)) {
+    const { overview, detail, control } = theme
     assert.equal((await fetch(`${base}/fixture/activate/${name}`, { method: "POST" })).status, 204)
     await page.evaluate(() => localStorage.setItem("theme", "light")).catch(() => {})
     await page.goto(base)
     await page.getByRole("button", { name: control, exact: true }).click()
     await expectOverviewLayout(page, overview)
-    await page.getByRole("link", { name: "Frankfurt edge" }).first().waitFor()
+    await expectThemeSummary(page, theme)
+    const homeBackground = await expectThemeRoot(page, theme)
+    const frankfurt = page.getByRole("link", { name: "Frankfurt edge" }).first()
+    await frankfurt.waitFor()
+    assert.equal(await frankfurt.locator('[data-country-code="DE"]').count(), 1)
     assert.doesNotMatch(await page.locator("body").innerText(), /PRIVATE_|203\.0\.113\.18|NaN|Infinity/)
     await privateScreenshot(page, { path: path.join(output, `${name}.png`) })
-    await page.getByRole("link", { name: "Frankfurt edge" }).first().click()
+    await frankfurt.click()
+    await page.locator('header h1 [data-country-code="DE"]').waitFor()
     await expectDetailLayout(page, detail)
+    const detailBackground = await expectThemeRoot(page, theme)
+    assert.equal(detailBackground, homeBackground, `${name} must keep the themed background on node detail`)
     await page.locator(".recharts-responsive-container").first().waitFor()
     assert.equal(await page.getByRole("button", { name: /Edit panel/ }).count(), 0)
     assert.equal(await page.locator('[draggable="true"]').count(), 0)
     await privateScreenshot(page, { path: path.join(output, `${name}-detail.png`), fullPage: true })
-    if (name === "slate") await verifyPublicControls(page, queryRequests, summaryRequests)
+    if (name === "fixture-cards") await verifyPublicControls(page, queryRequests, summaryRequests)
     await page.evaluate(() => localStorage.setItem("theme", "dark"))
     await page.goto(base)
     await page.getByRole("button", { name: control, exact: true }).click()
     await expectOverviewLayout(page, overview)
+    await expectThemeSummary(page, theme)
+    await expectThemeRoot(page, theme)
     assert.equal(await page.locator("[data-public-theme]").evaluate((element) => element.classList.contains("dark")), true)
     await privateScreenshot(page, { path: path.join(output, `${name}-dark.png`) })
     await page.setViewportSize({ width: 390, height: 844 })
@@ -61,11 +71,11 @@ try {
   await admin.addInitScript(() => { localStorage.setItem("locale", "en"); localStorage.setItem("theme", "light") })
   page = await admin.newPage()
   page.on("pageerror", (error) => failures.push(error.message))
-  await page.goto(`${base}/admin/settings`)
+  await page.goto(`${base}/admin/themes`)
   await page.getByRole("heading", { name: "Installed themes", exact: true }).waitFor()
-  const slate = page.locator('[data-slot="card"]').filter({ has: page.getByRole("heading", { name: "Slate", exact: true }) }).last()
-  await slate.getByRole("button", { name: "Preview", exact: true }).click()
-  const preview = page.frameLocator('iframe[title="Slate preview"]')
+  const cards = page.locator('[data-slot="card"]').filter({ has: page.getByRole("heading", { name: "Fixture Cards", exact: true }) }).last()
+  await cards.getByRole("button", { name: "Preview", exact: true }).click()
+  const preview = page.frameLocator('iframe[title="Fixture Cards preview"]')
   await preview.getByRole("link", { name: "Frankfurt edge" }).first().waitFor()
   assert.doesNotMatch(await preview.locator("body").innerText(), /PRIVATE_|203\.0\.113\.18/)
   await page.getByRole("button", { name: "Mobile", exact: true }).click()
@@ -80,10 +90,10 @@ try {
   await page.getByRole("button", { name: "Save settings", exact: true }).click()
   await page.getByRole("button", { name: "Confirm", exact: true }).click()
   await page.getByRole("button", { name: "Reset settings", exact: true }).waitFor()
-  const configured = await (await admin.request.get(`${base}/api/v1/admin/themes/${info.packages.slate.id}/preview`)).json()
+  const configured = await (await admin.request.get(`${base}/api/v1/admin/themes/${info.packages["fixture-cards"].id}/preview`)).json()
   assert.equal(configured.data.declarative.radius, 0)
   const active = await (await admin.request.get(`${base}/api/v1/themes/active`)).json()
-  assert.equal(active.data.package_id, info.packages.canvas.id, "Preview/config must not activate the package")
+  assert.equal(active.data.package_id, info.packages["fixture-tiles"].id, "Preview/config must not activate the package")
   await page.getByRole("button", { name: "Reset settings", exact: true }).click()
   await page.getByRole("button", { name: "Confirm", exact: true }).click()
   await page.getByLabel("Corner radius (px)").filter({ visible: true }).waitFor()
@@ -95,7 +105,7 @@ try {
   assert.equal((await (await admin.request.get(`${base}/api/v1/themes/active`)).json()).data.built_in, true)
   await admin.close()
   assert.deepEqual(failures, [], "Unexpected browser runtime errors")
-  await writeFile(path.join(output, "results.json"), JSON.stringify({ fixture: info.fixture, themes: Object.keys(layouts), runtimeErrors: failures, desktopMobileDark: true, privateDataHidden: true, previewConfigurationRecovery: true }, null, 2), { mode: 0o600 })
+  await writeFile(path.join(output, "results.json"), JSON.stringify({ fixture: info.fixture, themes: Object.keys(themes), runtimeErrors: failures, desktopMobileDark: true, privateDataHidden: true, previewConfigurationRecovery: true }, null, 2), { mode: 0o600 })
   console.log(`Theme browser checks passed; artifacts: ${output}`)
 } catch (error) {
   if (page && !page.isClosed()) await privateScreenshot(page, { path: path.join(output, "failure.png"), fullPage: true }).catch(() => {})
@@ -123,7 +133,36 @@ async function expectDetailLayout(scope, detail) {
   await container.first().waitFor()
 }
 
+async function expectThemeSummary(scope, theme) {
+  const section = scope.locator(`section[data-theme-summary="${theme.summary}"]`).first()
+  await section.waitFor()
+  const metrics = await section.locator("[data-theme-summary-metric]").evaluateAll((items) => items.map((item) => item.getAttribute("data-theme-summary-metric")))
+  assert.deepEqual(metrics, theme.metrics, "summary metrics must follow the theme declaration")
+}
+
+async function expectThemeRoot(scope, theme) {
+  const root = scope.locator("[data-public-theme]").first()
+  await root.waitFor()
+  assert.equal(await root.getAttribute("data-public-theme"), theme.overview)
+  assert.equal(await root.getAttribute("data-theme-summary"), theme.summary)
+  assert.equal(await root.getAttribute("data-theme-surface"), theme.surface)
+  assert.equal(await root.getAttribute("data-theme-shell-background"), theme.background)
+  assert.equal(await root.getAttribute("data-theme-shell-header"), theme.header)
+  assert.equal(await root.getAttribute("data-theme-shell-footer"), theme.footer)
+  assert.equal(await root.evaluate((element) => element.classList.contains("bg-background")), true)
+  const presentation = await root.evaluate((element) => {
+    const style = getComputedStyle(element)
+    return { background: style.backgroundColor, image: style.backgroundImage }
+  })
+  if (theme.background === "plain") assert.equal(presentation.image, "none")
+  else assert.match(presentation.image, /gradient/, "themed shells must render a palette-derived texture")
+  assert.notEqual(presentation.background, "rgba(0, 0, 0, 0)", "the page root must paint its theme background")
+  return presentation.background
+}
+
 async function privateScreenshot(target, options) {
+  const dismiss = target.getByRole("button", { name: "Dismiss", exact: true })
+  if (await dismiss.count() > 0) await dismiss.first().click({ timeout: 1000 }).catch(() => {})
   await target.screenshot(options)
   await chmod(options.path, 0o600)
 }

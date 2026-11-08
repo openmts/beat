@@ -22,6 +22,7 @@ const loadMetricsExplore = () => import("@/pages/admin/metrics-explore")
 const loadAlerts = () => import("@/pages/admin/alerts")
 const loadNetwork = () => import("@/pages/admin/network")
 const loadSettings = () => import("@/pages/admin/settings")
+const loadThemes = () => import("@/pages/admin/themes")
 const loadAgentReleases = () => import("@/pages/admin/agent-releases")
 const loadAccelerators = () => import("@/pages/admin/accelerators")
 const loadLifecycle = () => import("@/pages/admin/lifecycle")
@@ -83,6 +84,7 @@ function AdminAccess() {
         <Route path="alerts" element={<LazyRoute load={loadAlerts} />} />
         <Route path="network" element={<LazyRoute load={loadNetwork} />} />
         <Route path="settings" element={<LazyRoute load={loadSettings} />} />
+        <Route path="themes" element={<LazyRoute load={loadThemes} />} />
         <Route path="agent-releases" element={<LazyRoute load={loadAgentReleases} />} />
         <Route path="accelerators" element={<LazyRoute load={loadAccelerators} />} />
         <Route path="lifecycle" element={<LazyRoute load={loadLifecycle} />} />

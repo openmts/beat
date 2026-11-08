@@ -5,7 +5,7 @@ import { Progress } from "@/components/ui/progress"
 import { PublicNodeMetadata } from "@/components/public-node-metadata"
 import { TrafficUsage } from "@/components/traffic-usage"
 import { TelemetryStatus } from "@/components/telemetry-status"
-import { usePublicTheme } from "@/lib/theme-presentation"
+import { themeSurfaceClass, usePublicTheme } from "@/lib/theme-presentation"
 import { useLocale } from "@/context/locale"
 import { formatDuration } from "@/lib/metric-format"
 import type { Node } from "@/types"
@@ -55,9 +55,11 @@ function NodeResources({ metrics }: { metrics: Record<string, number> }) {
 }
 function NodeSystem({ node }: { node: Node }) {
   const { locale, t } = useLocale()
-  const compact = usePublicTheme()?.definition.detail === "compact"
+  const definition = usePublicTheme()?.definition
+  const compact = definition?.detail === "compact"
+  const surface = definition ? themeSurfaceClass(definition) : undefined
   return (<div className={compact ? "grid grid-cols-1 gap-4" : "grid grid-cols-1 gap-4 lg:grid-cols-[1fr_22rem]"}>
-        <Card>
+        <Card className={surface}>
           <CardHeader>
             <CardTitle className="text-sm">{t("node.system")}</CardTitle>
           </CardHeader>
@@ -72,7 +74,7 @@ function NodeSystem({ node }: { node: Node }) {
             </dl>
           </CardContent>
         </Card>
-        <Card>
+        <Card className={surface}>
           <CardHeader>
             <CardTitle className="text-sm">{t("traffic.current_cycle")}</CardTitle>
           </CardHeader>
@@ -89,8 +91,9 @@ function ResourceCard({ icon: Icon, label, percent, value }: {
   value: string
 }) {
   const pct = percent === undefined ? null : Math.max(0, Math.min(percent, 100))
+  const definition = usePublicTheme()?.definition
   return (
-    <Card>
+    <Card className={definition ? themeSurfaceClass(definition) : undefined}>
       <CardContent className="flex flex-col gap-2">
         <div className="flex items-center gap-2">
           <Icon className="size-4 shrink-0 text-muted-foreground" />

@@ -14,6 +14,7 @@ interface NetworkHistoryQuery {
   nodeId: string
   from: string
   to: string
+  signal?: AbortSignal
 }
 
 export async function listPublicNetworkQuality(): Promise<NetworkTaskView[]> {
@@ -27,7 +28,7 @@ export async function getPublicNetworkHistory(
 ): Promise<NetworkHistoryResponse> {
   const response = await api.get<NetworkHistoryResponse>(
     `/network/quality/${taskId}/history`,
-    { params: historyParams(query) },
+    { params: historyParams(query), ...(query.signal ? { signal: query.signal } : {}) },
   )
   return response.data
 }
@@ -72,7 +73,7 @@ export async function getAdminNetworkHistory(
 ): Promise<NetworkHistoryResponse> {
   const response = await api.get<NetworkHistoryResponse>(
     `/network/tasks/${taskId}/history`,
-    { params: historyParams(query) },
+    { params: historyParams(query), ...(query.signal ? { signal: query.signal } : {}) },
   )
   return response.data
 }

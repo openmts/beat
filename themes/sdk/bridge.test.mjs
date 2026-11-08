@@ -11,8 +11,8 @@ function fixture(render = () => {}) {
   const client = connectBeatTheme(render, scope)
   const receive = (beat, options = {}) => { for (const listener of listeners) listener({ source: parent, origin: "https://beat.example", data: { beat }, ...options }) }
   const instance = "a".repeat(32)
-  const init = () => receive({ version: 2, type: "init", instance_id: instance })
-  const snapshot = (payload) => receive({ version: 2, type: "snapshot", instance_id: instance, payload })
+  const init = () => receive({ version: 3, type: "init", instance_id: instance })
+  const snapshot = (payload) => receive({ version: 3, type: "snapshot", instance_id: instance, payload })
   return { scope, client, sent, receive, init, snapshot, instance, listeners }
 }
 
@@ -20,15 +20,16 @@ test("binds to the parent origin, version and fresh instance", () => {
   const values = []
   const f = fixture((snapshot) => values.push(snapshot))
   assert.equal(f.client.navigate("/"), false)
-  f.receive({ version: 2, type: "init", instance_id: f.instance }, { origin: "https://evil.example" })
-  f.receive({ version: 2, type: "init", instance_id: f.instance }, { source: {} })
+  f.receive({ version: 3, type: "init", instance_id: f.instance }, { origin: "https://evil.example" })
+  f.receive({ version: 3, type: "init", instance_id: f.instance }, { source: {} })
   f.receive({ version: 1, type: "init", instance_id: f.instance })
-  f.receive({ version: 2, type: "init", instance_id: "wrong" })
+  f.receive({ version: 2, type: "init", instance_id: f.instance })
+  f.receive({ version: 3, type: "init", instance_id: "wrong" })
   f.receive(undefined)
   assert.equal(f.sent.length, 0)
   f.init()
-  assert.deepEqual(f.sent[0], { value: { beat: { version: 2, instance_id: f.instance, type: "ready" } }, origin: "https://beat.example" })
-  f.receive({ version: 2, type: "snapshot", instance_id: "b".repeat(32), payload: { nodes: [] } })
+  assert.deepEqual(f.sent[0], { value: { beat: { version: 3, instance_id: f.instance, type: "ready" } }, origin: "https://beat.example" })
+  f.receive({ version: 3, type: "snapshot", instance_id: "b".repeat(32), payload: { nodes: [] } })
   assert.equal(values.length, 0)
   f.snapshot({ nodes: [{ id: "public-node" }], state: { nodes: "ready" } })
   assert.equal(values.length, 1)
@@ -41,6 +42,29 @@ test("binds to the parent origin, version and fresh instance", () => {
   f.client.destroy()
   assert.equal(f.listeners.size, 0)
   assert.equal(f.client.reportError(), false)
+})
+
+test("sends only validated node time ranges", () => {
+  const f = fixture()
+  f.init()
+  assert.equal(f.client.setRange({ mode: "relative", seconds: 21600 }), false)
+  f.snapshot({ route: { kind: "dashboard" }, nodes: [] })
+  assert.equal(f.client.setRange({ mode: "relative", seconds: 21600 }), false)
+  f.snapshot({ route: { kind: "node", node_id: "public-node" }, nodes: [{ id: "public-node" }] })
+  assert.equal(f.client.setRange({ mode: "relative", seconds: 21600 }), true)
+  assert.deepEqual(f.sent.at(-1).value.beat.payload, { mode: "relative", seconds: 21600 })
+  assert.equal(f.client.setRange({ mode: "absolute", from: "2026-11-07T10:00:00Z", to: "2026-11-07T16:00:00Z" }), true)
+  assert.deepEqual(f.sent.at(-1).value.beat.payload, { mode: "absolute", from: "2026-11-07T10:00:00.000Z", to: "2026-11-07T16:00:00.000Z" })
+  for (const range of [
+    null, {}, { mode: "relative", seconds: 123 }, { mode: "relative", seconds: 3600, extra: true },
+    { mode: "absolute", from: "invalid", to: "2026-11-07T16:00:00Z" },
+    { mode: "absolute", from: "2026-11-07T16:00:00Z", to: "2026-11-07T10:00:00Z" },
+    { mode: "absolute", from: "2026-01-01T00:00:00Z", to: "2026-02-01T00:00:01Z" },
+    { mode: "unknown", seconds: 3600 },
+  ]) assert.equal(f.client.setRange(range), false)
+  f.init()
+  assert.equal(f.client.setRange({ mode: "relative", seconds: 21600 }), false)
+  f.client.destroy()
 })
 
 test("contains invalid payloads and render failures without exposing errors", async () => {

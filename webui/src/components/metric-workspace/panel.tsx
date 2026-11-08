@@ -5,6 +5,8 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { Skeleton } from "@/components/ui/skeleton"
 import { useLocale } from "@/context/locale"
+import { themeSurfaceClass, usePublicTheme } from "@/lib/theme-presentation"
+import { cn } from "@/lib/utils"
 import { panelTimeLabel } from "@/lib/workspace-time-override"
 import { panelLinks, resolvePanelLinkURL } from "@/lib/workspace-links"
 import { WorkspaceDataView } from "./data-view"
@@ -35,6 +37,7 @@ type PanelProps = {
 
 export function WorkspacePanel(props: PanelProps) {
   const { t, locale } = useLocale()
+  const publicTheme = usePublicTheme()
   const state = props.state
   const result = !props.readOnly && state?.result && state.loading && state.query ? { ...state.result, from: state.query.from, to: state.query.to } : state?.result
   const retry = props.retry
@@ -44,7 +47,7 @@ export function WorkspacePanel(props: PanelProps) {
   // 文本面板不查询、不检查、也没有状态行：正文由 Markdown 渲染，链接条跟在正文下方。
   const text = props.panel.type === "text"
   const spans: Record<PanelSize, string> = { small: "lg:col-span-4", medium: "lg:col-span-6", large: "lg:col-span-12" }
-  return <section className={`min-w-0 overflow-hidden rounded-lg border bg-card shadow-xs ${spans[props.panel.size]}`} aria-label={props.panel.title}
+  return <section className={cn("min-w-0 overflow-hidden rounded-lg", publicTheme ? themeSurfaceClass(publicTheme.definition) : "border bg-card shadow-xs", spans[props.panel.size])} aria-label={props.panel.title}
     onDragOver={props.readOnly ? undefined : (event) => { event.preventDefault(); event.dataTransfer.dropEffect = "move" }} onDrop={props.readOnly ? undefined : (event) => { event.preventDefault(); props.drop(event.dataTransfer.getData("text/beat-panel")) }}>
     <div className="flex items-center justify-between gap-2 border-b px-3 py-2">
       <div className="flex min-w-0 items-center gap-2" draggable={!props.readOnly && !props.busy} onDragStart={props.readOnly ? undefined : (event) => event.dataTransfer.setData("text/beat-panel", props.panel.id)}>

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest"
-import { dashboardDomain, dashboardQueryPoints, expandPanelSeries, panelMetricQuery, panelQueryPoints, runWorkspaceQueue, workspaceDomain } from "@/lib/workspace-query"
+import { dashboardDomain, dashboardQueryPoints, expandPanelSeries, panelMetricQuery, panelQueryPoints, runWorkspaceQueue, timeRangeQueryPoints, workspaceDomain } from "@/lib/workspace-query"
 import { workspaceAllSelection } from "@/lib/workspace-variable-options"
 import { workspaceDashboard, workspaceNode } from "@/test/metric-workspace-fixtures"
 
@@ -25,6 +25,16 @@ describe("workspace queries", () => {
     expect(panelQueryPoints({}, { max_points: 300 })).toBe(300)
     expect(panelQueryPoints({ max_points: 90 }, { max_points: 300 })).toBe(90)
     expect(panelQueryPoints({ max_points: 601 }, { max_points: 300 })).toBe(300)
+  })
+
+  it("keeps short ranges at the Agent sample interval", () => {
+    const now = Date.parse("2026-09-13T01:00:00Z")
+    const domain = (seconds: number) => workspaceDomain({ mode: "relative", seconds }, now)
+    expect(timeRangeQueryPoints(domain(300), 600)).toBe(60)
+    expect(timeRangeQueryPoints(domain(900), 600)).toBe(180)
+    expect(timeRangeQueryPoints(domain(3600), 600)).toBe(600)
+    expect(timeRangeQueryPoints(domain(900), 90)).toBe(90)
+    expect(timeRangeQueryPoints({ from: "invalid", to: "invalid" }, 120)).toBe(120)
   })
 
   it("expands visible node and group variables without leaking presentation into the request", () => {

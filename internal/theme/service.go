@@ -70,7 +70,7 @@ func (service *Service) MarkUnhealthy(ctx context.Context, category string) erro
 func (service *Service) ActiveDescriptor(ctx context.Context) (model.ActiveThemeDescriptor, error) {
 	builtIn := model.ActiveThemeDescriptor{
 		ThemeID: "built-in", Name: "Built-in", Version: "1.0.0",
-		Runtime: model.ThemeRuntimeDeclarative, BuiltIn: true, Protocol: 2,
+		Runtime: model.ThemeRuntimeDeclarative, BuiltIn: true, Protocol: 3,
 	}
 	activation, err := service.store.CurrentActivation(ctx)
 	if err != nil {

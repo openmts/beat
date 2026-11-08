@@ -131,6 +131,15 @@ it("applies the dashboard now delay to relative ranges and the resolved point bu
   next()
 })
 
+it("uses a sample-aligned point budget for short relative ranges", async () => {
+  const input = options()
+  input.range = { mode: "relative", seconds: 300 }
+  const stop = new WorkspacePoller(input, () => undefined).start()
+  await vi.advanceTimersByTimeAsync(0)
+  expect(vi.mocked(queryWorkspaceMetrics).mock.calls[0][0].max_points).toBe(60)
+  stop()
+})
+
 it("shifts a panel window back by its declared time shift", async () => {
   const input = options()
   input.definition.panels[0].time_shift = "1d"

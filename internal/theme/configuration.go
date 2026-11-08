@@ -51,6 +51,21 @@ func configurationValues(configuration model.ThemeConfiguration) map[string]any 
 	if configuration.Font != nil {
 		values["font"] = *configuration.Font
 	}
+	if configuration.Surface != nil {
+		values["surface"] = *configuration.Surface
+	}
+	if configuration.SummaryLayout != nil {
+		values["summary_layout"] = *configuration.SummaryLayout
+	}
+	if configuration.ShellBackground != nil {
+		values["shell_background"] = *configuration.ShellBackground
+	}
+	if configuration.ShellHeader != nil {
+		values["shell_header"] = *configuration.ShellHeader
+	}
+	if configuration.ShellFooter != nil {
+		values["shell_footer"] = *configuration.ShellFooter
+	}
 	if configuration.ShowNetwork != nil {
 		values["show_network"] = *configuration.ShowNetwork
 	}

@@ -21,7 +21,7 @@ page.on("request", (request) => {
 })
 let sourceID
 try {
-  await page.goto(`${base}/admin/settings`)
+  await page.goto(`${base}/admin/themes`)
   await page.getByRole("heading", { name: "Installed themes", exact: true }).waitFor()
   await addSource()
   await verifyCache()
@@ -46,7 +46,7 @@ try {
 
 function sourceCard() { return page.getByRole("article", { name: "Fixture publisher", exact: true }) }
 function packageCard(version) {
-  return page.locator('[data-slot="card"]').filter({ has: page.getByRole("heading", { name: "Market Slate", exact: true }) })
+  return page.locator('[data-slot="card"]').filter({ has: page.getByRole("heading", { name: "Browser market theme", exact: true }) })
     .filter({ has: page.getByText(version, { exact: true }) }).last()
 }
 async function jsonAPI(route) { return (await (await admin.request.get(`${base}/api/v1${route}`)).json()).data }
@@ -151,14 +151,14 @@ async function activate(pkg) {
 
 async function configureSecond(second) {
   await packageCard(second.version).getByRole("button", { name: "Preview", exact: true }).click()
-  await page.frameLocator('iframe[title="Market Slate preview"]').getByRole("link", { name: "Frankfurt edge" }).waitFor()
+  await page.frameLocator('iframe[title="Browser market theme preview"]').getByRole("link", { name: "Frankfurt edge" }).waitFor()
   await page.getByLabel("Corner radius (px)").fill("0")
   await page.getByRole("button", { name: "Save settings", exact: true }).click()
   const saved = page.waitForResponse((response) => response.url().endsWith(`/themes/${second.id}/configuration`) && response.request().method() === "PUT")
   await page.getByRole("button", { name: "Confirm", exact: true }).click()
   assert.equal((await saved).status(), 200)
   await page.getByRole("dialog", { name: "Save settings", exact: true }).waitFor({ state: "hidden" })
-  await page.getByRole("dialog", { name: "Market Slate · Preview", exact: true }).getByRole("button", { name: "Close", exact: true }).click()
+  await page.getByRole("dialog", { name: "Browser market theme · Preview", exact: true }).getByRole("button", { name: "Close", exact: true }).click()
 }
 
 async function upgradeAndRestore(first) {

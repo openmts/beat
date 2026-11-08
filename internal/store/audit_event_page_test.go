@@ -85,6 +85,40 @@ func TestListAuditEventsKeepsTiesAndFilters(t *testing.T) {
 	}
 }
 
+func TestListAuditEventsKeepsSubMillisecondOrdering(t *testing.T) {
+	store := newAdminTestStore(t)
+	now := time.Date(2026, 10, 15, 3, 0, 0, 123_000_000, time.UTC)
+	for index, id := range []string{"micro-a", "micro-b", "micro-c"} {
+		if err := store.CreateAuditEvent(t.Context(), &model.AdminAuditEvent{
+			ID: id, Action: "node.update", ActorID: "owner", ActorUsername: "owner",
+			ResourceType: "node", ResourceID: id, Outcome: model.AuditOutcomeSuccess,
+			DetailJSON: "{}", CreatedAt: now.Add(time.Duration(index) * time.Microsecond),
+		}); err != nil {
+			t.Fatalf("seed %s: %v", id, err)
+		}
+	}
+	seen, cursor := map[string]bool{}, ""
+	for page := 0; page < 5; page++ {
+		next, err := store.ListAuditEvents(t.Context(), model.AuditFilter{Limit: 1, Cursor: cursor})
+		if err != nil {
+			t.Fatalf("page %d: %v", page, err)
+		}
+		for _, event := range next.Events {
+			if seen[event.ID] {
+				t.Fatalf("duplicate audit event %q across pages", event.ID)
+			}
+			seen[event.ID] = true
+		}
+		cursor = next.NextCursor
+		if cursor == "" {
+			break
+		}
+	}
+	if len(seen) != 3 {
+		t.Fatalf("expected every sub-millisecond event exactly once, got %v", seen)
+	}
+}
+
 func TestListAuditEventsRejectsInvalidCursorAndLimit(t *testing.T) {
 	store := newAdminTestStore(t)
 	seedAuditEventPage(t, store, time.Date(2026, 10, 15, 3, 0, 0, 0, time.UTC))

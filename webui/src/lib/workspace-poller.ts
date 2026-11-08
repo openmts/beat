@@ -1,6 +1,6 @@
 import { retryAfterDelay } from "@/lib/retry-after"
 import { queryWorkspaceMetrics } from "@/lib/metric-workspace-api"
-import { dashboardDomain, expandPanelSeries, panelMetricQuery, panelQueryPoints, runWorkspaceQueue } from "@/lib/workspace-query"
+import { dashboardDomain, expandPanelSeries, panelMetricQuery, panelQueryPoints, runWorkspaceQueue, timeRangeQueryPoints } from "@/lib/workspace-query"
 import { workspacePanelInstances, type WorkspacePanelInstance } from "@/lib/workspace-repeat"
 import { isStaticPanel } from "@/lib/workspace-row"
 import { panelQueryDomain } from "@/lib/workspace-time-override"
@@ -117,7 +117,8 @@ export class WorkspacePoller {
     try {
       const expanded = expandPanelSeries(instance.panel, { ...this.options, binding: instance.binding })
       // 面板级时间覆盖只影响这个面板的查询，看板其余部分仍用统一的看板范围。
-      const query = panelMetricQuery(expanded, panelQueryDomain(instance.panel, domain, this.shiftedNow()), panelQueryPoints(instance.panel, this.options.definition))
+      const queryDomain = panelQueryDomain(instance.panel, domain, this.shiftedNow())
+      const query = panelMetricQuery(expanded, queryDomain, timeRangeQueryPoints(queryDomain, panelQueryPoints(instance.panel, this.options.definition)))
       this.update({ type: "panel", id, patch: { query, expanded } })
       const result = await queryWorkspaceMetrics(query, { signal, public: this.options.public })
       if (!signal.aborted) this.update({ type: "panel", id, patch: { result, resultQuery: query, resultExpanded: expanded, updatedAt: Date.now(), loading: false } })

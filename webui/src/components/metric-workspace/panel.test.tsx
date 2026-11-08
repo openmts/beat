@@ -2,7 +2,11 @@ import { render, screen } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { describe, expect, it, vi } from "vitest"
 import { LocaleProvider } from "@/context/locale"
+import { defaultSiteSettings } from "@/context/site-settings"
+import { PublicThemeProvider } from "@/components/public-theme-provider"
 import { workspaceDashboard, workspaceResult } from "@/test/metric-workspace-fixtures"
+import { buildThemeSnapshot } from "@/lib/theme-snapshot"
+import { THEME_PALETTE_TOKENS, type ThemeDefinition } from "@/types/theme-definition"
 import { WorkspacePanel } from "./panel"
 
 const panel = { ...workspaceDashboard().definition.panels[0], title: "CPU usage" }
@@ -57,6 +61,16 @@ describe("workspace panel header", () => {
     render(<LocaleProvider><WorkspacePanel readOnly panel={panel} state={ready} inspect={vi.fn()} onRange={vi.fn()} alertLink="/admin/alerts?tab=rules&metric=cpu" /></LocaleProvider>)
     expect(screen.queryByRole("button", { name: "Edit panel · CPU usage" })).not.toBeInTheDocument()
     expect(screen.queryByRole("menuitem", { name: "Create alert rule" })).not.toBeInTheDocument()
+  })
+
+  it("uses the public theme surface when rendered inside a public theme", () => {
+    const palette = Object.fromEntries(THEME_PALETTE_TOKENS.map((key) => [key, "#172033"])) as ThemeDefinition["light"]
+    const definition: ThemeDefinition = { schema_version: 1, overview: "cards", detail: "balanced", density: "comfortable", radius: 6, surface: "outline", light: palette, dark: palette }
+    const snapshot = buildThemeSnapshot({ route: { kind: "dashboard" }, site: defaultSiteSettings, nodes: [], groups: [], locale: "en", theme: "light" })
+    render(<LocaleProvider><PublicThemeProvider definition={definition} snapshot={snapshot}>
+      <WorkspacePanel readOnly panel={panel} state={ready} inspect={vi.fn()} onRange={vi.fn()} />
+    </PublicThemeProvider></LocaleProvider>)
+    expect(screen.getByRole("region", { name: "CPU usage" })).toHaveClass("bg-transparent")
   })
 })
 

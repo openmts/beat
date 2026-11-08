@@ -8,7 +8,7 @@ import { defaultSiteSettings } from "@/context/site-settings"
 import type { ActiveThemeDescriptor } from "@/types/theme"
 
 const descriptor: ActiveThemeDescriptor = { package_id: "package", theme_id: "theme", name: "Sandbox", version: "1.0.0",
-  runtime: "sandboxed", built_in: false, protocol: 2, sandbox_entry: "dist/index.html", archive_digest: "a".repeat(64) }
+  runtime: "sandboxed", built_in: false, protocol: 3, sandbox_entry: "dist/index.html", archive_digest: "a".repeat(64) }
 const snapshot = () => buildThemeSnapshot({ route: { kind: "dashboard" }, site: defaultSiteSettings, nodes: [], groups: [], locale: "en", theme: "light" })
 const fallback = <div>built-in-dashboard</div>
 function Location() { return <output data-testid="location">{useLocation().pathname}</output> }
@@ -21,12 +21,12 @@ function boot() {
   fireEvent.load(frame)
   const instance = (send.mock.calls[0][0] as { beat: { instance_id: string } }).beat.instance_id
   const receive = (type: string, payload?: unknown, instanceID = instance) => act(() => window.dispatchEvent(new MessageEvent("message", {
-    source: frame.contentWindow, data: { beat: { version: 2, instance_id: instanceID, type, ...(payload === undefined ? {} : { payload }) } },
+    source: frame.contentWindow, data: { beat: { version: 3, instance_id: instanceID, type, ...(payload === undefined ? {} : { payload }) } },
   })))
   return { frame, send, instance, receive }
 }
 
-describe("SandboxedThemeFrame protocol 2 lifecycle", () => {
+describe("SandboxedThemeFrame protocol 3 lifecycle", () => {
   beforeEach(() => { localStorage.clear(); vi.useFakeTimers() })
   afterEach(() => { vi.useRealTimers() })
   it("handshakes per load and sends snapshots to the opaque origin", () => {
@@ -34,6 +34,7 @@ describe("SandboxedThemeFrame protocol 2 lifecycle", () => {
     const { frame, send, receive } = boot()
     expect(frame.src).toContain(`/themes/assets/${descriptor.archive_digest}/dist/index.html`)
     expect(frame.getAttribute("sandbox")).toBe("allow-scripts")
+    expect(screen.queryByText("built-in-dashboard")).not.toBeInTheDocument()
     expect(send.mock.calls[0][1]).toBe("*")
     expect(send.mock.calls[0][0].beat.type).toBe("init")
     receive("ready")
@@ -47,7 +48,7 @@ describe("SandboxedThemeFrame protocol 2 lifecycle", () => {
     const view = render(tree())
     const { frame, send, receive, instance } = boot()
     receive("ready", undefined, "wrong-instance")
-    expect(screen.getByText("built-in-dashboard")).toBeInTheDocument()
+    expect(screen.queryByText("built-in-dashboard")).not.toBeInTheDocument()
     receive("ready")
     act(() => vi.advanceTimersByTime(3000))
     view.rerender(tree({ snapshot: () => snapshot() }))
@@ -58,7 +59,7 @@ describe("SandboxedThemeFrame protocol 2 lifecycle", () => {
     expect(send.mock.lastCall?.[0].beat.type).toBe("init")
     expect(send.mock.lastCall?.[0].beat.instance_id).not.toBe(instance)
     receive("ready")
-    expect(screen.getByText("built-in-dashboard")).toBeInTheDocument()
+    expect(screen.queryByText("built-in-dashboard")).not.toBeInTheDocument()
   })
   it("uses router navigation only for public targets", () => {
     render(tree())
@@ -81,7 +82,25 @@ describe("SandboxedThemeFrame protocol 2 lifecycle", () => {
   })
   it("does not accept another window's messages", () => {
     render(tree()); const { instance } = boot()
-    act(() => window.dispatchEvent(new MessageEvent("message", { source: window, data: { beat: { version: 2, instance_id: instance, type: "ready" } } })))
+    act(() => window.dispatchEvent(new MessageEvent("message", { source: window, data: { beat: { version: 3, instance_id: instance, type: "ready" } } })))
+    expect(screen.queryByText("built-in-dashboard")).not.toBeInTheDocument()
+  })
+  it("delivers validated range changes only after readiness", () => {
+    const onSetRange = vi.fn()
+    render(tree({ onSetRange }))
+    const { receive } = boot()
+    receive("setRange", { mode: "relative", seconds: 21600 })
+    expect(onSetRange).not.toHaveBeenCalled()
+    receive("ready")
+    receive("setRange", { mode: "relative", seconds: 21600 })
+    expect(onSetRange).toHaveBeenCalledWith({ mode: "relative", seconds: 21600 })
+    receive("setRange", { mode: "absolute", from: "2026-11-07T10:00:00Z", to: "2026-11-07T16:00:00Z" })
+    expect(onSetRange).toHaveBeenLastCalledWith({ mode: "absolute", from: "2026-11-07T10:00:00.000Z", to: "2026-11-07T16:00:00.000Z" })
+  })
+  it("falls back after an invalid range message", () => {
+    render(tree({ onSetRange: vi.fn() }))
+    const { receive } = boot(); receive("ready")
+    receive("setRange", { mode: "relative", seconds: 123 })
     expect(screen.getByText("built-in-dashboard")).toBeInTheDocument()
   })
   it("falls back for unsupported descriptors and preserves declarative built-in rendering", () => {

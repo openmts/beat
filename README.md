@@ -13,9 +13,6 @@ the [delivery plan](docs/beat/commercial-delivery-plan.md) and
 - Node.js 22.12+
 - Bash and Python 3 for the Linux systemd installer and cold-backup tooling
 
-`npm run build` also packs the bundled example themes, so the frontend build
-expects the Go toolchain on `PATH`.
-
 ## Run the server
 
 Build the frontend and server:
@@ -177,11 +174,12 @@ attempt history, bounded retries and owner-controlled destination exceptions are
 managed from `/admin/alerts`. Tests return a queued receipt; delivery history
 shows the actual outcome. See the [notification contract](docs/beat/notification-core-contract.md).
 
-Site identity and presentation are managed from `/admin/settings`. The public
-site title, description, logo, favicon, default theme, IP visibility, and
-network-quality visibility are persisted in SQLite and exposed through a
-public read-only endpoint; updates remain administrator-only. Disabling public
-IP display also redacts node hosts from REST and live WebSocket responses. See
+Site identity and basic presentation are managed from `/admin/settings`. The
+public site title, description, logo, favicon, default light/dark mode, IP
+visibility, and network-quality visibility are persisted in SQLite and exposed
+through a public read-only endpoint; updates remain administrator-only. The
+theme library is a separate module at `/admin/themes`. Disabling public IP
+display also redacts node hosts from REST and live WebSocket responses. See
 [`docs/beat/site-theme-settings-design.md`](docs/beat/site-theme-settings-design.md).
 Owners can configure one encrypted HTTP, HTTPS, SOCKS5, or SOCKS5H outbound
 proxy for background traffic. It applies immediately to new MMDB/MaxMind
@@ -190,14 +188,16 @@ webhooks, and OIDC; SMTP and SSH keep their native transports. The owner panel
 can test the saved route against a fixed public endpoint without exposing the
 proxy address or credentials. An enabled setting with no readable encrypted
 payload fails closed instead of falling back to direct access.
-The same page provides administrator-only data maintenance, a theme library
-with upload, preview, layout settings, activation, recovery and export, and signed HTTPS market sources whose
+The settings module also provides administrator-only data maintenance. The
+independent theme module supports upload, preview, layout/presentation settings,
+activation, recovery and export, plus signed HTTPS market sources whose
 catalogs are verified with Ed25519, show bounded cache status, and install the
 selected version/digest without automatic activation. Sources must be public HTTPS
 by default; set `BEAT_THEME_MARKET_ALLOW_PRIVATE=true` at server startup to allow
 private, loopback or reserved addresses for self-hosted markets in offline networks. Themes apply only
 to the public dashboard and node detail; the administrator interface always uses the built-in
-shadcn surface. Nine editable declarative themes, one sandboxed reference theme and the
+shadcn surface. Declarative themes control the homepage overview, node collection cards/lists,
+node-detail panels, and the public page shell. The sandboxed Default and Paper themes, their package layouts and the
 pack/validate CLI are documented in the [theme author guide](docs/beat/theme-author-guide.md);
 signing and market publication use the
 [market publisher CLI](docs/beat/theme-market-publishing.md).

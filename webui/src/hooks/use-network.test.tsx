@@ -1,7 +1,7 @@
 import { act, renderHook, waitFor } from "@testing-library/react"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 
-import { useAdminNetworkTasks, useNetworkHistory, useNodeNetworkSummaries, usePublicNetworkQuality } from "@/hooks/use-network"
+import { useAdminNetworkTasks, useNetworkHistory, useNodeNetworkSummaries, usePublicNetworkQuality, usePublicNodeNetwork } from "@/hooks/use-network"
 import * as networkApi from "@/lib/network-api"
 import type { NetworkTaskView } from "@/types"
 
@@ -126,7 +126,68 @@ describe("network hooks", () => {
     expect(disabled.result.current.loading).toBe(false)
     expect(networkApi.listPublicNetworkQuality).not.toHaveBeenCalled()
   })
+
+  it("loads public node history for the selected range and preserves failed samples as gaps", async () => {
+    vi.useFakeTimers()
+    try {
+      vi.setSystemTime(new Date("2026-07-29T12:00:00Z"))
+      const privateView = { ...qualityView, task: { ...qualityView.task, id: "private", is_public: false } }
+      const unassignedView = { ...qualityView, task: { ...qualityView.task, id: "other" }, nodes: [] }
+      vi.mocked(networkApi.listPublicNetworkQuality).mockResolvedValue([qualityView, privateView, unassignedView])
+      vi.mocked(networkApi.getPublicNetworkHistory).mockResolvedValue({
+        ...history,
+        points: [
+          { timestamp: "2026-07-29T11:59:00Z", average_latency_ms: 12.5, success_percent: 100, sample_count: 1 },
+          { timestamp: "2026-07-29T11:59:30Z", average_latency_ms: 0, success_percent: 0, sample_count: 1 },
+        ],
+      })
+      const rendered = renderHook(() => usePublicNodeNetwork("node-one", { mode: "relative", seconds: 3600 }))
+      await flushMicrotasks()
+      expect(rendered.result.current.history.data).not.toBeNull()
+      expect(networkApi.getPublicNetworkHistory).toHaveBeenCalledWith("task", expect.objectContaining({
+        nodeId: "node-one", from: "2026-07-29T11:00:00.000Z", to: "2026-07-29T12:00:00.000Z", signal: expect.any(AbortSignal),
+      }))
+      expect(rendered.result.current.history.data?.tasks).toEqual([{ task_id: "task", points: [
+        { timestamp: Date.parse("2026-07-29T11:59:00Z") / 1000, latency_ms: 12.5 },
+        { timestamp: Date.parse("2026-07-29T11:59:30Z") / 1000, latency_ms: null },
+      ] }])
+      rendered.unmount()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it("clears node history when the selected range changes and skips disabled network data", async () => {
+    vi.useFakeTimers()
+    try {
+      vi.setSystemTime(new Date("2026-07-29T12:00:00Z"))
+      vi.mocked(networkApi.listPublicNetworkQuality).mockResolvedValue([qualityView])
+      vi.mocked(networkApi.getPublicNetworkHistory).mockResolvedValue(history)
+      const rendered = renderHook(({ seconds }) => usePublicNodeNetwork("node-one", { mode: "relative", seconds }), { initialProps: { seconds: 3600 } })
+      await flushMicrotasks()
+      expect(rendered.result.current.history.loading).toBe(false)
+      rendered.rerender({ seconds: 21600 })
+      await flushMicrotasks()
+      expect(networkApi.getPublicNetworkHistory).toHaveBeenLastCalledWith("task", expect.objectContaining({ from: "2026-07-29T06:00:00.000Z" }))
+      rendered.unmount()
+
+      vi.mocked(networkApi.listPublicNetworkQuality).mockClear()
+      const disabled = renderHook(() => usePublicNodeNetwork("node-one", { mode: "relative", seconds: 3600 }, false))
+      await flushMicrotasks()
+      expect(disabled.result.current.history.data).toBeNull()
+      expect(networkApi.listPublicNetworkQuality).not.toHaveBeenCalled()
+      disabled.unmount()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
 })
+
+async function flushMicrotasks() {
+  await act(async () => {
+    for (let index = 0; index < 6; index += 1) await Promise.resolve()
+  })
+}
 
 const qualityView: NetworkTaskView = {
   task: {

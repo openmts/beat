@@ -17,7 +17,7 @@ const (
 )
 
 // ThemeConfigurationItemLimit 是一份清单里允许声明的配置项数量上限。
-const ThemeConfigurationItemLimit = 12
+const ThemeConfigurationItemLimit = 16
 
 // 圆角半径的合法区间，渲染口径与配置校验共用。
 const (
@@ -27,7 +27,10 @@ const (
 
 // ThemeConfigurationKeys 是可被主题声明为「站点可配置」的显示字段。取值都落在既有的渲染口径内，
 // 因此配置永远改不了配色、结构或任何代码：resources 这类数组字段不在其中。
-var ThemeConfigurationKeys = []string{"overview", "detail", "density", "radius", "font", "show_network", "show_host", "show_tags", "show_remark"}
+var ThemeConfigurationKeys = []string{
+	"overview", "detail", "density", "radius", "font", "surface", "summary_layout",
+	"shell_background", "shell_header", "shell_footer", "show_network", "show_host", "show_tags", "show_remark",
+}
 
 // ThemeConfigurationKeyValues 给出 select 型字段的合法取值；其它类型的键返回 nil。
 func ThemeConfigurationKeyValues(key string) []string {
@@ -40,6 +43,16 @@ func ThemeConfigurationKeyValues(key string) []string {
 		return []string{"comfortable", "compact"}
 	case "font":
 		return ThemeFonts
+	case "surface":
+		return ThemeSurfaces
+	case "summary_layout":
+		return ThemeSummaryLayouts
+	case "shell_background":
+		return ThemeShellBackgrounds
+	case "shell_header":
+		return ThemeShellHeaders
+	case "shell_footer":
+		return ThemeShellFooters
 	default:
 		return nil
 	}

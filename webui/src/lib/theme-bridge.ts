@@ -1,11 +1,13 @@
 import { MAX_THEME_SNAPSHOT_BYTES, THEME_PROTOCOL, type ThemeFailure, type ThemeSnapshot } from "@/types/theme-runtime"
 import { boundedJSON, plainRecord, ThemeDataError } from "@/lib/theme-json"
 import { frameMessage, newThemeInstance } from "@/lib/theme-protocol"
+import type { WorkspaceRange } from "@/types/metric-workspace"
 
 interface BridgeOptions {
   window: () => Window | null | undefined
   snapshot: () => ThemeSnapshot
   navigate: (path: string) => void
+  setRange?: (range: WorkspaceRange) => void
   ready: (value: boolean) => void
   fail: (reason: ThemeFailure) => void
 }
@@ -77,6 +79,7 @@ export class ThemeBridge {
       this.publish()
     }
     if (message.type === "navigate" && this.ready) this.options.navigate(message.payload.path)
+    if (message.type === "setRange" && this.ready) this.options.setRange?.(message.payload)
   }
 
   private armTimeout(): void {

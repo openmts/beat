@@ -37,6 +37,9 @@ func ValidateDefinition(definition model.ThemeDefinition) error {
 	if !validThemeFont(definition.Font) {
 		return ErrManifestInvalid
 	}
+	if !validOptionalToken(definition.Surface, model.ThemeSurfaces) || !validSummary(definition.Summary) || !validShell(definition.Shell) {
+		return ErrManifestInvalid
+	}
 	if err := validatePalette(definition.Light); err != nil {
 		return err
 	}
@@ -67,6 +70,33 @@ func validThemeResources(resources []string) bool {
 // validThemeFont 允许作者留空（等于产品默认字体），否则只接受内置固定字体栈。
 func validThemeFont(font string) bool {
 	return font == "" || slices.Contains(model.ThemeFonts, font)
+}
+
+func validOptionalToken(value string, allowed []string) bool {
+	return value == "" || slices.Contains(allowed, value)
+}
+
+func validSummary(summary *model.ThemeSummary) bool {
+	if summary == nil {
+		return true
+	}
+	if !validOptionalToken(summary.Layout, model.ThemeSummaryLayouts) || len(summary.Metrics) > len(model.ThemeSummaryMetrics) {
+		return false
+	}
+	seen := make(map[string]bool, len(summary.Metrics))
+	for _, metric := range summary.Metrics {
+		if seen[metric] || !slices.Contains(model.ThemeSummaryMetrics, metric) {
+			return false
+		}
+		seen[metric] = true
+	}
+	return true
+}
+
+func validShell(shell *model.ThemeShell) bool {
+	return shell == nil || (validOptionalToken(shell.Background, model.ThemeShellBackgrounds) &&
+		validOptionalToken(shell.Header, model.ThemeShellHeaders) &&
+		validOptionalToken(shell.Footer, model.ThemeShellFooters))
 }
 
 func validAppearance(density string, radius int) bool {
@@ -118,6 +148,29 @@ func ApplyThemeConfiguration(definition model.ThemeDefinition, configuration mod
 	}
 	if configuration.Font != nil {
 		definition.Font = *configuration.Font
+	}
+	if configuration.Surface != nil {
+		definition.Surface = *configuration.Surface
+	}
+	if configuration.SummaryLayout != nil {
+		if definition.Summary == nil {
+			definition.Summary = &model.ThemeSummary{}
+		}
+		definition.Summary.Layout = *configuration.SummaryLayout
+	}
+	if configuration.ShellBackground != nil || configuration.ShellHeader != nil || configuration.ShellFooter != nil {
+		if definition.Shell == nil {
+			definition.Shell = &model.ThemeShell{}
+		}
+		if configuration.ShellBackground != nil {
+			definition.Shell.Background = *configuration.ShellBackground
+		}
+		if configuration.ShellHeader != nil {
+			definition.Shell.Header = *configuration.ShellHeader
+		}
+		if configuration.ShellFooter != nil {
+			definition.Shell.Footer = *configuration.ShellFooter
+		}
 	}
 	if configuration.ShowNetwork != nil {
 		definition.ShowNetwork = configuration.ShowNetwork

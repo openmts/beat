@@ -11,14 +11,14 @@ function setup(snapshot = () => buildThemeSnapshot({ route: { kind: "dashboard" 
   const element = document.createElement("iframe"); document.body.appendChild(element)
   const target = element.contentWindow!
   const post = vi.spyOn(target, "postMessage")
-  const ready = vi.fn(), fail = vi.fn(), navigate = vi.fn()
-  const bridge = new ThemeBridge({ window: () => target, snapshot, ready, fail, navigate })
+  const ready = vi.fn(), fail = vi.fn(), navigate = vi.fn(), setRange = vi.fn()
+  const bridge = new ThemeBridge({ window: () => target, snapshot, ready, fail, navigate, setRange })
   bridges.push(bridge); bridge.start(); bridge.loaded()
   const instance = post.mock.calls[0][0].beat.instance_id
   const send = (type: string, payload?: unknown) => window.dispatchEvent(new MessageEvent("message", {
-    source: target, data: { beat: { version: 2, instance_id: instance, type, ...(payload === undefined ? {} : { payload }) } },
+    source: target, data: { beat: { version: 3, instance_id: instance, type, ...(payload === undefined ? {} : { payload }) } },
   }))
-  return { bridge, target, post, ready, fail, navigate, send, instance }
+  return { bridge, target, post, ready, fail, navigate, setRange, send, instance }
 }
 beforeEach(() => { vi.useFakeTimers() })
 afterEach(() => { bridges.splice(0).forEach((bridge) => bridge.stop()); document.body.replaceChildren(); vi.restoreAllMocks(); vi.useRealTimers() })
@@ -28,6 +28,15 @@ describe("theme bridge failure and teardown", () => {
     const state = setup(); state.send("navigate", { path: "/" }); expect(state.navigate).not.toHaveBeenCalled()
     state.send("ready"); state.send("navigate", { path: "/node/node" }); expect(state.navigate).toHaveBeenCalledWith("/node/node")
     const count = state.post.mock.calls.length; state.send("ready"); expect(state.post.mock.calls).toHaveLength(count)
+  })
+  it("delivers a validated range callback after readiness and rejects malformed ranges", () => {
+    const state = setup(); state.send("setRange", { mode: "relative", seconds: 21600 })
+    expect(state.setRange).not.toHaveBeenCalled()
+    state.send("ready")
+    state.send("setRange", { mode: "relative", seconds: 21600 })
+    expect(state.setRange).toHaveBeenCalledWith({ mode: "relative", seconds: 21600 })
+    state.send("setRange", { mode: "relative", seconds: 123 })
+    expect(state.fail).toHaveBeenCalledWith("protocol_error")
   })
   it("reports data budgets and invalid-data failures once", () => {
     const budget = setup(() => { throw new ThemeDataError("snapshot_budget") }); budget.send("ready")

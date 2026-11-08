@@ -1,39 +1,23 @@
 # Beat 主题制作指南
 
-本文对应当前实现：包清单 schema **1**、声明式定义 schema **1**、脚本通信协议 **2**。
+本文对应当前实现：包清单 schema **1**、声明式定义 schema **1**、脚本通信协议 **3**。
 三个版本分别管理文件清单、原生布局、iframe 通信，不可互换。
 
 ## 1. 选择运行方式
 
 | 方式 | 适合的用途 | 可控制的内容 |
 | --- | --- | --- |
-| `declarative` | 制作配色、节点列表和详情布局，推荐从这里开始 | Beat 原生组件的布局、密度、圆角、明暗调色板 |
+| `declarative` | 制作配色、首页概览、节点列表和详情布局，推荐从这里开始 | Beat 原生组件的首页概览、节点列表、详情面板、页面外壳、密度、圆角、字体和明暗调色板 |
 | `sandboxed` | 完全自定义的公开展示页 | 隔离 iframe 中的 HTML/CSS/JS，通过 SDK 接收公开快照 |
 
 主题应用于公开首页和节点详情。后台管理、登录和账户安全页面始终使用 Beat 自身界面。
+主题库是独立管理模块 `/admin/themes`，不再嵌在站点设置里；站点设置只保留站点名称、品牌和默认明暗模式等基础项。
 声明式主题无需 npm 构建，也不加载包中的 CSS/JS；它只解释下述 `theme.json`。
 
-## 2. 从可用示例开始
+## 2. 创建主题包
 
-| 名称 | 源码目录 | 首页 / 详情 | 适合的场景 | 关键字段写法 |
-| --- | --- | --- | --- | --- |
-| Slate | `themes/slate` | 分组卡片 / 均衡 | 默认基线：多数站点的通用首页 | `radius: 6`，其余留空取默认值 |
-| Operations | `themes/operations` | 节点表格 / 紧凑 | 值班大屏与密集对比 | `overview: "table"`、`density: "compact"`、`radius: 4` |
-| Canvas | `themes/canvas` | 宽幅卡片 / 焦点 | 突出单机 CPU 与首张趋势图 | `resources: ["cpu", "memory"]`、`show_remark: false` |
-| Graphite | `themes/graphite` | 节点表格 / 均衡 | 长时间值守，直角扁平表面 | `radius: 0`、`show_host: false` |
-| Aurora | `themes/aurora` | 分组卡片 / 焦点 | 品牌化展示，留白与圆角更明显 | `overview: "cards"`、`radius: 8` |
-| Terminal | `themes/terminal` | 节点表格 / 紧凑 | 终端风格值守，等宽字体 | `font: "mono"`、`radius: 2` |
-| Paper | `themes/paper` | 分组卡片 / 均衡 | 暖白衬线阅读感，隐藏速率行 | `font: "serif"`、`show_network: false` |
-| Midnight | `themes/midnight` | 宽幅大格 / 焦点 | 深色机房环境，圆角大格 | `radius: 6`，并显式写出全部 `show_*` 开关 |
-| Solar | `themes/solar` | 节点列表 / 均衡 | 手机与告警屏，暖色高对比清单 | `density: "compact"`、`show_remark: false` |
-| Pulse | `themes/pulse` | 脚本状态板（iframe 沙箱） | 完全自定义渲染的展示页 | `runtime: "sandboxed"` + `dist/index.html` 入口 |
-
-前九套是声明式示例，均包含浅色和深色调色板与 PNG 预览图，以及完整可编辑源码。
-`Slate`、`Paper`、`Terminal` 额外声明了 `configuration`（第 4.1 节）：`Slate` 收窄首页布局并放出标签开关，
-`Paper` 让站点在衬线/系统字体间切换并决定是否显示速率行，`Terminal` 在等宽/系统字体间切换并放开密度。
-`Pulse` 是脚本主题示例（`runtime: "sandboxed"`），带 `dist/` 入口、CSS、JS 与 SDK 副本，
-只运行在隔离 iframe 中。后台“站点设置 → 已安装主题”下方可直接安装示例或下载 ZIP。
-分发文件位于 `webui/public/themes/{slate,operations,canvas,graphite,aurora,terminal,paper,midnight,solar,pulse}.theme.zip`。
+仓库附带两套可安装的沙箱主题：`themes/default` 和单页双栏的 `themes/paper`，后台主题卡片可直接安装或下载 ZIP；
+新主题仍应通过 `cmd/theme init` 生成，或按本指南手写包。
 
 源码准备和打包（在仓库根目录执行，需项目要求的 Go 版本）。推荐直接生成骨架，它会一次性写好
 `beat-theme.json`、`theme.json`、`license.json` 和一张与调色板同色的占位预览图，并在写出前跑一遍
@@ -51,8 +35,10 @@ go run ./cmd/theme validate --archive my-theme.theme.zip
 `beat-<名称短横线化>`）、`--overview`（`cards`/`table`/`tiles`/`list`）、`--detail`
 （`balanced`/`compact`/`spotlight`）、`--density`（`comfortable`/`compact`）、`--font`
 （`system`/`serif`/`mono`）、`--accent`（`blue`/`teal`/`amber`/`violet`）、`--radius`（0–8）、
-`--force`（写入非空目录）。四个强调色调都使用经过对比度校验的调色板；改色后请重新执行
-`pack`，让校验器确认对比度仍然达标。也可以照旧手写 JSON 或复制 `themes/slate` 等示例目录。
+`--force`（写入非空目录）。脚手架会同时写出 `surface: "solid"`、四卡概览和 `plain/glass/plain`
+页面外壳；新增的概览项、统计项顺序、背景纹理与表面样式可直接编辑生成的 `theme.json`。
+四个强调色调都使用经过对比度校验的调色板；改色后请重新执行
+`pack`，让校验器确认对比度仍然达标。也可以照旧手写 JSON。
 
 发布归档里带有编译好的 `beat-theme`（无需 Go 工具链），也可以先 `go build -o beat-theme ./cmd/theme`，之后直接使用 `beat-theme pack` 和
 `beat-theme validate`。工具与服务端共用生产校验器，不是另一套近似规则。
@@ -184,8 +170,7 @@ my-status-theme/
 
 - 服务端**不解析** `license.json`，也不会因为缺少它而拒绝安装——安装校验只读
   `beat-theme.json` 的 `license` 字段。它是给人和下游分发用的说明文件，请自行保证准确。
-- `go run ./cmd/theme init …` 会生成一份 MIT 模板，替换成自己选择的许可证即可；
-  归档中的示例主题都带 `license.json`，可直接复制改写。
+- `go run ./cmd/theme init …` 会生成一份 MIT 模板，替换成自己选择的许可证即可。
 - `license.json` 必须是包内普通文件，和其它文本文件受同样的类型与大小限制
   （单个文本文件 ≤ 8 MiB、UTF-8），会进入 `files` 清单并参与整包摘要。
 - 使用第三方字体、图标或代码时，请把它们的许可一并写进 `text`，并在
@@ -199,30 +184,71 @@ my-status-theme/
 | 字段 | 允许值和行为 |
 | --- | --- |
 | `schema_version` | `1` |
+| `surface` | 可选。`solid` 实色卡片；`soft` 半透明柔和表面；`outline` 透明底加边框；`flat` 无边框、无阴影。统一作用于首页概览、节点卡片/表格/列表和详情面板 |
+| `summary` | 可选。控制首页顶部概览：`layout` 取 `cards`、`strip`、`focus`、`minimal`；`metrics` 从 `availability`、`busiest`、`traffic`、`throughput`、`groups` 中选 1–5 项且不重复，数组顺序即展示顺序；省略或留空时使用前四项 |
+| `shell` | 可选。控制公开页外壳：`background` 取 `plain`、`wash`、`grid`、`spotlight`；`header` 取 `glass`、`solid`、`transparent`；`footer` 取 `plain`、`inset`、`minimal` |
 | `overview` | `cards` 分组卡片；`table` 节点表格；`tiles` 宽幅卡片；`list` 紧凑状态列表（一行一个节点，含状态圆点、内联资源读数与可选网络值，适合手机与告警大屏） |
 | `detail` | `balanced` 上方概览、下方图表；`compact` 宽屏左右分栏；`spotlight` 强调首项资源和第一张图表 |
 | `density` | `comfortable` 或 `compact`；调整首页间距、卡片内边距、表格行高 |
 | `radius` | `0`–`8` 的整数，基础圆角单位为 px，组件按比例使用 |
 | `font` | 可选。`system`、`serif` 或 `mono`，只内置这三套字体栈；省略等于产品默认字体，不接受自定义字体名、`url()` 或外部字体文件 |
 | `resources` | 可选。公开列表展示哪些资源行以及顺序，取值 `cpu`、`memory`、`disk`，1–3 项且不重复；省略等于按该顺序展示全部三项 |
-| `show_network` | 可选。`false` 隐藏卡片底部的上下行速率，以及表格的“网络”列（`tiles` 布局本来不含速率行） |
-| `show_host` | 可选。`false` 隐藏节点名下方的地址行；是否提供地址仍由站点设置的公开地址模式决定 |
-| `show_tags` | 可选。`false` 隐藏 `tiles` 布局节点卡片上的标签 |
-| `show_remark` | 可选。`false` 隐藏 `tiles` 布局节点卡片上的公开备注 |
+| `show_network` | 可选。`false` 隐藏节点卡片底部的上下行速率，以及表格的“网络”列（`tiles` 布局本来不含速率行） |
+| `show_host` | 可选。`false` 隐藏节点集合中的地址行；是否提供地址仍由站点设置的公开地址模式决定 |
+| `show_tags` | 可选。`false` 隐藏节点集合中的标签 |
+| `show_remark` | 可选。`false` 隐藏节点集合中的公开备注 |
 | `light`, `dark` | 必须分别提供完整的 24 个调色板字段，见下表 |
 
 `resources`、`show_*` 是作者声明的内容字段：省略即沿用当前默认（全部资源、全部显示），
-显式写 `false` 才隐藏。它们只作用于公开首页的节点列表（`cards`/`table`/`tiles`/`list`），节点详情页
-仍由 `detail` 与站点设置决定；站点覆盖配置也刻意不包含这些字段，修改内容需要重新打包发布新版本。
+显式写 `false` 才隐藏。它们作用于公开首页的节点集合（`cards`/`table`/`tiles`/`list`），节点详情页
+仍由 `detail` 与站点设置决定；站点覆盖配置可以声明其中部分开关，修改默认内容则需要重新打包发布新版本。
 
 ```json
 { "resources": ["cpu", "memory"], "show_host": false, "show_remark": false }
 ```
 
-示例 `themes/canvas` 用 `"resources": ["cpu", "memory"]` 与 `"show_remark": false` 演示磁贴内容收敛，
-`themes/graphite` 用 `"resources": ["cpu", "memory"]` 与 `"show_host": false` 演示密集表格，
-`themes/paper` 用 `"resources": ["cpu", "memory"]` 与 `"show_network": false` 演示收敛后的卡片。
-`themes/terminal` 用 `"font": "mono"` 配合紧凑表格演示值守大屏。
+完整的外观控制示例：
+
+```json
+{
+  "surface": "soft",
+  "summary": {
+    "layout": "focus",
+    "metrics": ["availability", "busiest", "throughput", "traffic", "groups"]
+  },
+  "shell": {
+    "background": "wash",
+    "header": "glass",
+    "footer": "inset"
+  }
+}
+```
+
+四种概览形态：
+
+| `summary.layout` | 行为 |
+| --- | --- |
+| `cards` | 独立统计卡；按统计项数量自适应 1–5 列 |
+| `strip` | 一条连续横条，统计项之间使用分隔线，适合值班大屏 |
+| `focus` | 首项作为大号焦点卡，其余统计项排列在旁边 |
+| `minimal` | 无卡片底色的紧凑内联信息带，适合低视觉噪音页面 |
+
+五个统计项：
+
+| `summary.metrics` | 内容 |
+| --- | --- |
+| `availability` | 在线节点数 / 总节点数，并显示离线数 |
+| `busiest` | 最新遥测中 CPU 使用率最高的节点 |
+| `traffic` | 当前计费周期累计下载与上传流量 |
+| `throughput` | 当前实时下载与上传速率 |
+| `groups` | 可见节点涉及的分组数与国家/地区数 |
+
+`surface` 与 `shell` 只选择渲染器内置样式，不接受任意 CSS。页面背景纹理由主题调色板生成：
+`wash` 是柔和双色渐变，`grid` 是细网格，`spotlight` 是顶部聚光；页头和页脚样式同样只影响公开页面。
+首页和节点详情页使用同一个整页主题根，因此 `background`、表面样式和外壳不会被页面路由截断。
+
+例如，`"resources": ["cpu", "memory"]` 可收敛资源行，`"show_network": false` 可隐藏速率行，
+`"font": "mono"` 可配合紧凑表格制作值守大屏。
 
 `font` 同样是作者声明的字段，只接受 `system`、`serif`、`mono` 三个值，省略即沿用产品默认字体。
 校验器拒绝自定义字体名、`url()` 与外部字体引用；公开页与预览只在主题根节点上设置字体族，
@@ -251,7 +277,7 @@ my-status-theme/
 `ring` 和五个图表颜色相对于 `card` 至少 **3:1**。两套调色板都必须通过。
 还应人工检查手机布局、长节点名称、空数据、离线节点和键盘焦点，不能只看色值校验。
 
-后台可覆盖四个显示字段（`resources` 与 `show_*` 属于作者声明，不在覆盖范围内），示例：
+没有声明 `configuration` 的主题仍可覆盖历史四个显示字段；声明了 `configuration` 的主题只开放清单里列出的键：
 
 ```json
 {"overview":"table","detail":"compact","density":"compact","radius":4}
@@ -265,7 +291,7 @@ my-status-theme/
 ### 4.1 `configuration`：把哪些字段交给站点所有者
 
 站点覆盖默认只有 `overview`、`detail`、`density`、`radius` 四个显示字段。作者可以在清单里多声明
-几个字段，让站点所有者自己决定字体、内容开关或更少的布局选项——改的都是渲染器内置的枚举，
+几个字段，让站点所有者自己决定字体、内容开关、概览形态、表面与页面外壳——改的都是渲染器内置的枚举，
 主题代码、配色和结构不受影响。
 
 ```json
@@ -279,6 +305,9 @@ my-status-theme/
       { "key": "overview", "name": "Overview layout", "options": ["cards", "table"] },
       { "key": "font" },
       { "key": "show_host" },
+      { "key": "summary_layout", "options": ["cards", "strip", "focus"] },
+      { "key": "shell_background", "options": ["plain", "wash", "grid"] },
+      { "key": "surface" },
       { "key": "radius", "name": "theme.radius" }
     ]
   }
@@ -291,12 +320,17 @@ my-status-theme/
 | `detail` | 枚举 | `balanced` / `compact` / `spotlight` |
 | `density` | 枚举 | `comfortable` / `compact` |
 | `font` | 枚举 | `system` / `serif` / `mono` |
+| `surface` | 枚举 | `solid` / `soft` / `outline` / `flat` |
+| `summary_layout` | 枚举 | `cards` / `strip` / `focus` / `minimal` |
+| `shell_background` | 枚举 | `plain` / `wash` / `grid` / `spotlight` |
+| `shell_header` | 枚举 | `glass` / `solid` / `transparent` |
+| `shell_footer` | 枚举 | `plain` / `inset` / `minimal` |
 | `radius` | 整数 | `0`–`8` |
 | `show_network`, `show_host`, `show_tags`, `show_remark` | 开关 | 开/关 |
 
 声明口径：
 
-- `type` 只能是 `managed`；`items` 最多 12 项，键不重复，未知键（例如 `resources`、`css`）直接拒绝。
+- `type` 只能是 `managed`；`items` 最多 16 项，键不重复，未知键（例如 `resources`、`summary_metrics`、`css`）直接拒绝。
 - `name` 可选，是后台表单标题：写纯文本原样展示，写 `theme.` 开头的内置文案键则按后台语言翻译；
   省略时用内置标题。
 - `options` 可选，只能收窄该键的合法取值且不重复；省略等于全部取值。`number`/`switch` 键不能写 `options`。
@@ -316,6 +350,11 @@ my-status-theme/
 | `detail` | `theme.detail_layout` | `theme.balanced` / `theme.compact` / `theme.spotlight` |
 | `density` | `theme.density` | `theme.comfortable` / `theme.compact` |
 | `font` | `theme.font` | `theme.font_system` / `theme.font_serif` / `theme.font_mono` |
+| `surface` | `theme.surface` | `theme.solid` / `theme.soft` / `theme.outline` / `theme.flat` |
+| `summary_layout` | `theme.summary_layout` | `theme.cards` / `theme.strip` / `theme.focus` / `theme.minimal` |
+| `shell_background` | `theme.shell_background` | `theme.plain` / `theme.wash` / `theme.grid` / `theme.spotlight` |
+| `shell_header` | `theme.shell_header` | `theme.glass` / `theme.solid` / `theme.transparent` |
+| `shell_footer` | `theme.shell_footer` | `theme.plain` / `theme.inset` / `theme.minimal` |
 | `radius` | `theme.radius` | ——（整数输入，没有取值标签） |
 | `show_network` / `show_host` / `show_tags` / `show_remark` | 与键同名的 `theme.show_*` | ——（开关，显示开/关） |
 
@@ -323,7 +362,7 @@ my-status-theme/
 
 ## 5. 安装、预览、配置和恢复
 
-1. owner 打开 `/admin/settings` 的主题区，上传 ZIP 或安装示例。安装不自动激活。
+1. owner 打开独立主题模块 `/admin/themes`，上传 ZIP 或安装示例。安装不自动激活。
 2. 点击“预览”，检查桌面/手机、浅色/深色以及节点详情。手机预览使用真实窄视口。
 3. 在右侧调整主题声明过的显示字段（布局、密度、圆角、字体或内容开关）。预览中的更改不会保存；
    点击“保存配置”并确认才保存。
@@ -336,25 +375,37 @@ owner 和最近本地重认证；后台收到重认证要求后会就地收集�
 读取或校验失败的主题会显示内置页面。脚本超时/协议失败触发的回退仅影响当前访问者，
 不会擅自改变全站主题；全站恢复由 owner 执行。活动包不能删除。
 
-管理接口（均在 `/api/v1` 下）：
+管理接口（除资源 URL 外均在 `/api/v1` 下）：
 
 | 方法与路径 | 用途 |
 | --- | --- |
 | `GET /themes/active` | 匿名可读的活动描述，包含运行方式和已解析的声明式定义 |
+| `GET /admin/themes` | owner 读取已安装主题及当前激活/健康状态 |
+| `POST /admin/themes/upload` | owner 上传并校验 ZIP；安装后不会自动激活 |
 | `GET /admin/themes/{id}/preview` | owner 只读预览描述，不激活 |
+| `GET /admin/themes/{id}/export` | 下载已安装的原始 ZIP |
 | `PUT /admin/themes/{id}/configuration` | 保存站点覆盖对象，键受清单 `configuration` 约束；`{}` 重置 |
 | `POST /admin/themes/{id}/activate` | 激活安装包 |
+| `DELETE /admin/themes/{id}` | 删除未激活的主题包 |
 | `POST /admin/themes/rollback` | 回到上一包或内置页 |
 | `POST /admin/themes/built-in` | 明确恢复内置页 |
+| `GET /admin/theme-markets` | owner 读取主题市场源及缓存状态 |
+| `POST /admin/theme-markets` | owner 新增签名 HTTPS 市场源 |
+| `PUT /admin/theme-markets/{id}` | owner 修改市场源 |
+| `DELETE /admin/theme-markets/{id}` | owner 删除市场源 |
+| `GET /admin/theme-markets/{id}/catalog` | owner 刷新并读取市场目录 |
+| `POST /admin/theme-markets/{id}/themes/{theme_id}/install` | 安装市场中的指定版本和摘要，不自动激活 |
+| `GET /themes/assets/{digest}/{asset...}` | 匿名、只读地读取已校验的活动包或预览资源；这是公开资源路径，不在 `/api/v1` 下 |
 
 上传为原始 ZIP 请求体，`Content-Type: application/zip`，不是 multipart/form-data。
+除列表、预览和市场读取外，变更操作都要求 owner 与最近本地重认证；市场源默认只接受公网 HTTPS。
 资源 URL 由描述中的 `archive_digest`、`sandbox_entry` 和 `preview_url` 提供，勿硬编码本地数据目录。
 
 ## 6. 脚本主题与 SDK
 
 脚本包使用 `runtime: "sandboxed"`，包含**且只包含一个 HTML 文件**，位置可以是 `dist/index.html`。
-随仓库发布的 `themes/pulse` 是一个可直接安装的完整脚本主题示例，可作为骨架复制：
-`cp -R themes/pulse my-theme`。
+`themes/default` 与 `themes/paper` 是随仓库维护的完整脚本主题参考；新主题请按本契约创建自己的包，并把
+`themes/sdk/bridge.js` 复制为入口旁的 `beat-sdk.js`。
 入口必须引用包内的外部 JS/CSS；不允许内联脚本、事件属性、表单、iframe、重定向、SVG 或外部资源 URL。
 ES module 的相对导入和包内 WOFF2 字体可用。所有引用文件都应进入清单。
 
@@ -362,8 +413,9 @@ ES module 的相对导入和包内 WOFF2 字体可用。所有引用文件都应
 
 | 接口 | 行为 |
 | --- | --- |
-| `connectBeatTheme(render)` | 注册监听并响应协议 2 的握手；每次公开快照调用 `render(snapshot)` |
+| `connectBeatTheme(render)` | 注册监听并响应协议 3 的握手；每次公开快照调用 `render(snapshot)` |
 | `client.navigate(path)` | 请求返回首页或打开当前快照可见节点；成功发送返回 `true` |
+| `client.setRange(range)` | 在节点详情页请求相对或绝对时间范围；非法、非节点页或未握手时返回 `false` |
 | `client.reportError(code?)` | 发送 `render_failed`、`unsupported_data` 或 `runtime_error`；默认第一项 |
 | `client.destroy()` | 移除监听并清空实例状态；组件卸载时调用 |
 
@@ -398,8 +450,11 @@ const client = connectBeatTheme((snapshot) => {
 
 提供 `dist/theme.css`，例如 `body { font-family: sans-serif; padding: 1rem; }`，并为深色、手机和
 键盘焦点补齐样式。脚本控制节点详情的呈现，应根据 `snapshot.route.kind` 展示详情及返回按钮；
-历史曲线来自 `snapshot.history.series`。完整字段、单位、消息格式和握手见同目录的
+历史曲线来自 `snapshot.history.series`；节点详情的网络延迟历史来自 `snapshot.network_history.tasks`，
+按任务 `id` 关联 `snapshot.network.tasks`，`latency_ms: null` 表示该时间桶不可达或缺失。完整字段、单位、消息格式和握手见同目录的
 [主题隔离协议](theme-sandbox-contract.md)。SDK 会校验父窗口来源、版本和实例，限制导航，并将渲染异常转换为通用错误码。
+节点详情快照还提供 `snapshot.range` 和 `snapshot.range_options`；范围按钮可调用
+`client.setRange({mode: 'relative', seconds: 21600})`，由宿主页面校验并重新查询。
 
 公开节点详情使用后台发布的公开/节点指标模板，提供时间范围、暂停、检查和 CSV/JSON 导出，
 编辑操作只在后台提供。脚本主题启用时，外层仍会按相同公共模板查询，最多两路并发。
@@ -420,9 +475,12 @@ agent Token、会话、脚本采集命令和探测目标不会提供给主题。
 `0` 是有效值，不能用 `value || '--'` 判断缺失。
 节点可携带 `telemetry_at`、`telemetry_age_seconds` 与 `telemetry_state`（fresh/delayed/stale/unavailable）；
 这些字段描述实际收到的遥测数据，新鲜度不能由连接在线状态推断。不可用时前两项为 null。
+公开定位可用时，节点还会携带两位大写的 `country_code`（ISO 3166-1）；私有定位或非法代码不会下发。
+主题可在节点名称前根据它显示国旗或国家标识，缺失时不要渲染占位符。
 
 包资源可匿名读取。不要把密码、API Key、SSH 文件或其他私密内容放入源码包或配置。
-协议 2 只推送已有页面数据，不提供任意查询接口、PromQL 或新的 agent 采集能力。
+协议 3 只推送已有页面数据，不提供任意查询接口、PromQL 或新的 agent 采集能力；
+节点详情唯一可主动请求的查询是经过白名单校验的 `setRange`。
 
 | 资源 | 限制 |
 | --- | --- |
@@ -438,13 +496,13 @@ agent Token、会话、脚本采集命令和探测目标不会提供给主题。
 
 ## 8. 验证、分发和排错
 
-修改示例后，运行 `bash scripts/build-themes.sh` 可重建十套分发 ZIP、预览图、SDK 和下载版文档。
-前端构建会通过 `webui/package.json` 的 `prebuild` 自动执行同一脚本，因此 `npm run build` 的产物
-（`dist/themes/`）始终带着十套可安装主题、预览图、SDK 和三份下载版文档；构建前端因此需要 Go 工具链。
-容器与 CI 走同一条路径：`Dockerfile` 的前端阶段复用后端阶段构建好的 packer 并设置
-`BEAT_THEME_BIN`，`scripts/check.sh frontend` 会读 `webui/src/lib/theme-examples.ts` 的后台示例列表，在构建后逐一确认每套 ZIP 与预览图（外加 SDK 与三份文档）确实进入静态目录。
-十套分发 ZIP 的当前摘要（可由源码逐字节复现）：`slate` `b0479e01…a6713f`、`operations` `a6ed289f…ead748`、`canvas` `40fd67b4…cc4575`、`graphite` `4b87ff94…e3f567`、`aurora` `8d423bb3…bf88e5`、`terminal` `a0cbfaa9…381c26`、`paper` `202b239f…72b2de`、`midnight` `a3558cbc…e70880`、`solar` `8e6abdc0…b11973`、`pulse` `9123ab37…2c26d5`。归档条目使用 Store，避免 Go 标准库 Deflate 随工具链版本变化；`go1.26.10` 与 `go1.27.2` 已验证生成字节一致。`go test ./cmd/theme/` 会在十套源码上重新执行 `pack` 与 `validate`，核对声明式九套彼此不同、十套预览图都是可解码且不小于 320x180 的 PNG，并额外校验沙箱包只有一个 HTML 入口、入口引用包内的 `theme.css`/`theme.js`、包内 `beat-sdk.js` 与 `themes/sdk/bridge.js` 逐字节一致；分发资产存在时还会逐字节比对 ZIP、预览图、SDK 和下载版文档，源码改动后忘记重建会直接失败，资产缺失时只记录提示。
-源码与 `themes/LICENSE` 是维护入口；ZIP 和 `webui/public/themes/` 是生成的分发资产。
+`bash scripts/build-themes.sh` 会重新打包 Default、Paper、SDK、许可和三份下载版文档，并原子清理旧版本遗留资产。
+前端构建会通过 `webui/package.json` 的 `prebuild` 自动执行同一脚本；本地首次构建需要 Go 工具链，
+容器构建复用后端阶段已编译的 packer。
+`scripts/check.sh frontend` 会确认 Default/Paper 的 ZIP、预览图、作者资源与 SDK 已进入静态目录，
+并拒绝任何额外的 `.theme.zip` 或 `.preview.png`。`go test ./cmd/theme/` 会重新 pack/validate 默认主题，
+核对沙箱入口、SDK 副本和预览图。
+`themes/default`、`themes/paper`、`themes/LICENSE` 与 `themes/sdk/` 是维护入口；`webui/public/themes/` 保存生成的分发资源。
 示例和 SDK 使用 MIT，归档中的 `license.json` 携带完整许可。不要把 Beat 应用或第三方依赖的许可视为自动相同。
 
 ```bash
@@ -452,7 +510,7 @@ go test ./internal/theme ./cmd/theme
 node --experimental-test-coverage --test themes/sdk/bridge.test.mjs
 ```
 
-需要复验实际渲染时跑一键门禁即可：它把前端构建到临时目录，用 Go fixture 起停三套用例
+需要复验实际渲染时跑一键门禁即可：它把前端构建到临时目录，用 Go fixture 起停用例
 （合成数据、临时 SQLite，不使用运行中的部署），再逐套跑浏览器断言并把截图写到输出目录。
 Playwright 来自 `webui` 的 devDependency（`npm ci` 后可用），浏览器缺省用自带的 headless shell。
 
@@ -470,11 +528,14 @@ BEAT_DECLARATIVE_BROWSER_FIXTURE=1 BEAT_THEME_BROWSER_STATIC=/tmp/beat-theme-sta
 node webui/scripts/theme-declarative-smoke.mjs http://127.0.0.1:PORT /tmp/beat-theme-shots
 ```
 
-脚本先核对 fixture 标识，再验证三套布局、明暗/手机、隐私、预览、配置和内置恢复，最后关闭测试服务。
+声明式 fixture 会在临时目录生成三套布局不同的测试主题，并验证首页概览、节点集合、详情布局、主题表面、
+页面外壳、明暗/手机、隐私、预览、配置和内置恢复；iframe 沙箱 fixture 验证协议、模块、历史、导航与回退，
+市场 fixture 验证上传和安装流程，默认主题 harness 则直接渲染真实包并断言首页四列、详情图表、网络页、
+国家标识、手机单列和暗色模式。脚本先核对 fixture 标识，最后关闭测试服务。
 截图使用合成示例节点；生产主题预览使用当前站点的公开节点。
 
 常见问题：包被拒绝时先执行 `validate`，核对 JSON、清单、路径和配色对比度；`pack` 已处理哈希，
-不要在打包后直接编辑 ZIP。脚本空白或回退时检查 ready 时限、协议 2、相对导入、CSP 和通用错误码。
+不要在打包后直接编辑 ZIP。脚本空白或回退时检查 ready 时限、协议 3、相对导入、CSP 和通用错误码。
 安装提示版本不兼容时，检查 `beat-server --version`。开发制品应注入与源码对应的明确版本；
 默认 `dev` 按 `0.0.0` 比较，不会绕过 `minimum_beat_version` 门禁。
 预览无节点时检查节点公开开关；IP 不显示时检查站点 IP 开关；历史为空时区分未采集、加载中和查询失败。
@@ -509,6 +570,9 @@ node webui/scripts/theme-declarative-smoke.mjs http://127.0.0.1:PORT /tmp/beat-t
 | 字段 | 必需 | 取值（默认） |
 | --- | --- | --- |
 | `schema_version` | 是 | 固定 `1` |
+| `surface` | 否 | `solid`（默认）/ `soft` / `outline` / `flat` |
+| `summary` | 否 | `{ layout, metrics }`；`layout` 默认 `cards`，`metrics` 默认 `availability,busiest,traffic,throughput` |
+| `shell` | 否 | `{ background, header, footer }`；默认 `plain` / `glass` / `plain` |
 | `overview` | 是 | `cards` / `table` / `tiles` / `list` |
 | `detail` | 是 | `balanced` / `compact` / `spotlight` |
 | `density` | 是 | `comfortable` / `compact` |
@@ -531,10 +595,14 @@ node webui/scripts/theme-declarative-smoke.mjs http://127.0.0.1:PORT /tmp/beat-t
 | 字段 | 必需 | 取值（默认） |
 | --- | --- | --- |
 | `type` | 是 | 固定 `managed` |
-| `items[]` | 是 | 最多 12 项，键不重复 |
-| `items[].key` | 是 | `overview` / `detail` / `density` / `font` / `radius` / `show_network` / `show_host` / `show_tags` / `show_remark` |
+| `items[]` | 是 | 最多 16 项，键不重复 |
+| `items[].key` | 是 | `overview` / `detail` / `density` / `font` / `radius` / `surface` / `summary_layout` / `shell_background` / `shell_header` / `shell_footer` / `show_network` / `show_host` / `show_tags` / `show_remark` |
 | `items[].name` | 否 | ≤ 64 字符；纯文本，或 `theme.` 开头的内置文案键 |
 | `items[].options` | 否 | 只能收窄该键的合法取值且不重复；仅枚举键可写 |
+
+`summary` 和 `shell` 是嵌套对象，未知子字段、未知枚举、重复统计项或超过五项都会拒绝整包；
+`metrics` 的顺序就是首页展示顺序。`summary` 不通过 `configuration` 单独开放统计项数组，
+站点只能在作者声明的 `summary_layout` 选项内切换形态。
 
 **站点覆盖配置**（`PUT /admin/themes/{id}/configuration`，≤ 16 KiB）：只接受主题声明过的键。
 没有 `configuration` 的旧主题仍只接受 `overview`、`detail`、`density`、`radius`；取值与上表相同，
@@ -547,7 +615,7 @@ node webui/scripts/theme-declarative-smoke.mjs http://127.0.0.1:PORT /tmp/beat-t
 | 现象 / 报错 | 常见原因 | 处理 |
 | --- | --- | --- |
 | `theme: archive is invalid: invalid ZIP` | 文件不是 ZIP，或传输中被截断 | 重新 `pack`，再用 `validate` 复验整个文件 |
-| `theme: manifest is invalid`（含配置声明被拒） | 配置声明里 `type` 不是 `managed`；键未知或重复；`items` 超过 12 项；`options` 超出该键合法取值、重复，或写在 `number`/`switch` 键上；作者自己写了 `items[].type`；脚本主题声明了 `configuration` | 对照第 4.1 节删掉多余字段，只声明键、`name` 与合法 `options` |
+| `theme: manifest is invalid`（含配置声明被拒） | 配置声明里 `type` 不是 `managed`；键未知或重复；`items` 超过 16 项；`options` 超出该键合法取值、重复，或写在 `number`/`switch` 键上；作者自己写了 `items[].type`；脚本主题声明了 `configuration` | 对照第 4.1 节删掉多余字段，只声明键、`name` 与合法 `options` |
 | `theme: manifest is invalid` | 未知字段；`schema_version` 不是 `1`；`id` 含大写或非法字符；`version` / `minimum_beat_version` 不是三段数字；`preview` 不是图片扩展名；`files` 漏项或重复；JSON 根对象后还有内容 | 对照第 3、9 节逐字段核对，不要手改 `pack` 生成的 `files` |
 | 大小或哈希不匹配 | 打包后编辑过 ZIP 内容或清单 | 重新 `pack`，不要在打包后改动包内文件 |
 | `theme: package identity or digest conflict` | 同一 `id` + `version` 或同一归档摘要已安装 | 递增 `version` 后重新打包 |

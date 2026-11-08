@@ -25,6 +25,7 @@ import {
   GaugeIcon,
   ChartLineIcon,
   UserRoundPlusIcon,
+  PaletteIcon,
 } from "lucide-react"
 import { useLocale } from "@/context/locale"
 import { useSiteSettings } from "@/context/site-settings"
@@ -44,6 +45,7 @@ const managementNavItems = [
   { labelKey: "workspace.title", icon: ChartLineIcon, to: "/admin/metrics" },
   { labelKey: "alert.manage", icon: BellIcon, to: "/admin/alerts" },
   { labelKey: "network.manage", icon: ActivityIcon, to: "/admin/network" },
+  { labelKey: "theme.title", icon: PaletteIcon, to: "/admin/themes" },
   { labelKey: "settings.site", icon: Settings2Icon, to: "/admin/settings" },
 ]
 const advancedNavItems = [

@@ -22,8 +22,9 @@ go run ./cmd/theme market identity --public-key ./public-market/publisher.pub
 ## 2. 准备主题包和目录输入
 
 ```bash
-go run ./cmd/theme pack --source ./themes/slate --output ./public-market/slate.theme.zip
-go run ./cmd/theme validate --archive ./public-market/slate.theme.zip
+go run ./cmd/theme init --name "My fleet" --output ./my-theme
+go run ./cmd/theme pack --source ./my-theme --output ./public-market/my-fleet.theme.zip
+go run ./cmd/theme validate --archive ./public-market/my-fleet.theme.zip
 ```
 
 创建 `public-market/entries.json`，归档路径相对于此输入文件解析：
@@ -31,8 +32,8 @@ go run ./cmd/theme validate --archive ./public-market/slate.theme.zip
 ```json
 [
   {
-    "archive": "slate.theme.zip",
-    "package_url": "https://themes.example.com/slate.theme.zip"
+    "archive": "my-fleet.theme.zip",
+    "package_url": "https://themes.example.com/my-fleet.theme.zip"
   }
 ]
 ```

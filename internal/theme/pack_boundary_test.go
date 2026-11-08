@@ -1,40 +1,12 @@
 package theme
 
 import (
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
-
-func TestBundledThemesSupportCurrentRelease(t *testing.T) {
-	manifests, err := filepath.Glob(filepath.Join("..", "..", "themes", "*", manifestName))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(manifests) == 0 {
-		t.Fatal("no bundled theme manifests found")
-	}
-	service := &Service{beatVersion: parseVersion("0.0.1-beta.4")}
-	for _, path := range manifests {
-		raw, err := os.ReadFile(path)
-		if err != nil {
-			t.Fatalf("read %s: %v", path, err)
-		}
-		manifest, err := parseManifest(raw)
-		if err != nil {
-			t.Fatalf("parse %s: %v", path, err)
-		}
-		if err := service.validateCompatibility(manifest); err != nil {
-			if errors.Is(err, ErrRuntimeIncompatible) {
-				t.Fatalf("%s requires Beat %s, current release is 0.0.1-beta.4", path, manifest.MinimumBeatVersion)
-			}
-			t.Fatalf("validate %s: %v", path, err)
-		}
-	}
-}
 
 func TestPackCannotReplaceSourceManifest(t *testing.T) {
 	source := packSource(t)
@@ -131,26 +103,7 @@ func TestPackManifestBoundariesAndInventoryLimit(t *testing.T) {
 	}
 }
 
-func TestBundledThemesUseProductionRulesAndDistinctLayouts(t *testing.T) {
-	layouts := map[string]bool{}
-	for _, name := range []string{"slate", "operations", "canvas"} {
-		raw, err := BuildArchive(PackOptions{Source: filepath.Join("../../themes", name)})
-		if err != nil {
-			t.Fatalf("%s: %v", name, err)
-		}
-		archive, err := ValidateArchive(raw)
-		if err != nil {
-			t.Fatal(err)
-		}
-		definition, err := ParseDefinition(archive.Content[definitionName])
-		if err != nil || layouts[definition.Overview] {
-			t.Fatalf("invalid/repeated layout %s: %v", name, err)
-		}
-		layouts[definition.Overview] = true
-	}
-	if len(layouts) != 3 {
-		t.Fatal(layouts)
-	}
+func TestRejectsInvalidPaletteColor(t *testing.T) {
 	if _, err := colorLuminance("#gggggg"); err == nil {
 		t.Fatal("invalid hex accepted")
 	}

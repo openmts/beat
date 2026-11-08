@@ -5,6 +5,8 @@ import App from './App.tsx'
 import { installChunkRecovery } from '@/lib/chunk-recovery'
 import { initialLocale } from '@/context/locales'
 import { loadPublicLocale } from '@/context/public-locales'
+import { preloadActiveTheme } from '@/hooks/use-active-theme'
+import { preloadSiteSettings } from '@/context/site-settings'
 
 installChunkRecovery()
 // 版本巡检不参与首屏渲染，按需加载以免占用公共外壳预算。
@@ -16,7 +18,11 @@ if (import.meta.env.PROD) {
 
 // 语言分片先于首屏渲染加载完成，避免先出现英文再跳转目标语言。
 const initial = initialLocale(localStorage, navigator)
-void Promise.all([loadPublicLocale(initial)]).finally(() => {
+const publicSite = !window.location.pathname.startsWith('/admin')
+const publicBootstrap = publicSite
+  ? Promise.allSettled([preloadActiveTheme(), preloadSiteSettings()])
+  : Promise.resolve([])
+void Promise.allSettled([loadPublicLocale(initial), publicBootstrap]).finally(() => {
   createRoot(document.getElementById('root')!).render(
     <StrictMode>
       <App />

@@ -1,5 +1,6 @@
 import type { Node, TrafficSummary } from "@/types"
 import type { ThemeJSON, ThemeNode } from "@/types/theme-runtime"
+import { normalizeCountryCode } from "@/lib/country-code"
 import { assertCount, finiteNumber, publicID, publicText } from "@/lib/theme-json"
 import { themeTelemetry } from "@/lib/theme-telemetry"
 
@@ -8,7 +9,7 @@ export const THEME_METRICS = [
   "disk_read", "disk_write", "net_recv", "net_sent", "net_recv_total", "net_sent_total", "swap", "swap_used", "swap_total",
   "load1", "load5", "load15", "uptime", "processes", "tcp_connections", "udp_connections",
 ] as const
-const SYSTEM_FIELDS = ["cpu_model", "os", "platform", "os_version", "kernel", "arch", "virtualization", "agent_version"] as const
+const SYSTEM_FIELDS = ["cpu_model", "os", "platform", "os_version", "kernel", "arch", "virtualization"] as const
 const TRAFFIC_NUMBERS = ["sent", "received", "used", "limit", "remaining", "percentage", "reset_day"] as const
 const TRAFFIC_TEXT = ["limit_type", "period_start", "next_reset", "tracked_since", "status"] as const
 
@@ -20,6 +21,8 @@ export function themeNode(node: Node, showIP: boolean): ThemeNode {
     status: node.status === "online" ? "online" : "offline", tags: tags.map(publicText), public_remark: publicText(node.public_remark),
     last_seen: publicText(node.last_seen), system: {}, metrics: {}, ...themeTelemetry(node),
   }
+  const countryCode = node.location?.scope === "public" ? normalizeCountryCode(node.location.country_code) : ""
+  if (countryCode) result.country_code = countryCode
   if (showIP) result.host = publicText(node.host)
   for (const key of SYSTEM_FIELDS) result.system[key] = publicText(node[key])
   for (const key of THEME_METRICS) {

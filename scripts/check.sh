@@ -98,8 +98,8 @@ check_backend_privileged() {
         -run '^TestSystemSSHPortResolution$' ./internal/agent
 }
 
-# check_frontend 也会重新生成主题分发资产（prebuild -> scripts/build-themes.sh），
-# 因此需要 Go 工具链；构建后按后台示例主题列表逐一确认 ZIP、预览图、SDK 与下载版文档。
+# check_frontend 会通过 prebuild 重新生成默认主题、作者资源与 SDK，并拒绝任何额外的
+# 主题 ZIP/预览图，防止旧版本资产混入发布目录。
 check_frontend() {
     require_tools npm go bash node
     (
@@ -110,7 +110,7 @@ check_frontend() {
         npm run test:coverage -- --maxWorkers=1 --coverage.reportsDirectory="$check_dir/frontend-coverage"
         npm run lint
         npm run build -- --outDir "$frontend_static_dir"
-        # B4：主题三套浏览器 smoke 进默认门禁。Playwright 来自本目录的 devDependency；
+        # 主题四套浏览器 smoke 进默认门禁。Playwright 来自本目录的 devDependency；
         # 浏览器装进本仓库专用目录，避免 install 顺手回收机器上其它 Playwright 版本的浏览器。
         # --only-shell 只装 headless shell（体积与系统依赖最小）。
         export PLAYWRIGHT_BROWSERS_PATH="${BEAT_PLAYWRIGHT_BROWSERS_PATH:-$HOME/.cache/beat-playwright}"
@@ -118,15 +118,17 @@ check_frontend() {
         BEAT_THEME_BROWSER_STATIC="$frontend_static_dir" \
             bash scripts/run-theme-browser-gates.sh "$check_dir/theme-browser-gates"
     )
-    # 后台示例主题列表是唯一真源：它列出的每个 id 都必须真的出现在构建产物里。
-    local asset example_ids example_id
-    example_ids=$(grep -o 'id: *"[^"]*"' webui/src/lib/theme-examples.ts | sed 's/.*"\([^"]*\)"/\1/')
-    [[ -n "$example_ids" ]] || { printf 'no example themes parsed from webui/src/lib/theme-examples.ts\n' >&2; return 1; }
-    while read -r example_id; do
-        [[ -s "$frontend_static_dir/themes/$example_id.theme.zip" ]] || { printf 'missing theme archive: %s\n' "$example_id" >&2; return 1; }
-        [[ -s "$frontend_static_dir/themes/$example_id.preview.png" ]] || { printf 'missing theme preview: %s\n' "$example_id" >&2; return 1; }
-    done <<<"$example_ids"
-    for asset in beat-theme-sdk.js theme-author-guide.md theme-sandbox-contract.md theme-market-publishing.md; do
+    local asset unexpected name
+    shopt -s nullglob
+    for unexpected in "$frontend_static_dir/themes/"*.theme.zip "$frontend_static_dir/themes/"*.preview.png; do
+        name=$(basename -- "$unexpected")
+        case "$name" in
+            default.theme.zip|default.preview.png|paper.theme.zip|paper.preview.png) ;;
+            *) printf 'unexpected bundled theme asset: %s\n' "$name" >&2; shopt -u nullglob; return 1 ;;
+        esac
+    done
+    shopt -u nullglob
+    for asset in default.theme.zip default.preview.png paper.theme.zip paper.preview.png beat-theme-sdk.js theme-author-guide.md theme-sandbox-contract.md theme-market-publishing.md; do
         [[ -s "$frontend_static_dir/themes/$asset" ]] || { printf 'missing theme asset: %s\n' "$asset" >&2; return 1; }
     done
 }

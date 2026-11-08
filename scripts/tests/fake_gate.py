@@ -1,13 +1,14 @@
 import json
 import os
 from pathlib import Path
-import re
 import sys
 
 
 PROJECT = Path(__file__).resolve().parents[2]
 PUBLIC_THEME_ASSETS = ("beat-theme-sdk.js", "theme-author-guide.md",
                        "theme-sandbox-contract.md", "theme-market-publishing.md")
+BUNDLED_THEME_ASSETS = (("default.theme.zip", b"zip"), ("default.preview.png", b"png"),
+                        ("paper.theme.zip", b"zip"), ("paper.preview.png", b"png"))
 RACE_HEAVY_PACKAGES = ("applicationsecrets", "agentrollout", "store", "backup",
                        "notificationqueue", "remoteoperations", "geoip", "theme",
                        "api", "api/handler", "adminauth")
@@ -23,17 +24,17 @@ def write_frontend_output(arguments):
 
 
 def write_theme_output(arguments):
-    """模拟前端构建产物：门禁断言的主题分发包必须真的出现，缺一个就要失败。"""
+    """模拟前端构建产物：写入默认主题与作者资源；可选遗留资产用于验证失败路径。"""
     if "--outDir" not in arguments:
         return
     output = Path(arguments[arguments.index("--outDir") + 1])
     themes = output / "themes"
     themes.mkdir(parents=True, exist_ok=True)
-    examples = (PROJECT / "webui/src/lib/theme-examples.ts").read_text()
-    missing = os.environ.get("BEAT_GATE_MISSING_THEME", "")
-    for identifier in re.findall(r'id: *"([^"]+)"', examples):
-        if identifier == missing:
-            continue
+    for name, content in BUNDLED_THEME_ASSETS:
+        (themes / name).write_bytes(content)
+    stale = os.environ.get("BEAT_GATE_STALE_THEME", "")
+    if stale and stale != "default":
+        identifier = stale
         (themes / f"{identifier}.theme.zip").write_bytes(b"zip")
         (themes / f"{identifier}.preview.png").write_bytes(b"png")
     for asset in PUBLIC_THEME_ASSETS:

@@ -21,7 +21,7 @@ const (
 	AuditMaximumPage = 200
 
 	auditMaximumCursorBytes = 512
-	auditCursorVersion      = 1
+	auditCursorVersion      = 2
 )
 
 const auditColumns = `id, request_id, COALESCE(actor_id, ''), actor_username, action,
@@ -32,7 +32,7 @@ const auditColumns = `id, request_id, COALESCE(actor_id, ''), actor_username, ac
 type auditCursor struct {
 	Action  string `json:"action,omitempty"`
 	ActorID string `json:"actor,omitempty"`
-	At      int64  `json:"at"`
+	At      int64  `json:"at"` // Unix 纳秒，避免同一毫秒内的事件被游标跳过。
 	ID      string `json:"id"`
 	Version int    `json:"v"`
 }
@@ -109,7 +109,7 @@ func auditEventQuery(filter model.AuditFilter) (string, []any, int, error) {
 			return "", nil, 0, ErrInvalidAuditEventQuery
 		}
 		filters = append(filters, "(created_at<? OR (created_at=? AND id<?))")
-		at := time.UnixMilli(cursor.At).UTC()
+		at := time.Unix(0, cursor.At).UTC()
 		args = append(args, at, at, cursor.ID)
 	}
 	statement := "SELECT " + auditColumns + " FROM admin_audit_events WHERE " +
@@ -130,7 +130,7 @@ func auditQueryLimit(limit int) (int, error) {
 func encodeAuditCursor(filter model.AuditFilter, last model.AdminAuditEvent) (string, error) {
 	data, err := json.Marshal(auditCursor{
 		Action: filter.Action, ActorID: filter.ActorID,
-		At: last.CreatedAt.UnixMilli(), ID: last.ID, Version: auditCursorVersion,
+		At: last.CreatedAt.UnixNano(), ID: last.ID, Version: auditCursorVersion,
 	})
 	if err != nil {
 		return "", err

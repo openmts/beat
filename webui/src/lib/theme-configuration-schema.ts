@@ -27,6 +27,11 @@ const defaultLabelKeys: Record<string, string> = {
   density: "theme.density",
   radius: "theme.radius",
   font: "theme.font",
+  surface: "theme.surface",
+  summary_layout: "theme.summary_layout",
+  shell_background: "theme.shell_background",
+  shell_header: "theme.shell_header",
+  shell_footer: "theme.shell_footer",
   show_network: "theme.show_network",
   show_host: "theme.show_host",
   show_tags: "theme.show_tags",
@@ -49,6 +54,11 @@ export function configurationFields(schema?: ThemeConfigurationSchema): ThemeCon
 }
 
 function definitionValue(definition: ThemeDefinition, key: string): unknown {
+  if (key === "surface") return definition.surface ?? "solid"
+  if (key === "summary_layout") return definition.summary?.layout ?? "cards"
+  if (key === "shell_background") return definition.shell?.background ?? "plain"
+  if (key === "shell_header") return definition.shell?.header ?? "glass"
+  if (key === "shell_footer") return definition.shell?.footer ?? "plain"
   return (definition as unknown as Record<string, unknown>)[key]
 }
 
@@ -80,4 +90,37 @@ export function configurationFromDefinition(
     (draft, field) => ({ ...draft, ...configurationPatch(field, configurationFieldValue(definition, field)) }),
     {},
   )
+}
+
+/**
+ * 把站点配置合并回主题定义。`summary_layout` 与 `shell_*` 是配置表单的扁平键，
+ * 渲染器读取的是嵌套的 `summary` / `shell`，预览和保存都必须走同一条转换。
+ */
+export function applyThemeConfiguration(
+  definition: ThemeDefinition,
+  configuration: ThemeConfiguration,
+): ThemeDefinition {
+  const resolved: ThemeDefinition = { ...definition }
+  if (configuration.overview !== undefined) resolved.overview = configuration.overview
+  if (configuration.detail !== undefined) resolved.detail = configuration.detail
+  if (configuration.density !== undefined) resolved.density = configuration.density
+  if (configuration.radius !== undefined) resolved.radius = configuration.radius
+  if (configuration.font !== undefined) resolved.font = configuration.font
+  if (configuration.surface !== undefined) resolved.surface = configuration.surface
+  if (configuration.show_network !== undefined) resolved.show_network = configuration.show_network
+  if (configuration.show_host !== undefined) resolved.show_host = configuration.show_host
+  if (configuration.show_tags !== undefined) resolved.show_tags = configuration.show_tags
+  if (configuration.show_remark !== undefined) resolved.show_remark = configuration.show_remark
+  if (configuration.summary_layout !== undefined) {
+    resolved.summary = { ...definition.summary, layout: configuration.summary_layout }
+  }
+  if (configuration.shell_background !== undefined || configuration.shell_header !== undefined || configuration.shell_footer !== undefined) {
+    resolved.shell = {
+      ...definition.shell,
+      ...(configuration.shell_background !== undefined ? { background: configuration.shell_background } : {}),
+      ...(configuration.shell_header !== undefined ? { header: configuration.shell_header } : {}),
+      ...(configuration.shell_footer !== undefined ? { footer: configuration.shell_footer } : {}),
+    }
+  }
+  return resolved
 }

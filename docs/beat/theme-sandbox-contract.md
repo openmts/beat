@@ -1,6 +1,6 @@
 # Beat sandbox theme contract
 
-This document describes the implemented public theme bridge **protocol 2**.
+This document describes the implemented public theme bridge **protocol 3**.
 ZIP manifest `schema_version` remains **1**. These are separate versions.
 Declarative layout/settings schemas and author-triggered metric queries are not
 part of this bridge contract.
@@ -11,9 +11,9 @@ part of this bridge contract.
   complete `{path,size,sha256}` inventory. The manifest does not inventory itself.
 - A sandbox package declares `runtime: "sandboxed"` and contains exactly one
   `.html` file. That file is the entry, including when nested under `dist/`.
-- `themes/pulse` is the shipped reference package for this contract: copy it to
-  start a package, and keep its `dist/beat-sdk.js` byte-identical to
-  `themes/sdk/bridge.js`.
+- `themes/default` and `themes/paper` are the shipped reference packages. Paper
+  demonstrates a single-page node list/detail workspace. Start from this contract
+  and keep each theme's `dist/beat-sdk.js` byte-identical to `themes/sdk/bridge.js`.
 - Use relative resource URLs. HTML script/style/image references must resolve to
   inventoried package files. ES modules and relative module imports are supported.
 - External HTML resource URLs, inline scripts/handlers, forms, frames, base tags,
@@ -46,7 +46,7 @@ sends this message to that frame using `postMessage(..., "*")` because its
 security origin is opaque:
 
 ```json
-{"beat":{"version":2,"instance_id":"...","type":"init"}}
+{"beat":{"version":3,"instance_id":"...","type":"init"}}
 ```
 
 Register the message listener during module startup, before `load`. Validate
@@ -58,10 +58,10 @@ const hostOrigin = new URL(location.href).origin;
 addEventListener("message", (event) => {
   if (event.source !== parent || event.origin !== hostOrigin) return;
   const message = event.data?.beat;
-  if (message?.version !== 2) return;
+  if (message?.version !== 3) return;
   if (message.type === "init" && /^[0-9a-f]{32}$/.test(message.instance_id)) {
     instance = message.instance_id;
-    parent.postMessage({beat: {version: 2, instance_id: instance, type: "ready"}}, hostOrigin);
+    parent.postMessage({beat: {version: 3, instance_id: instance, type: "ready"}}, hostOrigin);
   } else if (message.type === "snapshot" && message.instance_id === instance) {
     renderPublicSnapshot(message.payload); // Use textContent/React; do not inject HTML.
   }
@@ -83,14 +83,20 @@ shown below; unknown fields, unsupported versions/types, wrong instances and
 invalid payloads are rejected. Input is limited to 16 KiB, depth 4 and 12 keys.
 
 ```json
-{"beat":{"version":2,"instance_id":"...","type":"ready"}}
-{"beat":{"version":2,"instance_id":"...","type":"navigate","payload":{"path":"/node/visible-id"}}}
-{"beat":{"version":2,"instance_id":"...","type":"error","payload":{"code":"render_failed"}}}
+{"beat":{"version":3,"instance_id":"...","type":"ready"}}
+{"beat":{"version":3,"instance_id":"...","type":"navigate","payload":{"path":"/node/visible-id"}}}
+{"beat":{"version":3,"instance_id":"...","type":"setRange","payload":{"mode":"relative","seconds":21600}}}
+{"beat":{"version":3,"instance_id":"...","type":"setRange","payload":{"mode":"absolute","from":"2026-11-07T10:00:00Z","to":"2026-11-07T16:00:00Z"}}}
+{"beat":{"version":3,"instance_id":"...","type":"error","payload":{"code":"render_failed"}}}
 ```
 
 - `navigate.path` is `/` or `/node/<id>` for a node currently present in the
   public snapshot. Query strings, fragments, administration routes, external
   URLs and hidden nodes are disallowed. Beat uses its normal browser router.
+- `setRange` is available only after a node-detail snapshot. Relative seconds
+  must be one of `300`, `900`, `3600`, `21600`, `86400`, `604800`, `2592000`.
+  Absolute timestamps must be valid, ordered, non-negative and span at most 31
+  days. Unknown modes, extra fields and malformed values reject the message.
 - `error.code` is `render_failed`, `unsupported_data`, or `runtime_error`.
   Do not send exception stacks, credentials, HTML or arbitrary error strings.
 - `ready` has no payload. A new `init` always requires a new acknowledgement.
@@ -110,12 +116,19 @@ omitted; zero is a valid value. Nothing is forwarded by spreading API objects.
 | `groups` | Groups associated with visible nodes: `id`, `name`, `sort_order` |
 | `nodes` | Public nodes in the current page's scope; fields listed below |
 | `network` | `{visible,tasks}`; no task/result data when public network quality is disabled |
+| `network_history` | Detail page only: `{from,to,tasks:[{id,points:[{timestamp,latency_ms}]}]}` for visible public tasks in the selected range; failed buckets use `null` |
 | `history` | Detail page only: `{from,to,series,series_info?}` from successful public workspace queries for the current node |
+| `range` | Detail page only: current `{mode:"relative",seconds}` or `{mode:"absolute",from,to}` selection |
+| `range_options` | Detail page only: relative ranges a theme may request through `setRange` |
 | `state` | `nodes`, `metrics`, `network`, each `loading`, `ready`, or `error`; no raw server errors |
 
 Node fields: `id`, `name`, `alias`, `group_id`, `status`, `tags`, `public_remark`,
-`last_seen`, `system`, `metrics`, optional `traffic`, and `host` only when IP
-visibility is enabled. Detail snapshots never include a different/hidden node.
+`last_seen`, `system`, `metrics`, optional `traffic`, optional `country_code`, and
+`host` only when IP visibility is enabled. `country_code` is a two-letter
+uppercase ISO 3166-1 code and is omitted unless the public location is explicitly
+public. Snapshots only include public nodes. Detail snapshots retain the full
+visible node list for single-page themes; `route.node_id` and history remain
+limited to the selected public node. Hidden nodes are never included.
 
 When present, `telemetry_at`, `telemetry_age_seconds`, and `telemetry_state`
 describe confirmed metric freshness separately from `last_seen` contact time.
@@ -124,7 +137,7 @@ valid timestamp and non-negative integer age. Invalid combinations reject the
 snapshot. Raw node responses without snapshot metadata may omit all three.
 
 `system` contains only `cpu_model`, `os`, `platform`, `os_version`, `kernel`,
-`arch`, `virtualization`, `agent_version`.
+`arch`, `virtualization`.
 
 Metric IDs and units:
 
@@ -152,7 +165,8 @@ Metric IDs and units:
   and `state.metrics: "error"`. In-flight work uses `loading`. A metric not yet
   queried has no history key; a successful empty query may contain null buckets.
   A template containing only other visible nodes produces no current-node history.
-  The theme cannot initiate a new query through protocol 2.
+  A theme can request a different node-detail range with `setRange`; validation
+  and the actual query remain owned by the host page.
 
 Public node pages load the default/node template and public catalog before
 querying. They support time controls, refresh/pause, inspection, CSV/JSON export
@@ -170,15 +184,19 @@ Network tasks contain only `id`, `name`, `type`, `nodes`; each node has `node_id
 and `latest` (null, or `timestamp`, `success`, optional finite `latency_ms` and
 `status_code`). Only enabled public tasks and visible node results are included.
 Probe targets, internal errors, agent credentials and administration data are
-never included.
+never included. `network_history` is bounded to 16 visible public tasks and 600
+points per task. Its timestamps/range use Unix seconds; `latency_ms` is a finite
+non-negative number or **null** for an unreachable/missing bucket. Gaps must not
+be connected or converted to zero.
 
 ## Budgets and privacy
 
 Snapshots are capped at 1 MiB including the envelope, 1000 visible nodes,
-200 groups/tasks, 128 tags per node, 64 history series, and 1024 points per series.
+200 groups/tasks, 128 tags per node, 64 history series, 1024 points per series,
+16 network-history tasks and 600 network-history points per task.
 The JSON tree is bounded as well. Exceeding a budget explicitly falls back to
-the built-in view; fleets/series are not silently truncated. Future pagination
-or query controls require a separately documented contract.
+the built-in view; fleets/series are not silently truncated. Additional query
+controls require a new documented protocol message and validation rules.
 
 Configuration is public: never place secrets in it. It must be an object,
 no more than 16 KiB / 256 keys / depth 5. Prototype keys and known credential,

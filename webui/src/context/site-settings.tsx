@@ -30,6 +30,36 @@ export const defaultSiteSettings: SiteSettings = {
   updated_at: "",
 }
 
+export type SiteSettingsCache =
+  | { status: "loading" }
+  | { status: "ready"; settings: SiteSettings }
+  | { status: "failed"; error: string }
+
+let settingsCache: SiteSettingsCache = { status: "loading" }
+let settingsPending: Promise<void> | null = null
+
+export function cachedSiteSettings(): SiteSettingsCache {
+  return settingsCache
+}
+
+export function resetSiteSettingsCache(): void {
+  settingsCache = { status: "loading" }
+  settingsPending = null
+}
+
+export async function preloadSiteSettings(): Promise<void> {
+  if (settingsCache.status !== "loading") return
+  if (!settingsPending) {
+    settingsPending = getSiteSettings()
+      .then((settings) => { settingsCache = { status: "ready", settings } })
+      .catch((reason: unknown) => {
+        settingsCache = { status: "failed", error: reason instanceof Error ? reason.message : "Failed to load site settings" }
+      })
+      .finally(() => { settingsPending = null })
+  }
+  await settingsPending
+}
+
 interface SiteSettingsContextValue {
   settings: SiteSettings
   loading: boolean
@@ -51,26 +81,40 @@ const fallbackContext: SiteSettingsContextValue = {
 const SiteSettingsContext = createContext<SiteSettingsContextValue>(fallbackContext)
 
 export function SiteSettingsProvider({ children }: { children: ReactNode }) {
-  const [settings, setSettings] = useState(defaultSiteSettings)
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
+  const initial = cachedSiteSettings()
+  const [settings, setSettings] = useState(initial.status === "ready" ? initial.settings : defaultSiteSettings)
+  const [loading, setLoading] = useState(initial.status === "loading")
+  const [error, setError] = useState<string | null>(initial.status === "failed" ? initial.error : null)
   const reporter = useRef(createPublicTelemetryReporter())
 
   const reload = useCallback(async () => {
     setLoading(true)
     try {
-      setSettings(await getSiteSettings())
+      const next = await getSiteSettings()
+      settingsCache = { status: "ready", settings: next }
+      setSettings(next)
       setError(null)
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Failed to load site settings")
+      const message = reason instanceof Error ? reason.message : "Failed to load site settings"
+      settingsCache = { status: "failed", error: message }
+      setError(message)
     } finally {
       setLoading(false)
     }
   }, [])
 
   useEffect(() => {
-    void reload()
-  }, [reload])
+    if (initial.status !== "loading") return
+    let cancelled = false
+    void preloadSiteSettings().then(() => {
+      if (cancelled) return
+      const current = cachedSiteSettings()
+      setLoading(false)
+      if (current.status === "ready") { setSettings(current.settings); setError(null) }
+      if (current.status === "failed") setError(current.error)
+    })
+    return () => { cancelled = true }
+  }, [initial.status])
 
   useEffect(() => applyDocumentMetadata(settings), [settings])
 
@@ -82,14 +126,20 @@ export function SiteSettingsProvider({ children }: { children: ReactNode }) {
     reporter.current.report(event, surface)
   }, [])
 
+  const applySettings = useCallback((next: SiteSettings) => {
+    settingsCache = { status: "ready", settings: next }
+    setSettings(next)
+    setError(null)
+  }, [])
+
   const value = useMemo(() => ({
     settings,
     loading,
     error,
-    applySettings: setSettings,
+    applySettings,
     reload,
     reportInteraction,
-  }), [error, loading, reload, reportInteraction, settings])
+  }), [applySettings, error, loading, reload, reportInteraction, settings])
 
   return <SiteSettingsContext.Provider value={value}>{children}</SiteSettingsContext.Provider>
 }

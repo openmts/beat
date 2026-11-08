@@ -34,7 +34,8 @@ isolates executable public bundles from administrator state; see
 The public settings provider updates the document title, description, favicon,
 header branding, and default theme without requiring authentication. A visitor's
 explicit local light/dark choice continues to override the server default.
-Administrators edit all fields at `/admin/settings` using shadcn form controls.
+Administrators edit the site fields at `/admin/settings` and manage theme
+packages separately at `/admin/themes`, both using shadcn form controls.
 
 ## Acceptance
 

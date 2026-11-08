@@ -4,6 +4,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { buttonVariants } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
+import { CountryBadge } from "@/components/country-badge"
 import { Header } from "@/components/header"
 import { PublicFooter } from "@/components/public-footer"
 import { usePublicTheme } from "@/lib/theme-presentation"
@@ -19,36 +20,39 @@ export function NodeDetailView({ workspace }: { workspace: PublicMetricWorkspace
   const { data: node, loading: nodeLoading, error: nodeError } = workspace.node
   const { settings } = useSiteSettings()
   const layout = usePublicTheme()?.definition.detail ?? "balanced"
-  return <div className="flex min-h-svh flex-col"><Header /><NodeDetailHeader node={node} nodeLoading={nodeLoading} />
-    <main className="container-page safe-pb flex-1 py-4 sm:py-6">
+  return <div className="flex min-h-svh flex-col"><Header wide /><NodeDetailHeader node={node} nodeLoading={nodeLoading} />
+    <main className="mx-auto w-full max-w-[1400px] safe-pb flex-1 px-4 py-4 sm:px-6 sm:py-6">
       <ErrorAlerts nodeError={nodeError} />
       <div data-theme-detail-layout={layout} className={layout === "compact" ? "grid items-start gap-6 lg:grid-cols-[minmax(16rem,22rem)_1fr]" : "space-y-6"}>
         <section>{nodeLoading ? <div className="space-y-4"><Skeleton className="h-40 w-full" /><Skeleton className="h-56 w-full" /></div> : node ? <NodeOverview node={node} /> : null}</section>
         <section className="min-w-0 space-y-6"><NodeCharts workspace={workspace} />{node && settings.show_accelerators && node.accelerator_visible === true && <AcceleratorDetail key={node.id} node={node} catalog={workspace.source.data?.catalog.metrics} range={workspace.range} refreshSeconds={workspace.refreshSeconds} onRange={workspace.setRange} onInterval={workspace.setRefreshSeconds} />}</section>
       </div>
-    </main><PublicFooter />
+    </main><PublicFooter wide />
   </div>
 }
 function NodeDetailHeader({ node, nodeLoading }: { node: Node | null; nodeLoading: boolean }) {
   const { t } = useLocale()
-  return (<header className="sticky top-12 z-20 flex h-12 shrink-0 items-center gap-2 border-b bg-background/85 px-4 py-2 backdrop-blur-md supports-[backdrop-filter]:bg-background/70">
-        <Link
-          to="/"
-          aria-label={t("app.back")}
-          title={t("app.back")}
-          className={buttonVariants({ variant: "ghost", size: "icon" })}
-        >
-          <ArrowLeftIcon />
-        </Link>
-        <h1 className="min-w-0 flex-1 truncate text-base font-semibold sm:text-lg">
-          {nodeLoading ? t("node.loading") : node ? node.alias || node.name : t("app.nodes")}
-        </h1>
-        {node ? (
-          <Badge variant={node.status === "online" ? "default" : "secondary"}>
-            <span className="size-1.5 rounded-full bg-current" />
-            {node.status === "online" ? t("node.online") : t("node.offline")}
-          </Badge>
-        ) : null}
+  return (<header className="sticky top-12 z-20 h-12 shrink-0 border-b bg-background/85 backdrop-blur-md supports-[backdrop-filter]:bg-background/70">
+        <div className="mx-auto flex h-full w-full max-w-[1400px] items-center gap-2 px-4 sm:px-6">
+          <Link
+            to="/"
+            aria-label={t("app.back")}
+            title={t("app.back")}
+            className={buttonVariants({ variant: "ghost", size: "icon" })}
+          >
+            <ArrowLeftIcon />
+          </Link>
+          <h1 className="flex min-w-0 flex-1 items-center gap-2 text-base font-semibold sm:text-lg">
+            {node && <CountryBadge code={node.location?.country_code} />}
+            <span className="truncate">{nodeLoading ? t("node.loading") : node ? node.alias || node.name : t("app.nodes")}</span>
+          </h1>
+          {node ? (
+            <Badge variant={node.status === "online" ? "default" : "secondary"}>
+              <span className="size-1.5 rounded-full bg-current" />
+              {node.status === "online" ? t("node.online") : t("node.offline")}
+            </Badge>
+          ) : null}
+        </div>
       </header>)
 }
 function ErrorAlerts({ nodeError }: { nodeError: string | null }) {

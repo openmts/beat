@@ -36,8 +36,7 @@ RUN GOPROXY="${GOPROXY}" CGO_ENABLED=0 GOOS="${TARGETOS}" GOARCH="${TARGETARCH}"
     GOPROXY="${GOPROXY}" CGO_ENABLED=0 go build -trimpath -o /out/beat-theme ./cmd/theme
 
 FROM build-base AS frontend-build
-# 主题分发资产由 scripts/build-themes.sh 生成；这里复用后端阶段已构建的 packer，
-# 避免在前端阶段重复下载 Go 模块。构建产物会随 webui/public/ 进入 dist/static。
+# 复用后端阶段已构建的 packer，避免前端阶段重复下载 Go 模块。
 WORKDIR /src/beat
 COPY --from=backend-build /out/beat-theme /usr/local/bin/beat-theme
 COPY themes/ ./themes/

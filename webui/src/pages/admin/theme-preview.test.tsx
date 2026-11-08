@@ -22,7 +22,7 @@ vi.mock("@/components/theme-preview-viewport", () => ({ ThemePreviewViewport: ({
 vi.mock("@/components/metrics-chart", () => ({ MetricsChart: ({ title }: { title: string }) => <p>History {title}</p> }))
 const palette = Object.fromEntries(THEME_PALETTE_TOKENS.map((key) => [key, "#172033"])) as ThemeDefinition["light"]
 const definition: ThemeDefinition = { schema_version: 1, overview: "cards", detail: "balanced", density: "comfortable", radius: 6, light: palette, dark: { ...palette, background: "#090c12" } }
-const descriptor: ActiveThemeDescriptor = { package_id: "pkg", theme_id: "theme", name: "Slate", version: "1.0.0", protocol: 2, runtime: "declarative", built_in: false, configuration: "{}", declarative: definition }
+const descriptor: ActiveThemeDescriptor = { package_id: "pkg", theme_id: "theme", name: "Slate", version: "1.0.0", protocol: 3, runtime: "declarative", built_in: false, configuration: "{}", declarative: definition }
 const saved = vi.fn(async () => {})
 function preview() { return render(<LocaleProvider><MemoryRouter><ThemePreview theme={{ id: "pkg", name: "Slate" } as ThemePackage} onClose={vi.fn()} onSaved={saved} /></MemoryRouter></LocaleProvider>) }
 
@@ -138,5 +138,43 @@ describe("read-only theme preview and constrained settings", () => {
     fireEvent.change(screen.getByLabelText("Corner radius (px)"), { target: { value: "9" } })
     expect(screen.getByLabelText("Corner radius (px)")).toHaveValue(6)
     expect(api.configureTheme).not.toHaveBeenCalled()
+  })
+
+  it("previews and saves the extended summary, surface and shell controls", async () => {
+    const user = userEvent.setup()
+    const declared: ActiveThemeDescriptor = { ...descriptor, configuration_schema: { type: "managed", items: [
+      { key: "summary_layout", type: "select", options: ["cards", "strip"] },
+      { key: "surface", type: "select", options: ["solid", "outline"] },
+      { key: "shell_background", type: "select", options: ["plain", "grid"] },
+      { key: "shell_header", type: "select", options: ["glass", "solid"] },
+      { key: "shell_footer", type: "select", options: ["plain", "minimal"] },
+    ] } }
+    vi.mocked(api.previewTheme).mockResolvedValue(declared)
+    vi.mocked(api.configureTheme).mockResolvedValue(declared)
+    preview()
+
+    await user.click(await screen.findByRole("combobox", { name: "Top summary layout" }))
+    await user.click(await screen.findByRole("option", { name: "Summary strip" }))
+    await user.click(screen.getByRole("combobox", { name: "Surface style" }))
+    await user.click(await screen.findByRole("option", { name: "Outline" }))
+    await user.click(screen.getByRole("combobox", { name: "Page background" }))
+    await user.click(await screen.findByRole("option", { name: "Grid" }))
+    await user.click(screen.getByRole("combobox", { name: "Header style" }))
+    await user.click(await screen.findByRole("option", { name: "Solid" }))
+    await user.click(screen.getByRole("combobox", { name: "Footer style" }))
+    await user.click(await screen.findByRole("option", { name: "Minimal inline" }))
+
+    const root = document.querySelector("[data-public-theme]") as HTMLElement
+    expect(root).toHaveAttribute("data-theme-summary", "strip")
+    expect(root).toHaveAttribute("data-theme-surface", "outline")
+    expect(root).toHaveAttribute("data-theme-shell-background", "grid")
+    expect(root).toHaveAttribute("data-theme-shell-header", "solid")
+    expect(root).toHaveAttribute("data-theme-shell-footer", "minimal")
+
+    fireEvent.click(screen.getByRole("button", { name: "Save settings" }))
+    fireEvent.click(screen.getByRole("button", { name: "Confirm" }))
+    await waitFor(() => expect(api.configureTheme).toHaveBeenCalledWith("pkg", {
+      summary_layout: "strip", surface: "outline", shell_background: "grid", shell_header: "solid", shell_footer: "minimal",
+    }))
   })
 })

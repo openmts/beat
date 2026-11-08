@@ -44,6 +44,7 @@ func declarativeFixtureAPI(w http.ResponseWriter, r *http.Request) {
 
 func declarativeFixtureNodes() []map[string]any {
 	names := []string{"Frankfurt edge", "Tokyo edge", "Singapore edge", "Ashburn worker", "Seattle standby", "Canary node"}
+	countries := []string{"DE", "JP", "SG", "US", "US", "CA"}
 	cpus := []float64{42.7, 12.4, 79.2, 24.5, 0, 0}
 	nodes := make([]map[string]any, 0, len(names))
 	for index, name := range names {
@@ -73,7 +74,8 @@ func declarativeFixtureNodes() []map[string]any {
 		}
 		nodes = append(nodes, map[string]any{"id": "node-" + strconv.Itoa(index), "name": name, "alias": "", "group_id": group, "status": status, "is_public": true,
 			"telemetry_at": telemetryAt, "telemetry_age_seconds": telemetryAge, "telemetry_state": telemetryState,
-			"host": "203.0.113.18", "private_remark": "PRIVATE_REMARK", "ssh_public_key": "PRIVATE_KEY", "agent_token": "PRIVATE_TOKEN",
+			"location": map[string]any{"scope": "public", "country_code": countries[index], "resolved_at": time.Now().UTC().Format(time.RFC3339)},
+			"host":     "203.0.113.18", "private_remark": "PRIVATE_REMARK", "ssh_public_key": "PRIVATE_KEY", "agent_token": "PRIVATE_TOKEN",
 			"tags": []string{"linux", "edge"}, "public_remark": "Managed infrastructure · example data", "metrics": metrics, "last_seen": time.Now().UTC().Format(time.RFC3339),
 			"cpu_model": "AMD EPYC 7763", "os": "linux", "platform": "Ubuntu", "os_version": "24.04", "kernel": "6.8.0", "arch": "amd64", "virtualization": "kvm", "agent_version": "1.0.0"})
 	}
