@@ -63,6 +63,8 @@ class ReleasePreparationTests(unittest.TestCase):
         self.assertEqual({"amd64", "arm64"}, set(artifacts))
         self.assertEqual("beat-agent_linux_x86_64", artifacts["amd64"]["filename"])
         self.assertEqual("beat-agent_linux_aarch64", artifacts["arm64"]["filename"])
+        self.assertEqual("beat-agent", artifacts["amd64"]["entrypoint"])
+        self.assertEqual("beat-agent", artifacts["arm64"]["entrypoint"])
         self.assertEqual("linux-amd64", artifacts["amd64"]["id"])
         self.assertEqual(64, self.dist.joinpath("beat-agent-manifest.sig").stat().st_size)
         self.assertIn(".sbom.json", self.dist.joinpath("checksums.txt").read_text())

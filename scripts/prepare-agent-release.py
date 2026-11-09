@@ -88,7 +88,7 @@ def prepare(directory):
             raise ValueError(f"matching SBOM is missing for {archive.name}")
         artifacts.append({
             "id": f"linux-{arch}", "os": "linux", "arch": arch, "kind": "binary",
-            "path": filename, "filename": filename, "entrypoint": filename,
+            "path": filename, "filename": filename, "entrypoint": "beat-agent",
             "support": "supported",
             "sbom": {"path": sbom.name}, "provenance": {"digest": provenance},
         })
