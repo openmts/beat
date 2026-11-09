@@ -80,6 +80,10 @@ function NetworkTaskRow({
 }) {
   const { t } = useLocale()
   const TypeIcon = typeIcons[view.task.type]
+  const targets = view.task.targets ?? []
+  const targetSummary = targets.length > 0
+    ? targets.map((target) => [target.label, target.region].filter(Boolean).join(" · ")).join(" | ")
+    : view.task.target
   return (
     <div className="grid gap-4 py-4 first:pt-0 last:pb-0 lg:grid-cols-[minmax(12rem,18rem)_1fr]">
       <div className="min-w-0">
@@ -88,8 +92,8 @@ function NetworkTaskRow({
           <h3 className="truncate font-medium">{view.task.name}</h3>
           <Badge variant="outline">{t(networkTypeKey(view.task.type))}</Badge>
         </div>
-        <p className="mt-1 truncate text-xs text-muted-foreground" title={view.task.target}>
-          {view.task.target}
+        <p className="mt-1 truncate text-xs text-muted-foreground" title={targetSummary}>
+          {targetSummary}
         </p>
       </div>
       {view.nodes.length === 0 ? (
@@ -102,6 +106,7 @@ function NetworkTaskRow({
             <NetworkNodeCell
               key={state.node.id}
               state={state}
+              task={view.task}
               onClick={() => onOpenHistory(view, state.node.id)}
             />
           ))}
@@ -111,9 +116,11 @@ function NetworkTaskRow({
   )
 }
 
-function NetworkNodeCell({ state, onClick }: { state: NetworkNodeState; onClick: () => void }) {
+function NetworkNodeCell({ state, task, onClick }: { state: NetworkNodeState; task: NetworkTaskView["task"]; onClick: () => void }) {
   const { t } = useLocale()
   const latest = state.latest
+  const targets = task.targets ?? []
+  const targetStates = state.targets ?? []
   return (
     <Button
       variant="outline"
@@ -127,6 +134,25 @@ function NetworkNodeCell({ state, onClick }: { state: NetworkNodeState; onClick:
           {latest ? formatLatency(latest.latency_ms) : t("network.waiting")}
         </span>
       </span>
+      {targets.length > 1 && (
+        <span className="grid grid-cols-1 gap-1 text-[11px] text-muted-foreground">
+          {targets.map((target) => {
+            const result = targetStates.find((entry) => entry.target_id === target.id)?.latest
+            const quality = result
+              ? task.type === "icmp" ? result.loss_percent : result.success_percent
+              : null
+            return (
+              <span key={target.id} className="flex items-center justify-between gap-2">
+                <span className="truncate">{target.label}</span>
+                <span className="shrink-0 font-mono text-foreground">
+                  {result ? formatLatency(result.latency_ms) : "--"}
+                  {quality !== null && quality !== undefined ? ` / ${Math.round(quality)}%` : ""}
+                </span>
+              </span>
+            )
+          })}
+        </span>
+      )}
       <span className="h-1.5 overflow-hidden rounded-full bg-muted">
         <span
           className={cn("block h-full rounded-full", latest?.success ? "bg-primary" : "bg-destructive")}

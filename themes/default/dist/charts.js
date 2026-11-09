@@ -59,24 +59,50 @@ export function chartBlock(snapshot, spec, locale) {
   return block
 }
 
-export function networkChartBlock(title, points, bounds, locale) {
+export function networkChartBlock(title, source, bounds, locale) {
   const t = strings(locale)
-  const values = points.map((point) => point.latency_ms).filter(Number.isFinite)
+  const series = Array.isArray(source) && source.length && Array.isArray(source[0]?.points)
+    ? source
+    : [{ label: title, points: source }]
+  const values = series.flatMap((entry) => entry.points.map((point) => point.latency_ms)).filter(Number.isFinite)
   const latest = values.length ? values[values.length - 1] : NaN
   const peak = values.length ? Math.max(...values) : NaN
   const note = values.length ? `${t.latest} ${decimal(latest, 1)} ms · ${t.peak} ${decimal(peak, 1)} ms` : t.noSample
   const root = element("div", "network-chart")
+  root.dataset.series = String(series.length)
+  root.dataset.carriers = series.map((entry) => entry.carrier || "custom").join(",")
   const wrap = element("div", "chart-wrap network-chart-wrap")
   const canvas = element("canvas", "chart-canvas network-canvas")
   canvas.setAttribute("role", "img")
   canvas.setAttribute("aria-label", `${title}: ${note}`)
   wrap.append(canvas)
   append(root, element("p", "network-chart-note", note), wrap)
+  if (series.length > 1) {
+    const labels = element("div", "legend")
+    for (const entry of series) {
+      const item = element("span", "legend-item")
+      const swatch = element("span", "legend-swatch")
+      swatch.style.background = networkCarrierColor(entry.carrier)
+      append(item, swatch, element("span", "", entry.label || entry.carrier || title))
+      labels.append(item)
+    }
+    root.append(labels)
+  }
   chartTasks.push({
     canvas, spec: { title, unit: "ms" }, bounds,
-    series: [{ points: points.map((point) => ({ timestamp: point.timestamp, value: point.latency_ms })) }],
+    series: series.map((entry) => ({
+      points: entry.points.map((point) => ({ timestamp: point.timestamp, value: point.latency_ms })),
+      color: networkCarrierColor(entry.carrier),
+    })),
   })
   return root
+}
+
+function networkCarrierColor(carrier) {
+  if (carrier === "mobile") return "#2563eb"
+  if (carrier === "unicom") return "#dc2626"
+  if (carrier === "telecom") return "#16a34a"
+  return ""
 }
 
 function chartPalette() {
@@ -220,7 +246,7 @@ function drawChart(task) {
   }
   series.forEach((entry, index) => drawSeries(context, {
     points: entry.points, bounds, yMax, insert, plotWidth, plotHeight,
-    color: index ? palette.muted : palette.text,
+    color: entry.color || (index ? palette.muted : palette.text),
   }))
 }
 

@@ -129,12 +129,15 @@ func TestNetworkRunnerHonorsExpiryAndReportsErrors(t *testing.T) {
 func TestMergeAndEnqueueNetworkAssignments(t *testing.T) {
 	now := time.Now()
 	states := mergeNetworkAssignments(nil, NetworkAssignmentSet{
-		ExpiresAt: now.Add(time.Minute), Tasks: []model.NetworkAssignment{{ID: "task", IntervalSeconds: 10}},
+		ExpiresAt: now.Add(time.Minute), Tasks: []model.NetworkAssignment{
+			{ID: "task", TargetID: "mobile", IntervalSeconds: 10},
+			{ID: "task", TargetID: "unicom", IntervalSeconds: 10},
+		},
 	})
-	work := make(chan model.NetworkAssignment, 1)
+	work := make(chan model.NetworkAssignment, 2)
 	enqueueDueNetworkTasks(states, now.Add(time.Second), work)
-	if len(work) != 1 || !states["task"].running {
-		t.Fatalf("state = %#v, work = %d", states["task"], len(work))
+	if len(work) != 2 || !states["task\x00mobile"].running || !states["task\x00unicom"].running {
+		t.Fatalf("states = %#v, work = %d", states, len(work))
 	}
 }
 

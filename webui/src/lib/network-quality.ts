@@ -1,4 +1,5 @@
 import type {
+  NetworkCarrier,
   NetworkDirection,
   NetworkNode,
   NetworkNodeState,
@@ -26,6 +27,27 @@ export function formatPacketLoss(value: number | null | undefined): string {
   return `${value.toFixed(1)}%`
 }
 
+export function formatPercent(value: number | null | undefined): string {
+  return formatPacketLoss(value)
+}
+
+export function carrierColor(carrier: NetworkCarrier): string {
+  switch (carrier) {
+  case "mobile":
+    return "#2563eb"
+  case "unicom":
+    return "#dc2626"
+  case "telecom":
+    return "#16a34a"
+  default:
+    return "var(--primary)"
+  }
+}
+
+export function networkCarrierKey(carrier: NetworkCarrier): string {
+  return `network.carrier.${carrier}`
+}
+
 // networkSummaryByNode 为首页节点卡片选择一条最有参考价值的公开任务。
 // 优先 ICMP（有丢包率），同类型下优先 Server→Agent，因为它是服务端视角的端到端采样。
 export function networkSummaryByNode(
@@ -35,22 +57,26 @@ export function networkSummaryByNode(
   for (const view of views ?? []) {
     const direction = view.task.direction ?? "agent_to_target"
     for (const state of view.nodes) {
-      const latest = state.latest
-      if (latest !== null && !Number.isFinite(latest.latency_ms)) continue
-      const summary: NodeNetworkSummary = {
-        task_id: view.task.id,
-        task_name: view.task.name,
-        direction,
-        type: view.task.type,
-        latency_ms: latest?.latency_ms ?? null,
-        loss_percent: view.task.type === "icmp" ? latest?.loss_percent ?? null : null,
-        success: latest?.success ?? false,
-        timestamp: latest?.timestamp ?? "",
-      }
-      const score = summaryScore(summary, view.task.sort_order)
-      const current = selected.get(state.node.id)
-      if (current === undefined || score < current.score) {
-        selected.set(state.node.id, { summary, score })
+      const reported = state.targets?.length
+        ? state.targets.map((target) => target.latest).filter((latest) => latest !== null)
+        : [state.latest]
+      for (const latest of reported) {
+        if (latest !== null && !Number.isFinite(latest.latency_ms)) continue
+        const summary: NodeNetworkSummary = {
+          task_id: view.task.id,
+          task_name: view.task.name,
+          direction,
+          type: view.task.type,
+          latency_ms: latest?.latency_ms ?? null,
+          loss_percent: view.task.type === "icmp" ? latest?.loss_percent ?? null : null,
+          success: latest?.success ?? false,
+          timestamp: latest?.timestamp ?? "",
+        }
+        const score = summaryScore(summary, view.task.sort_order)
+        const current = selected.get(state.node.id)
+        if (current === undefined || score < current.score) {
+          selected.set(state.node.id, { summary, score })
+        }
       }
     }
   }
@@ -84,9 +110,11 @@ export function networkTypeKey(type: NetworkProbeType): string {
 }
 
 export function latestSuccessPercent(view: NetworkTaskView): number | null {
-  const reported = view.nodes.filter((state) => state.latest !== null)
+  const reported = view.nodes.flatMap((state) => state.targets?.length
+    ? state.targets.map((target) => target.latest)
+    : [state.latest]).filter((latest) => latest !== null)
   if (reported.length === 0) return null
-  const successful = reported.filter((state) => state.latest?.success).length
+  const successful = reported.filter((latest) => latest?.success).length
   return successful / reported.length * 100
 }
 

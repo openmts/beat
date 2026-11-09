@@ -98,6 +98,7 @@ class ContainerImageTests(unittest.TestCase):
         self.assertIn("BEAT_RELEASE_SIGNING_KEY", release)
         self.assertIn("beat-agent-manifest.json", release)
         self.assertIn("beat-agent-manifest.sigstore.json", release)
+        self.assertIn("beat-agent-release-key.json", release)
         self.assertIn("beat-agent_linux_x86_64", release)
         self.assertIn("beat-agent_linux_aarch64", release)
         self.assertLess(release.index("scripts/prepare-release.sh dist"), release.index("softprops/action-gh-release"))

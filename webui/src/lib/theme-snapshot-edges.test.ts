@@ -109,6 +109,11 @@ describe("public snapshot edge cases", () => {
   it("handles missing/invalid latest values and bounds network tasks", () => {
     const input = source(); const view = task(); view.nodes[0].latest = null; input.network = [view]
     expect(buildThemeSnapshot(input).network.tasks[0]).toMatchObject({ nodes: [{ node_id: "node", latest: null }] })
+    view.nodes[0].targets = [
+      { target_id: "", latest: { timestamp: "now", success: true, latency_ms: 1, status_code: 0, error_code: "none" } },
+      { target_id: "mobile", latest: { timestamp: "now", success: true, latency_ms: 2, status_code: 0, error_code: "none" } },
+    ]
+    expect(buildThemeSnapshot(input).network.tasks[0]).toMatchObject({ nodes: [{ targets: [{ target_id: "mobile" }] }] })
     view.nodes[0].latest = { timestamp: "now", success: false, latency_ms: Infinity, status_code: NaN, error_code: "private" }
     expect(buildThemeSnapshot(input).network.tasks[0]).toMatchObject({ nodes: [{ latest: { timestamp: "now", success: false } }] })
     input.network = Array.from({ length: 201 }, (_, i) => task({ id: `task-${i}` }))
@@ -134,5 +139,54 @@ describe("public snapshot edge cases", () => {
     expect(() => buildThemeSnapshot(input)).toThrow("snapshot_budget")
     input.networkHistory = { from: 100, to: 200, tasks: [{ task_id: "task", points: Array.from({ length: 601 }, (_, index) => ({ timestamp: index, latency_ms: 1 })) }] }
     expect(() => buildThemeSnapshot(input)).toThrow("snapshot_budget")
+  })
+  it("preserves bounded carrier series metadata without exposing target addresses", () => {
+    const input = source()
+    input.network = [task()]
+    input.networkHistory = {
+      from: 100, to: 200,
+      tasks: [{
+        task_id: "task",
+        points: [],
+        series: [
+          { target_id: "", label: "Server to agent", carrier: "custom", region: "", visible_address: false,
+            points: [{ timestamp: 90, latency_ms: 999 }] },
+          { target_id: "mobile", label: "Mobile", carrier: "mobile", region: "Shanghai", visible_address: false,
+            points: [{ timestamp: 100, latency_ms: 10, loss_percent: 4, success_percent: 96 }] },
+          { target_id: "unicom", label: "Unicom", carrier: "unicom", region: "Beijing", visible_address: true,
+            points: [{ timestamp: 100, latency_ms: 20 }] },
+          { target_id: "telecom", label: "Telecom", carrier: "telecom", region: "Guangzhou", visible_address: false,
+            points: [{ timestamp: 100, latency_ms: null, loss_percent: 100, success_percent: 0 }] },
+        ],
+      }],
+    }
+    const history = buildThemeSnapshot(input).network_history
+    expect(history).toEqual({ from: 100, to: 200, tasks: [{
+      id: "task",
+      points: [],
+      series: [
+        { id: "mobile", label: "Mobile", carrier: "mobile", region: "Shanghai", visible_address: false,
+          points: [{ timestamp: 100, latency_ms: 10, loss_percent: 4, success_percent: 96 }] },
+        { id: "unicom", label: "Unicom", carrier: "unicom", region: "Beijing", visible_address: true,
+          points: [{ timestamp: 100, latency_ms: 20 }] },
+        { id: "telecom", label: "Telecom", carrier: "telecom", region: "Guangzhou", visible_address: false,
+          points: [{ timestamp: 100, latency_ms: null, loss_percent: 100, success_percent: 0 }] },
+      ],
+    }] })
+    expect(JSON.stringify(history)).not.toMatch(/secret-target|10\.0\.0\.1/)
+    expect(history?.tasks[0].series).toHaveLength(3)
+  })
+  it("rejects invalid or excessive theme network series", () => {
+    const input = source()
+    input.network = [task()]
+    const point = { timestamp: 100, latency_ms: 10 }
+    input.networkHistory = { from: 100, to: 200, tasks: [{ task_id: "task", points: [],
+      series: Array.from({ length: 21 }, (_, index) => ({ target_id: `target-${index}`, label: "Target", carrier: "custom",
+        region: "", visible_address: false, points: [point] })) }] }
+    expect(() => buildThemeSnapshot(input)).toThrow("snapshot_budget")
+    input.networkHistory = { from: 100, to: 200, tasks: [{ task_id: "task", points: [],
+      series: [{ target_id: "mobile", label: "Mobile", carrier: "mobile", region: "", visible_address: false,
+        points: "bad" as never }] }] }
+    expect(() => buildThemeSnapshot(input)).toThrow("invalid_data")
   })
 })

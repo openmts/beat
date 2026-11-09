@@ -36,6 +36,7 @@ chmod 0700 "$prepare_dir/beat-cli"
     "$prepare_dir/beat-cli" release sign \
       --spec beat-agent-release-spec.json \
       --key "$prepare_dir/release.key" \
+      --public-out beat-agent-release-key.json \
       --out beat-agent-signed.json
 )
 python3 "$script_dir/prepare-agent-release.py" extract .
@@ -47,7 +48,7 @@ cosign verify-blob --bundle beat-agent-manifest.sigstore.json \
 
 assets=(beat_*.tar.gz beat_*.tar.gz.sbom.json beat-agent_linux_x86_64 beat-agent_linux_aarch64 \
     beat-agent-release-notes.txt beat-agent-release-spec.json beat-agent-manifest.json \
-    beat-agent-manifest.sig beat-agent-manifest.sigstore.json)
+    beat-agent-manifest.sig beat-agent-manifest.sigstore.json beat-agent-release-key.json)
 sha256sum -- "${assets[@]}" >checksums.txt
 cosign sign-blob --yes --bundle checksums.txt.bundle checksums.txt
 [[ -s checksums.txt.bundle && ! -L checksums.txt.bundle ]]

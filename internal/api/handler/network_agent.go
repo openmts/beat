@@ -67,26 +67,33 @@ func (h *NetworkHandler) validateNetworkResults(
 	now := h.now()
 	samples := make([]store.NetworkProbeSample, 0, len(results))
 	for _, result := range results {
-		if err := result.Validate(); err != nil || result.FinishedAt.Before(now.Add(-5*time.Minute)) ||
+		if err := result.Validate(); err != nil || result.TargetID == "" || result.FinishedAt.Before(now.Add(-5*time.Minute)) ||
 			result.FinishedAt.After(now.Add(5*time.Minute)) {
 			return nil, http.StatusBadRequest, errors.New("invalid network result")
 		}
-		assigned, err := h.tasks.GetAssignedTask(r.Context(), nodeID, result.TaskID)
+		assigned, err := h.tasks.GetAssignedTarget(r.Context(), nodeID, result.TaskID, result.TargetID)
 		if err != nil {
 			return nil, http.StatusInternalServerError, errors.New("failed to verify network result")
 		}
-		if assigned == nil || !assigned.Enabled || !assigned.Assigned ||
+		if assigned == nil {
+			return nil, http.StatusBadRequest, errors.New("invalid network result")
+		}
+		if !assigned.Enabled || !assigned.Assigned ||
 			assigned.Direction != model.NetworkDirectionAgentToTarget {
 			return nil, http.StatusConflict, errors.New("network task is not assigned")
 		}
 		samples = append(samples, store.NetworkProbeSample{
-			TaskID: result.TaskID, NodeID: assigned.NodeID, TaskType: assigned.TaskType,
-			Direction:  assigned.Direction,
+			TaskID: result.TaskID, TargetID: assigned.TargetID, NodeID: assigned.NodeID,
+			TaskType: assigned.TaskType, Direction: assigned.Direction,
+			Carrier: assigned.Carrier, Region: assigned.Region, IPFamily: assigned.IPFamily,
 			FinishedAt: result.FinishedAt.UTC(), LatencyMS: result.LatencyMS,
 			Success: result.Success, StatusCode: result.StatusCode, ErrorCode: result.ErrorCode,
 			SentPackets: result.SentPackets, ReceivedPackets: result.ReceivedPackets,
-			LossPercent: result.LossPercent, JitterMS: result.JitterMS,
+			AttemptCount: result.AttemptCount, SuccessCount: result.SuccessCount,
+			SuccessPercent: result.SuccessPercent,
+			LossPercent:    result.LossPercent, JitterMS: result.JitterMS,
 			MinLatencyMS: result.MinLatencyMS, MaxLatencyMS: result.MaxLatencyMS,
+			P95LatencyMS: result.P95LatencyMS, StdDevLatencyMS: result.StdDevLatencyMS,
 		})
 	}
 	return samples, http.StatusNoContent, nil

@@ -48,6 +48,10 @@ export function NetworkTaskCard(props: NetworkTaskCardProps) {
   const TypeIcon = typeIcons[view.task.type]
   const latest = view.nodes.find((state) => state.latest !== null)?.latest
   const success = latestSuccessPercent(view)
+  const targets = view.task.targets ?? []
+  const targetSummary = targets.length > 0
+    ? targets.map((target) => [target.label, target.region].filter(Boolean).join(" · ")).join(" | ")
+    : view.task.target
 
   return (
     <Card size="sm">
@@ -56,7 +60,7 @@ export function NetworkTaskCard(props: NetworkTaskCardProps) {
           <TypeIcon className="size-4 shrink-0 text-muted-foreground" />
           <CardTitle className="truncate">{view.task.name}</CardTitle>
         </div>
-        <CardDescription className="truncate" title={view.task.target}>{view.task.target}</CardDescription>
+        <CardDescription className="truncate" title={targetSummary}>{targetSummary}</CardDescription>
         <CardAction>
           <Badge variant={view.task.enabled ? "secondary" : "outline"}>
             {view.task.enabled ? t("alert.enabled") : t("alert.disabled")}
@@ -75,6 +79,11 @@ export function NetworkTaskCard(props: NetworkTaskCardProps) {
           icon={UsersIcon}
           label={t("network.assignment")}
           value={view.task.all_nodes ? t("network.all_nodes") : t("network.node_count").replace("{count}", String(view.nodes.length))}
+        />
+        <TaskFact
+          icon={RadioTowerIcon}
+          label={t("network.targets")}
+          value={targets.length > 0 ? String(targets.length) : "1"}
         />
         <TaskFact
           icon={GlobeIcon}

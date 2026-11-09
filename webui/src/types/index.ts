@@ -341,6 +341,8 @@ export interface MetricDataPoint {
 export type NetworkProbeType = "icmp" | "tcp" | "http"
 export type NetworkIPFamily = "auto" | "ipv4" | "ipv6"
 export type NetworkDirection = "agent_to_target" | "server_to_agent"
+export type NetworkTargetMode = "single" | "group"
+export type NetworkCarrier = "mobile" | "unicom" | "telecom" | "custom"
 
 export interface NetworkNode {
   id: string
@@ -356,10 +358,33 @@ export interface NetworkProbeLatest {
   error_code: string
   sent_packets?: number
   received_packets?: number
+  attempt_count?: number
+  success_count?: number
+  success_percent?: number | null
   loss_percent?: number | null
   jitter_ms?: number | null
   min_latency_ms?: number | null
   max_latency_ms?: number | null
+  p95_latency_ms?: number | null
+  stddev_latency_ms?: number | null
+}
+
+export interface NetworkTarget {
+  id: string
+  label: string
+  carrier: NetworkCarrier
+  region: string
+  target: string
+  ip_family: NetworkIPFamily
+  packet_count: number
+  visible_address: boolean
+  enabled: boolean
+  sort_order: number
+}
+
+export interface NetworkTargetState {
+  target_id: string
+  latest: NetworkProbeLatest | null
 }
 
 export interface NodeNetworkSummary {
@@ -376,6 +401,7 @@ export interface NodeNetworkSummary {
 export interface NetworkNodeState {
   node: NetworkNode
   latest: NetworkProbeLatest | null
+  targets?: NetworkTargetState[]
 }
 
 export interface NetworkTask {
@@ -383,7 +409,9 @@ export interface NetworkTask {
   name: string
   direction: NetworkDirection
   type: NetworkProbeType
+  target_mode: NetworkTargetMode
   target: string
+  targets: NetworkTarget[]
   ip_family: NetworkIPFamily
   interval_seconds: number
   timeout_milliseconds: number
@@ -405,8 +433,20 @@ export interface NetworkTaskView {
 export interface NetworkHistoryPoint {
   timestamp: string
   average_latency_ms: number
+  p95_latency_ms?: number | null
+  loss_percent?: number | null
   success_percent: number
   sample_count: number
+}
+
+export interface NetworkHistorySeries {
+  target_id: string
+  label: string
+  carrier: NetworkCarrier
+  region: string
+  visible_address: boolean
+  target?: string
+  points: NetworkHistoryPoint[]
 }
 
 export interface NetworkHistoryResponse {
@@ -414,14 +454,16 @@ export interface NetworkHistoryResponse {
   node_id: string
   from: string
   to: string
-  points: NetworkHistoryPoint[]
+  series: NetworkHistorySeries[]
 }
 
 export interface NetworkTaskPayload {
   name: string
   direction: NetworkDirection
   type: NetworkProbeType
+  target_mode: NetworkTargetMode
   target: string
+  targets: NetworkTarget[]
   ip_family: NetworkIPFamily
   interval_seconds: number
   timeout_milliseconds: number

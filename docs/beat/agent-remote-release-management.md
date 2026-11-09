@@ -32,6 +32,7 @@ A publishable release contains all of the following relevant assets:
 beat-agent-manifest.json
 beat-agent-manifest.sig
 beat-agent-manifest.sigstore.json
+beat-agent-release-key.json
 beat-agent_linux_x86_64
 beat-agent_linux_aarch64
 beat-agent-release-notes.txt
@@ -46,6 +47,8 @@ beat_<version>_linux_<arch>.tar.gz.sbom.json
 The direct Agent binaries are extracted from the reproducible GoReleaser
 archives because the updater installs a verified binary, not a package archive.
 The manifest names those exact files and pins their sizes and SHA-256 digests.
+`beat-agent-release-key.json` contains only the Ed25519 public trust entry used
+to configure Server rollout trust and Agent update trust.
 The Sigstore certificate is bound to the release workflow at the tag ref, while
 the Ed25519 signature is checked against the public key configured on the server
 and installed on Agents.

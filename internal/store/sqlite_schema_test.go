@@ -40,7 +40,7 @@ func TestSQLiteSchemaContainsOnlyApplicationData(t *testing.T) {
 		"diagnostic_attempts", "diagnostic_budget_ledger", "diagnostic_capabilities", "diagnostic_hop_identities",
 		"diagnostic_jobs", "diagnostic_policies", "diagnostic_targets", "custom_metric_nodes", "custom_metrics", "egress_proxy_settings", "geoip_cache", "geoip_settings", "groups", "lifecycle_settings", "node_lifecycle", "node_lifecycle_events", "node_locations",
 		"maintenance_settings", "metric_catalog_state", "metric_dashboards", "metric_definitions", "metric_retention_jobs",
-		"network_task_nodes", "network_tasks", "nodes", "notification_channel_health", "notification_deliveries", "notification_delivery_attempts", "notification_messages", "notification_request_budgets", "notification_secret_state", "notification_settings", "schema_migrations",
+		"network_task_nodes", "network_task_targets", "network_tasks", "nodes", "notification_channel_health", "notification_deliveries", "notification_delivery_attempts", "notification_messages", "notification_request_budgets", "notification_secret_state", "notification_settings", "schema_migrations",
 		"site_settings", "public_telemetry_policy", "ssh_keys", "theme_activations", "theme_market_sources", "theme_packages",
 		"traffic_report_schedule_channels", "traffic_report_schedule_nodes", "traffic_report_schedules",
 		"traffic_calibration_events", "metric_erasure_jobs",
@@ -92,7 +92,7 @@ func TestSQLiteSchemaContainsOnlyApplicationData(t *testing.T) {
 	wantNetworkColumns := []string{
 		"all_nodes", "created_at", "direction", "enabled", "id", "interval_seconds", "ip_family",
 		"is_public", "lifecycle_state", "name", "packet_count", "sort_order", "target",
-		"timeout_milliseconds", "type", "updated_at",
+		"target_mode", "timeout_milliseconds", "type", "updated_at",
 	}
 	rows, err = store.DB.Query("SELECT name FROM pragma_table_info('network_tasks') ORDER BY name")
 	if err != nil {

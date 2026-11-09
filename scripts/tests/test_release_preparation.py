@@ -51,8 +51,13 @@ class ReleasePreparationTests(unittest.TestCase):
         self.assertEqual(0, result.returncode, result.stderr)
         self.assertEqual(["sign-blob", "verify-blob", "sign-blob", "verify-blob"], self.log.read_text().splitlines())
         for name in ("beat-agent-manifest.json", "beat-agent-manifest.sig", "beat-agent-manifest.sigstore.json",
-                     "beat-agent_linux_x86_64", "beat-agent_linux_aarch64", "checksums.txt.bundle"):
+                     "beat-agent-release-key.json", "beat-agent_linux_x86_64", "beat-agent_linux_aarch64",
+                     "checksums.txt.bundle"):
             self.assertTrue(self.dist.joinpath(name).is_file(), name)
+        public_trust = json.loads(self.dist.joinpath("beat-agent-release-key.json").read_text())
+        self.assertEqual("fixture-release", public_trust[0]["KeyID"])
+        self.assertEqual(32, len(base64.b64decode(public_trust[0]["PublicKey"])))
+        self.assertIn("beat-agent-release-key.json", self.dist.joinpath("checksums.txt").read_text())
         spec = json.loads(self.dist.joinpath("beat-agent-release-spec.json").read_text())
         artifacts = {item["arch"]: item for item in spec["artifacts"]}
         self.assertEqual({"amd64", "arm64"}, set(artifacts))

@@ -55,6 +55,20 @@ async function verifyWorkspace(browserInstance, origin, errors) {
   await frame.locator('[role="tab"]').filter({ hasText: "Network latency" }).click()
   assert.equal(await frame.locator(".paper-network-card").count(), 3)
   assert.equal(await frame.locator(".network-canvas").count(), 3)
+  assert.equal(await frame.locator(".network-chart").first().getAttribute("data-series"), "3")
+  assert.deepEqual(await frame.locator(".network-chart").first().locator(".legend-item").allTextContents(), ["Mobile", "Unicom", "Telecom"])
+  const carrierPixels = await frame.locator(".network-canvas").first().evaluate((node) => {
+    const context = node.getContext("2d")
+    const pixels = context.getImageData(0, 0, node.width, node.height).data
+    const counts = { mobile: 0, unicom: 0, telecom: 0 }
+    for (let index = 0; index < pixels.length; index += 4) {
+      if (pixels[index] < 80 && pixels[index + 1] < 120 && pixels[index + 2] > 180) counts.mobile += 1
+      if (pixels[index] > 180 && pixels[index + 1] < 110 && pixels[index + 2] < 110) counts.unicom += 1
+      if (pixels[index] < 130 && pixels[index + 1] > 130 && pixels[index + 2] < 130) counts.telecom += 1
+    }
+    return counts
+  })
+  assert.ok(carrierPixels.mobile > 0 && carrierPixels.unicom > 0 && carrierPixels.telecom > 0, JSON.stringify(carrierPixels))
   assert.match(await frame.locator(".network-chart-note").first().textContent(), /Latest .* ms/)
   await screenshot(page, join(values.output, "home.png"))
   await page.close()
@@ -172,7 +186,11 @@ function networkHistory(now) {
     latency_ms: index === gap ? null : base + 3 * Math.sin(index / 9) + offset,
   }))
   return { from: now - 21600, to: now, tasks: [
-    { id: "icmp", points: points(0, 18, 40) },
+    { id: "icmp", series: [
+      { id: "mobile", label: "Mobile", carrier: "mobile", points: points(0, 18, 40) },
+      { id: "unicom", label: "Unicom", carrier: "unicom", points: points(4, 24, 55) },
+      { id: "telecom", label: "Telecom", carrier: "telecom", points: points(8, 30, 70) },
+    ] },
     { id: "tcp", points: points(10, 31, 70) },
     { id: "http", points: points(20, 45, 90) },
   ] }

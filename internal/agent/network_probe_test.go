@@ -167,6 +167,52 @@ func TestApplyICMPStats(t *testing.T) {
 	})
 }
 
+func TestProbeAttemptsTracksPartialSuccessAndStatistics(t *testing.T) {
+	now := time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC)
+	prober := &NetworkProber{now: func() time.Time {
+		now = now.Add(10 * time.Millisecond)
+		return now
+	}}
+	calls := 0
+	observation := prober.probeAttempts(t.Context(), "example.com:443", model.IPFamilyAuto, 3,
+		func(context.Context, string, string) (int, error) {
+			calls++
+			if calls == 2 {
+				return 0, errors.New("connection refused")
+			}
+			return http.StatusNoContent, nil
+		})
+	if observation.attempts != 3 || observation.successes != 2 || observation.statusCode != http.StatusNoContent ||
+		observation.err != nil || len(observation.rtts) != 2 {
+		t.Fatalf("partial observation = %#v", observation)
+	}
+	result := model.NetworkProbeResult{FinishedAt: now}
+	applyAttemptStats(&result, observation.attempts, observation.successes, observation.rtts)
+	if result.AttemptCount != 3 || result.SuccessCount != 2 || result.SuccessPercent == nil ||
+		*result.SuccessPercent != float64(2)/float64(3)*100 || result.P95LatencyMS == nil || result.StdDevLatencyMS == nil {
+		t.Fatalf("attempt result = %#v", result)
+	}
+
+	failed := prober.probeAttempts(t.Context(), "example.com:443", model.IPFamilyAuto, 2,
+		func(context.Context, string, string) (int, error) { return 0, errors.New("timeout") })
+	if failed.attempts != 2 || failed.successes != 0 || failed.err == nil || len(failed.rtts) != 0 {
+		t.Fatalf("failed observation = %#v", failed)
+	}
+}
+
+func TestProbeAttemptsStopsAfterCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	observation := (&NetworkProber{now: model.NowUTC}).probeAttempts(ctx, "example.com:443",
+		model.IPFamilyAuto, 5, func(context.Context, string, string) (int, error) {
+			t.Fatal("attempt should not run after cancellation")
+			return 0, nil
+		})
+	if observation.attempts != 0 || !errors.Is(observation.err, context.Canceled) {
+		t.Fatalf("cancelled observation = %#v", observation)
+	}
+}
+
 func TestNetworkProberResolutionAndValidation(t *testing.T) {
 	prober := &NetworkProber{
 		resolver: fakeIPResolver{addresses: []netip.Addr{
@@ -230,8 +276,8 @@ func TestNetworkProbeAdditionalBranches(t *testing.T) {
 		resolver: fakeIPResolver{addresses: []netip.Addr{netip.MustParseAddr("192.0.2.1")}},
 		now:      model.NowUTC,
 	}
-	if _, _, err := prober.execute(t.Context(), networkAssignment("unknown", "target")); !errors.Is(err, errInvalidProbeTarget) {
-		t.Fatalf("unknown probe error = %v", err)
+	if observation := prober.execute(t.Context(), networkAssignment("unknown", "target")); !errors.Is(observation.err, errInvalidProbeTarget) {
+		t.Fatalf("unknown probe error = %v", observation.err)
 	}
 	if _, err := prober.resolve(t.Context(), "127.0.0.1", model.IPFamilyIPv6); !errors.Is(err, errInvalidProbeTarget) {
 		t.Fatalf("literal family error = %v", err)

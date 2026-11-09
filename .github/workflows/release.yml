@@ -145,6 +145,7 @@ jobs:
             dist/beat-agent-manifest.json
             dist/beat-agent-manifest.sig
             dist/beat-agent-manifest.sigstore.json
+            dist/beat-agent-release-key.json
             dist/checksums.txt
             dist/checksums.txt.bundle
       - name: Publish complete release

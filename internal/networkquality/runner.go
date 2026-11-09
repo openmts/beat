@@ -203,8 +203,11 @@ func (runner *Runner) probe(ctx context.Context, job serverProbeJob) time.Time {
 		Direction: model.NetworkDirectionServerToAgent, FinishedAt: result.FinishedAt.UTC(),
 		LatencyMS: result.LatencyMS, Success: result.Success, StatusCode: result.StatusCode,
 		ErrorCode: result.ErrorCode, SentPackets: result.SentPackets,
-		ReceivedPackets: result.ReceivedPackets, LossPercent: result.LossPercent,
-		JitterMS: result.JitterMS, MinLatencyMS: result.MinLatencyMS, MaxLatencyMS: result.MaxLatencyMS,
+		ReceivedPackets: result.ReceivedPackets, AttemptCount: result.AttemptCount,
+		SuccessCount: result.SuccessCount, SuccessPercent: result.SuccessPercent,
+		LossPercent: result.LossPercent, JitterMS: result.JitterMS,
+		MinLatencyMS: result.MinLatencyMS, MaxLatencyMS: result.MaxLatencyMS,
+		P95LatencyMS: result.P95LatencyMS, StdDevLatencyMS: result.StdDevLatencyMS,
 	}
 	if writeErr := runner.options.Writer.WriteNetworkProbes(ctx, []store.NetworkProbeSample{sample}); writeErr != nil {
 		runner.options.OnError(fmt.Errorf("write server network probe: %w", writeErr))

@@ -80,14 +80,17 @@ func TestNetworkRoutesAuthAndWorkflow(t *testing.T) {
 	}
 	var created struct {
 		Data struct {
-			ID string `json:"id"`
+			ID      string `json:"id"`
+			Targets []struct {
+				ID string `json:"id"`
+			} `json:"targets"`
 		} `json:"data"`
 	}
 	if err := json.NewDecoder(response.Body).Decode(&created); err != nil {
 		t.Fatalf("decode create response: %v", err)
 	}
-	if created.Data.ID == "" {
-		t.Fatal("created task ID is empty")
+	if created.Data.ID == "" || len(created.Data.Targets) != 1 || created.Data.Targets[0].ID == "" {
+		t.Fatalf("created task = %#v", created.Data)
 	}
 
 	response = networkRequest(t, fixture.router, networkRequestSpec{
@@ -98,6 +101,7 @@ func TestNetworkRoutesAuthAndWorkflow(t *testing.T) {
 	}
 
 	resultBody := "{\"node_name\":\"route-node\",\"results\":[{\"task_id\":\"" + created.Data.ID +
+		"\",\"target_id\":\"" + created.Data.Targets[0].ID +
 		"\",\"finished_at\":\"" + time.Now().UTC().Format(time.RFC3339Nano) +
 		"\",\"latency_ms\":1.25,\"success\":true,\"status_code\":0,\"error_code\":\"none\"}]}"
 	assertNetworkStatus(t, fixture.router, networkRequestSpec{

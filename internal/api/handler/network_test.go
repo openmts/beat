@@ -164,7 +164,7 @@ func TestNetworkHandlerStoreFailures(t *testing.T) {
 			http.StatusInternalServerError)
 		assertHandlerStatus(t, fixture.handler.HandleAdminNetworkHistory,
 			historyRequest(created.ID, fixture.node.ID, ""), http.StatusInternalServerError)
-		postInvalidNetworkResult(t, fixture, created.ID, fixture.now, http.StatusInternalServerError)
+		postInvalidNetworkResult(t, fixture, created.ID, fixture.now, http.StatusInternalServerError, created.Targets[0].ID)
 	})
 
 	t.Run("mts", func(t *testing.T) {
@@ -175,7 +175,7 @@ func TestNetworkHandlerStoreFailures(t *testing.T) {
 		}
 		assertHandlerStatus(t, fixture.handler.HandlePublicNetworkQuality,
 			networkHandlerRequest(http.MethodGet, "/quality", ""), http.StatusInternalServerError)
-		postInvalidNetworkResult(t, fixture, created.ID, fixture.now, http.StatusInternalServerError)
+		postInvalidNetworkResult(t, fixture, created.ID, fixture.now, http.StatusInternalServerError, created.Targets[0].ID)
 		assertHandlerStatus(t, fixture.handler.HandleAdminNetworkHistory,
 			historyRequest(created.ID, fixture.node.ID, ""), http.StatusInternalServerError)
 		// 任务删除不再触碰 MTS；账本落在仍可写的 SQLite 上，因此这里期望 202。
@@ -183,6 +183,78 @@ func TestNetworkHandlerStoreFailures(t *testing.T) {
 			requestWithTaskID(http.MethodDelete, created.ID, asyncDeletionBody(created.Name)),
 			http.StatusAccepted)
 	})
+}
+
+func TestNetworkHandlerThreeCarrierSeriesAndAddressVisibility(t *testing.T) {
+	fixture := setupNetworkHandler(t)
+	created := createThreeCarrierHandlerTask(t, fixture)
+	if created.TargetMode != model.NetworkTargetModeGroup || len(created.Targets) != 3 {
+		t.Fatalf("created group task = %#v", created)
+	}
+	for index, target := range created.Targets {
+		if target.ID == "" || target.VisibleAddress || target.Carrier != []string{"mobile", "unicom", "telecom"}[index] {
+			t.Fatalf("target %d = %#v", index, target)
+		}
+		postNetworkResultForTarget(t, fixture, created.ID, target.ID, float64(10+index*10), http.StatusNoContent)
+	}
+
+	assignments := httptest.NewRecorder()
+	fixture.handler.HandleNetworkAssignments(assignments,
+		networkAgentRequest(fixture, http.MethodGet, "/assignments", ""))
+	if assignments.Code != http.StatusOK || strings.Count(assignments.Body.String(), `"target_id"`) != 3 {
+		t.Fatalf("assignments status = %d, body = %s", assignments.Code, assignments.Body.String())
+	}
+
+	quality := httptest.NewRecorder()
+	fixture.handler.HandlePublicNetworkQuality(quality,
+		networkHandlerRequest(http.MethodGet, "/quality", ""))
+	if quality.Code != http.StatusOK || strings.Count(quality.Body.String(), `"target_id"`) != 3 ||
+		strings.Contains(quality.Body.String(), `"target":"127.0.0.1"`) {
+		t.Fatalf("public quality status = %d, body = %s", quality.Code, quality.Body.String())
+	}
+
+	publicHistory := httptest.NewRecorder()
+	fixture.handler.HandlePublicNetworkHistory(publicHistory, historyRequest(created.ID, fixture.node.ID, ""))
+	if publicHistory.Code != http.StatusOK || strings.Count(publicHistory.Body.String(), `"target_id"`) != 3 {
+		t.Fatalf("public history status = %d, body = %s", publicHistory.Code, publicHistory.Body.String())
+	}
+	var publicEnvelope struct {
+		Data networkHistoryResponse `json:"data"`
+	}
+	if err := json.Unmarshal(publicHistory.Body.Bytes(), &publicEnvelope); err != nil {
+		t.Fatalf("decode public history: %v", err)
+	}
+	for _, series := range publicEnvelope.Data.Series {
+		if series.Target != "" || series.VisibleAddress || len(series.Points) != 1 || series.Carrier == "" {
+			t.Fatalf("public series = %#v", series)
+		}
+	}
+
+	adminHistory := httptest.NewRecorder()
+	fixture.handler.HandleAdminNetworkHistory(adminHistory, historyRequest(created.ID, fixture.node.ID, ""))
+	if adminHistory.Code != http.StatusOK || !strings.Contains(adminHistory.Body.String(), `"target":"127.0.0.1"`) {
+		t.Fatalf("admin history status = %d, body = %s", adminHistory.Code, adminHistory.Body.String())
+	}
+
+	selected := httptest.NewRecorder()
+	fixture.handler.HandlePublicNetworkHistory(selected,
+		historyRequest(created.ID, fixture.node.ID, "?target_id="+created.Targets[1].ID))
+	if selected.Code != http.StatusOK {
+		t.Fatalf("selected history status = %d, body = %s", selected.Code, selected.Body.String())
+	}
+	var selectedEnvelope struct {
+		Data networkHistoryResponse `json:"data"`
+	}
+	if err := json.Unmarshal(selected.Body.Bytes(), &selectedEnvelope); err != nil {
+		t.Fatalf("decode selected history: %v", err)
+	}
+	if len(selectedEnvelope.Data.Series) != 1 || selectedEnvelope.Data.Series[0].TargetID != created.Targets[1].ID {
+		t.Fatalf("selected series = %#v, body = %s", selectedEnvelope.Data.Series, selected.Body.String())
+	}
+
+	invalid := historyRequest(created.ID, fixture.node.ID, "?target_id=missing")
+	assertHandlerStatus(t, fixture.handler.HandlePublicNetworkHistory, invalid, http.StatusBadRequest)
+	postNetworkResultForTarget(t, fixture, created.ID, "missing", 1, http.StatusBadRequest)
 }
 
 func TestParseNetworkRangeBoundaries(t *testing.T) {
@@ -229,6 +301,36 @@ func createHandlerTask(t *testing.T, fixture networkHandlerFixture, enabled, pub
 	return body.Data
 }
 
+func createThreeCarrierHandlerTask(t *testing.T, fixture networkHandlerFixture) model.NetworkTask {
+	t.Helper()
+	body, err := json.Marshal(map[string]any{
+		"name": "Carrier quality", "type": "icmp", "target_mode": "group", "target": "",
+		"targets": []map[string]any{
+			{"label": "移动", "carrier": "mobile", "region": "上海", "target": "127.0.0.1", "ip_family": "ipv4", "packet_count": 3, "visible_address": false, "enabled": true, "sort_order": 0},
+			{"label": "联通", "carrier": "unicom", "region": "北京", "target": "127.0.0.1", "ip_family": "ipv4", "packet_count": 3, "visible_address": false, "enabled": true, "sort_order": 1},
+			{"label": "电信", "carrier": "telecom", "region": "广州", "target": "127.0.0.1", "ip_family": "ipv4", "packet_count": 3, "visible_address": false, "enabled": true, "sort_order": 2},
+		},
+		"ip_family": "auto", "interval_seconds": 60, "timeout_milliseconds": 3000,
+		"packet_count": 3, "all_nodes": true, "enabled": true, "is_public": true, "sort_order": 0,
+	})
+	if err != nil {
+		t.Fatalf("encode group task: %v", err)
+	}
+	response := httptest.NewRecorder()
+	fixture.handler.HandleCreateNetworkTask(response,
+		networkHandlerRequest(http.MethodPost, "/tasks", string(body)))
+	if response.Code != http.StatusCreated {
+		t.Fatalf("create group status = %d, body = %s", response.Code, response.Body.String())
+	}
+	var created struct {
+		Data model.NetworkTask `json:"data"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&created); err != nil {
+		t.Fatalf("decode group task: %v", err)
+	}
+	return created.Data
+}
+
 func postNetworkResult(t *testing.T, fixture networkHandlerFixture, taskID string, finished time.Time) {
 	t.Helper()
 	postInvalidNetworkResult(t, fixture, taskID, finished, http.StatusNoContent)
@@ -240,13 +342,43 @@ func postInvalidNetworkResult(
 	taskID string,
 	finished time.Time,
 	want int,
+	targetIDs ...string,
 ) {
 	t.Helper()
+	targetID := ""
+	if len(targetIDs) > 0 {
+		targetID = targetIDs[0]
+	} else if task, err := fixture.tasks.GetTask(t.Context(), taskID); err == nil && task != nil && len(task.Targets) > 0 {
+		targetID = task.Targets[0].ID
+	}
 	body := `{"node_name":"handler-node","results":[{"task_id":"` + taskID +
-		`","finished_at":"` + finished.Format(time.RFC3339Nano) +
+		`","target_id":"` + targetID + `","finished_at":"` + finished.Format(time.RFC3339Nano) +
 		`","latency_ms":1.5,"success":true,"status_code":0,"error_code":"none"}]}`
 	assertHandlerStatus(t, fixture.handler.HandleNetworkResults,
 		networkAgentRequest(fixture, http.MethodPost, "/results", body), want)
+}
+
+func postNetworkResultForTarget(
+	t *testing.T,
+	fixture networkHandlerFixture,
+	taskID, targetID string,
+	latency float64,
+	want int,
+) {
+	t.Helper()
+	body, err := json.Marshal(map[string]any{
+		"node_name": "handler-node",
+		"results": []map[string]any{{
+			"task_id": taskID, "target_id": targetID, "finished_at": fixture.now.Format(time.RFC3339Nano),
+			"latency_ms": latency, "success": true, "status_code": 0, "error_code": "none",
+			"attempt_count": 3, "success_count": 3, "success_percent": 100.0,
+		}},
+	})
+	if err != nil {
+		t.Fatalf("encode network result: %v", err)
+	}
+	assertHandlerStatus(t, fixture.handler.HandleNetworkResults,
+		networkAgentRequest(fixture, http.MethodPost, "/results", string(body)), want)
 }
 
 func historyRequest(taskID, nodeID, suffix string) *http.Request {

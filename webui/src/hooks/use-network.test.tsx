@@ -13,7 +13,7 @@ const history = {
   node_id: "node",
   from: "2026-07-29T11:00:00.000Z",
   to: "2026-07-29T12:00:00.000Z",
-  points: [],
+  series: [],
 }
 
 describe("network hooks", () => {
@@ -136,10 +136,13 @@ describe("network hooks", () => {
       vi.mocked(networkApi.listPublicNetworkQuality).mockResolvedValue([qualityView, privateView, unassignedView])
       vi.mocked(networkApi.getPublicNetworkHistory).mockResolvedValue({
         ...history,
-        points: [
-          { timestamp: "2026-07-29T11:59:00Z", average_latency_ms: 12.5, success_percent: 100, sample_count: 1 },
-          { timestamp: "2026-07-29T11:59:30Z", average_latency_ms: 0, success_percent: 0, sample_count: 1 },
-        ],
+        series: [{
+          target_id: "target-id", label: "移动", carrier: "mobile", region: "", visible_address: false,
+          points: [
+            { timestamp: "2026-07-29T11:59:00Z", average_latency_ms: 12.5, success_percent: 100, sample_count: 1 },
+            { timestamp: "2026-07-29T11:59:30Z", average_latency_ms: 0, success_percent: 0, sample_count: 1 },
+          ],
+        }],
       })
       const rendered = renderHook(() => usePublicNodeNetwork("node-one", { mode: "relative", seconds: 3600 }))
       await flushMicrotasks()
@@ -147,10 +150,20 @@ describe("network hooks", () => {
       expect(networkApi.getPublicNetworkHistory).toHaveBeenCalledWith("task", expect.objectContaining({
         nodeId: "node-one", from: "2026-07-29T11:00:00.000Z", to: "2026-07-29T12:00:00.000Z", signal: expect.any(AbortSignal),
       }))
-      expect(rendered.result.current.history.data?.tasks).toEqual([{ task_id: "task", points: [
-        { timestamp: Date.parse("2026-07-29T11:59:00Z") / 1000, latency_ms: 12.5 },
-        { timestamp: Date.parse("2026-07-29T11:59:30Z") / 1000, latency_ms: null },
-      ] }])
+      expect(rendered.result.current.history.data?.tasks).toEqual([{
+        task_id: "task",
+        points: [
+          { timestamp: Date.parse("2026-07-29T11:59:00Z") / 1000, latency_ms: 12.5 },
+          { timestamp: Date.parse("2026-07-29T11:59:30Z") / 1000, latency_ms: null },
+        ],
+        series: [{
+          target_id: "target-id", label: "移动", carrier: "mobile", region: "", visible_address: false,
+          points: [
+            { timestamp: Date.parse("2026-07-29T11:59:00Z") / 1000, latency_ms: 12.5 },
+            { timestamp: Date.parse("2026-07-29T11:59:30Z") / 1000, latency_ms: null },
+          ],
+        }],
+      }])
       rendered.unmount()
     } finally {
       vi.useRealTimers()
@@ -191,7 +204,8 @@ async function flushMicrotasks() {
 
 const qualityView: NetworkTaskView = {
   task: {
-    id: "task", name: "Server probe", direction: "server_to_agent", type: "icmp", target: "{{host}}",
+    id: "task", name: "Server probe", direction: "server_to_agent", type: "icmp", target_mode: "single",
+    target: "{{host}}", targets: [],
     ip_family: "auto", interval_seconds: 60, timeout_milliseconds: 3000, packet_count: 5,
     all_nodes: true, enabled: true, is_public: true, sort_order: 0, nodes: [], created_at: "", updated_at: "",
   },

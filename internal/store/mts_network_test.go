@@ -93,7 +93,7 @@ func TestMTSNetworkProbeDirectionAndQualityFields(t *testing.T) {
 	if err := s.WriteNetworkProbes(ctx, []NetworkProbeSample{sample}); err != nil {
 		t.Fatalf("write quality sample: %v", err)
 	}
-	rows, err := s.queryNetworkProbeRows(ctx, sample.TaskID, sample.NodeID, finished.Add(-time.Second), finished.Add(time.Second))
+	rows, err := s.queryNetworkProbeRows(ctx, sample.TaskID, sample.NodeID, "", finished.Add(-time.Second), finished.Add(time.Second))
 	if err != nil || len(rows) != 1 {
 		t.Fatalf("quality rows = %#v, error = %v", rows, err)
 	}
@@ -119,6 +119,58 @@ func TestMTSNetworkProbeDirectionAndQualityFields(t *testing.T) {
 	plainLatest, err := s.QueryNetworkLatest(ctx, plain.TaskID, plain.NodeID)
 	if err != nil || plainLatest == nil || plainLatest.LossPercent != nil || plainLatest.JitterMS != nil {
 		t.Fatalf("plain latest = %#v, error = %v", plainLatest, err)
+	}
+}
+
+func TestMTSNetworkProbeTargetIsolationAndStatistics(t *testing.T) {
+	s := setupTestMTS(t)
+	ctx := t.Context()
+	start := time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC)
+	p95, stddev, success, loss := 82.0, 7.5, 66.6667, 33.3333
+	samples := []NetworkProbeSample{
+		{TaskID: "carrier", TargetID: "mobile", NodeID: "node", TaskType: "icmp", Carrier: "mobile",
+			Region: "上海", IPFamily: "ipv4", FinishedAt: start, LatencyMS: 20, Success: true,
+			ErrorCode: "none", AttemptCount: 3, SuccessCount: 2, SuccessPercent: &success,
+			LossPercent: &loss, P95LatencyMS: &p95, StdDevLatencyMS: &stddev},
+		{TaskID: "carrier", TargetID: "unicom", NodeID: "node", TaskType: "icmp", Carrier: "unicom",
+			Region: "北京", IPFamily: "ipv4", FinishedAt: start.Add(time.Second), LatencyMS: 30,
+			Success: true, ErrorCode: "none", AttemptCount: 3, SuccessCount: 3, SuccessPercent: &success,
+			LossPercent: &loss, P95LatencyMS: &p95, StdDevLatencyMS: &stddev},
+		{TaskID: "carrier", TargetID: "telecom", NodeID: "node", TaskType: "icmp", Carrier: "telecom",
+			Region: "广州", IPFamily: "ipv6", FinishedAt: start.Add(2 * time.Second), LatencyMS: 40,
+			Success: true, ErrorCode: "none", AttemptCount: 3, SuccessCount: 3, SuccessPercent: &success,
+			LossPercent: &loss, P95LatencyMS: &p95, StdDevLatencyMS: &stddev},
+	}
+	if err := s.WriteNetworkProbes(ctx, samples); err != nil {
+		t.Fatalf("write target samples: %v", err)
+	}
+	for _, sample := range samples {
+		latest, err := s.QueryNetworkLatestForTarget(ctx, "carrier", "node", sample.TargetID)
+		if err != nil || latest == nil || latest.LatencyMS != sample.LatencyMS {
+			t.Fatalf("latest %s = %#v, error = %v", sample.TargetID, latest, err)
+		}
+		history, err := s.QueryNetworkHistoryForTarget(ctx, "carrier", "node", sample.TargetID,
+			start.Add(-time.Second), start.Add(3*time.Second))
+		if err != nil || len(history) != 1 || history[0].AverageLatency != sample.LatencyMS {
+			t.Fatalf("history %s = %#v, error = %v", sample.TargetID, history, err)
+		}
+	}
+	latest, err := s.QueryNetworkLatestForTarget(ctx, "carrier", "node", "mobile")
+	if err != nil || latest == nil || latest.AttemptCount != 3 || latest.SuccessCount != 2 ||
+		latest.SuccessPercent == nil || *latest.SuccessPercent != success ||
+		latest.LossPercent == nil || *latest.LossPercent != loss ||
+		latest.P95LatencyMS == nil || *latest.P95LatencyMS != p95 ||
+		latest.StdDevLatencyMS == nil || *latest.StdDevLatencyMS != stddev {
+		t.Fatalf("mobile statistics = %#v, error = %v", latest, err)
+	}
+	rows, err := s.queryNetworkProbeRows(ctx, "carrier", "node", "mobile", start.Add(-time.Second), start.Add(time.Second))
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("mobile rows = %#v, error = %v", rows, err)
+	}
+	for tag, want := range map[string]string{"target": "mobile", "carrier": "mobile", "region": "上海", "ip_family": "ipv4"} {
+		if got := rows[0].Tags[tag]; got != want {
+			t.Fatalf("tag %s = %q, want %q", tag, got, want)
+		}
 	}
 }
 

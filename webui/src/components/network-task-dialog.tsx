@@ -30,7 +30,9 @@ const emptyPayload: NetworkTaskPayload = {
   name: "",
   direction: "agent_to_target",
   type: "icmp",
+  target_mode: "single",
   target: "",
+  targets: [],
   ip_family: "auto",
   interval_seconds: 60,
   timeout_milliseconds: 3000,
@@ -65,13 +67,14 @@ export function NetworkTaskDialog({
   }, [nextSortOrder, open, view])
 
   const save = async () => {
-    const message = validatePayload(payload, t)
+    const normalized = normalizePayload(payload, t)
+    const message = validatePayload(normalized, t)
     if (message) {
       setValidationError(message)
       return
     }
     setValidationError(null)
-    await onSave(payload)
+    await onSave(normalized)
   }
 
   return (
@@ -103,13 +106,40 @@ export function NetworkTaskDialog({
   )
 }
 
+function normalizePayload(payload: NetworkTaskPayload, t: (key: string) => string): NetworkTaskPayload {
+  if (payload.direction === "server_to_agent") {
+    return { ...payload, target_mode: "single", targets: [] }
+  }
+  if (payload.target_mode === "single") {
+    const current = payload.targets[0]
+    return {
+      ...payload,
+      targets: [{
+        id: current?.id ?? "",
+        label: current?.label || payload.name || t("network.target_mode.single"),
+        carrier: current?.carrier ?? "custom",
+        region: current?.region ?? "",
+        target: payload.target,
+        ip_family: current?.ip_family ?? payload.ip_family,
+        packet_count: current?.packet_count ?? payload.packet_count,
+        visible_address: current?.visible_address ?? false,
+        enabled: true,
+        sort_order: 0,
+      }],
+    }
+  }
+  return { ...payload, targets: payload.targets.map((target, index) => ({ ...target, sort_order: index })) }
+}
+
 function payloadFromView(view: NetworkTaskView): NetworkTaskPayload {
   const task = view.task
   return {
     name: task.name,
     direction: task.direction ?? "agent_to_target",
     type: task.type,
+    target_mode: task.target_mode ?? "single",
     target: task.target,
+    targets: task.targets ?? [],
     ip_family: task.ip_family,
     interval_seconds: task.interval_seconds,
     timeout_milliseconds: task.timeout_milliseconds,
@@ -123,8 +153,16 @@ function payloadFromView(view: NetworkTaskView): NetworkTaskPayload {
 }
 
 function validatePayload(payload: NetworkTaskPayload, t: (key: string) => string): string | null {
-  if (!payload.name.trim() || !payload.target.trim()) return t("network.validation_required")
-  if (payload.type === "icmp" &&
+  if (!payload.name.trim()) return t("network.validation_required")
+  if (payload.direction === "server_to_agent" && !payload.target.trim()) return t("network.validation_required")
+  if (payload.direction === "agent_to_target" && payload.target_mode === "single" && !payload.target.trim()) {
+    return t("network.validation_required")
+  }
+  if (payload.direction === "agent_to_target" && payload.target_mode === "group" &&
+    (payload.targets.length === 0 || payload.targets.some((target) => !target.target.trim()))) {
+    return t("network.validation_targets")
+  }
+  if ((payload.type === "icmp" || payload.direction === "agent_to_target") &&
     (!Number.isInteger(payload.packet_count) || payload.packet_count < 1 || payload.packet_count > 20)) {
     return t("network.validation_packet_count")
   }

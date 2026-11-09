@@ -65,3 +65,13 @@ func validateOptionalNonNegative(value *float64, field string) error {
 	}
 	return nil
 }
+
+func validateOptionalPercent(value *float64, field string) error {
+	if err := validateOptionalNonNegative(value, field); err != nil {
+		return err
+	}
+	if value != nil && *value > 100 {
+		return errors.New("network probe " + field + " percentage is invalid")
+	}
+	return nil
+}

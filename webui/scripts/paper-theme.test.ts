@@ -74,6 +74,27 @@ describe("paper single-page workspace", () => {
     } finally { runtime.setRange = previous }
   })
 
+  it("renders a three-carrier network chart with one legend entry per carrier", () => {
+    const now = 1_760_000_000
+    const snapshot = detail()
+    snapshot.network = { visible: true, tasks: [{
+      id: "carriers", name: "Three carriers", type: "icmp",
+      targets: [{ id: "mobile" }, { id: "unicom" }, { id: "telecom" }],
+      nodes: [{ node_id: "node-1", latest: { timestamp: new Date(now * 1000).toISOString(), success: true, latency_ms: 18.4 } }],
+    }] }
+    snapshot.network_history = { from: now - 21600, to: now, tasks: [{ id: "carriers", series: [
+      { id: "mobile", label: "移动", carrier: "mobile", points: [{ timestamp: now - 3600, latency_ms: 18 }, { timestamp: now, latency_ms: 20 }] },
+      { id: "unicom", label: "联通", carrier: "unicom", points: [{ timestamp: now - 3600, latency_ms: 28 }, { timestamp: now, latency_ms: 30 }] },
+      { id: "telecom", label: "电信", carrier: "telecom", points: [{ timestamp: now - 3600, latency_ms: 38 }, { timestamp: now, latency_ms: 40 }] },
+    ] }] }
+    renderPaper(snapshot as never, "en")
+    document.querySelector<HTMLButtonElement>(".paper-tab:last-child")!.click()
+    const chart = document.querySelector<HTMLElement>(".network-chart")
+    expect(chart?.dataset.series).toBe("3")
+    expect(chart?.dataset.carriers).toBe("mobile,unicom,telecom")
+    expect(Array.from(document.querySelectorAll(".network-chart .legend-item")).map((item) => item.textContent)).toEqual(["移动", "联通", "电信"])
+  })
+
   it("filters the node list by group and search without losing the selected node", () => {
     renderPaper(detail(), "en")
     const group = Array.from(document.querySelectorAll<HTMLButtonElement>(".paper-group")).find((button) => button.textContent?.startsWith("Europe"))

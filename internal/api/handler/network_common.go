@@ -24,7 +24,7 @@ type NetworkHandler struct {
 	erasure *store.MetricErasureStore
 	now     func() time.Time
 	// historyShare 合并在途的相同公共网络历史读取；nil 时逐次直读。
-	historyShare *networkHistoryShare
+	historyShare *historyShare[[]networkHistorySeries]
 	// quality 保存最近一次成功的公共网络质量视图；由请求线程整体替换，调用方只读。
 	quality atomic.Pointer[networkQualitySnapshot]
 	// qualityGeneration 是视图代：任务、分配或探测结果写入后自增，使旧视图立即失效。
@@ -34,19 +34,21 @@ type NetworkHandler struct {
 }
 
 type networkTaskRequest struct {
-	Name                string   `json:"name"`
-	Direction           string   `json:"direction"`
-	Type                string   `json:"type"`
-	Target              string   `json:"target"`
-	IPFamily            string   `json:"ip_family"`
-	IntervalSeconds     int      `json:"interval_seconds"`
-	TimeoutMilliseconds int      `json:"timeout_milliseconds"`
-	PacketCount         int      `json:"packet_count"`
-	AllNodes            bool     `json:"all_nodes"`
-	Enabled             bool     `json:"enabled"`
-	IsPublic            bool     `json:"is_public"`
-	SortOrder           int      `json:"sort_order"`
-	NodeIDs             []string `json:"node_ids"`
+	Name                string                `json:"name"`
+	Direction           string                `json:"direction"`
+	Type                string                `json:"type"`
+	TargetMode          string                `json:"target_mode"`
+	Target              string                `json:"target"`
+	Targets             []model.NetworkTarget `json:"targets"`
+	IPFamily            string                `json:"ip_family"`
+	IntervalSeconds     int                   `json:"interval_seconds"`
+	TimeoutMilliseconds int                   `json:"timeout_milliseconds"`
+	PacketCount         int                   `json:"packet_count"`
+	AllNodes            bool                  `json:"all_nodes"`
+	Enabled             bool                  `json:"enabled"`
+	IsPublic            bool                  `json:"is_public"`
+	SortOrder           int                   `json:"sort_order"`
+	NodeIDs             []string              `json:"node_ids"`
 }
 
 type networkTaskView struct {
@@ -55,16 +57,32 @@ type networkTaskView struct {
 }
 
 type networkNodeState struct {
-	Node   model.NetworkNode         `json:"node"`
-	Latest *store.NetworkProbeLatest `json:"latest"`
+	Node    model.NetworkNode         `json:"node"`
+	Latest  *store.NetworkProbeLatest `json:"latest"`
+	Targets []networkTargetState      `json:"targets"`
+}
+
+type networkTargetState struct {
+	TargetID string                    `json:"target_id"`
+	Latest   *store.NetworkProbeLatest `json:"latest"`
+}
+
+type networkHistorySeries struct {
+	TargetID       string                    `json:"target_id"`
+	Label          string                    `json:"label"`
+	Carrier        string                    `json:"carrier"`
+	Region         string                    `json:"region"`
+	VisibleAddress bool                      `json:"visible_address"`
+	Target         string                    `json:"target,omitempty"`
+	Points         []store.NetworkProbePoint `json:"points"`
 }
 
 type networkHistoryResponse struct {
-	TaskID string                    `json:"task_id"`
-	NodeID string                    `json:"node_id"`
-	From   time.Time                 `json:"from"`
-	To     time.Time                 `json:"to"`
-	Points []store.NetworkProbePoint `json:"points"`
+	TaskID string                 `json:"task_id"`
+	NodeID string                 `json:"node_id"`
+	From   time.Time              `json:"from"`
+	To     time.Time              `json:"to"`
+	Series []networkHistorySeries `json:"series"`
 }
 
 func NewNetworkHandler(
@@ -73,13 +91,14 @@ func NewNetworkHandler(
 	mtsStore *store.MTSStore,
 ) *NetworkHandler {
 	return &NetworkHandler{tasks: tasks, nodes: nodes, mts: mtsStore, now: model.NowUTC,
-		historyShare: newHistoryShare[[]store.NetworkProbePoint](),
+		historyShare: newHistoryShare[[]networkHistorySeries](),
 		qualityShare: newHistoryShare[networkQualityView]()}
 }
 
 func (body networkTaskRequest) task() model.NetworkTask {
 	return model.NetworkTask{
-		Name: body.Name, Direction: body.Direction, Type: body.Type, Target: body.Target,
+		Name: body.Name, Direction: body.Direction, Type: body.Type, TargetMode: body.TargetMode,
+		Target: body.Target, Targets: body.Targets,
 		IPFamily: body.IPFamily, IntervalSeconds: body.IntervalSeconds,
 		TimeoutMilliseconds: body.TimeoutMilliseconds, PacketCount: body.PacketCount,
 		AllNodes: body.AllNodes, Enabled: body.Enabled, IsPublic: body.IsPublic, SortOrder: body.SortOrder,

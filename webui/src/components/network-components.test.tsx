@@ -1,14 +1,15 @@
-import { createContext, useContext, type ReactNode } from "react"
+import { createContext, useContext, useState, type ReactNode } from "react"
 import { fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 
-import { NetworkHistoryDialog, NetworkHistoryChart, formatHistoryTime } from "@/components/network-history-dialog"
+import { NetworkHistoryDialog, NetworkHistoryChart, buildChartData, formatHistoryTime } from "@/components/network-history-dialog"
 import { NetworkQualityBand } from "@/components/network-quality-band"
 import { NetworkTaskCard } from "@/components/network-task-card"
 import { NetworkTaskDialog } from "@/components/network-task-dialog"
-import { LocaleProvider } from "@/context/locale"
+import { NetworkTargetEditor } from "@/components/network-task-targets"
+import { LocaleProvider, useLocale } from "@/context/locale"
 import * as networkHooks from "@/hooks/use-network"
-import type { NetworkTaskView, Node } from "@/types"
+import type { NetworkHistorySeries, NetworkTarget, NetworkTaskView, Node } from "@/types"
 
 vi.mock("@/hooks/use-network")
 vi.mock("@/components/ui/dialog", async () => {
@@ -63,7 +64,9 @@ vi.mock("@/components/ui/scroll-area", () => ({ ScrollArea: ({ children }: { chi
 vi.mock("recharts", () => ({
   ResponsiveContainer: ({ children }: { children: ReactNode }) => <div>{children}</div>,
   LineChart: ({ children }: { children: ReactNode }) => <div>{children}</div>,
-  Line: () => <span>line</span>,
+  Line: ({ name, stroke }: { name: string; stroke: string }) => (
+    <span data-testid="network-line" data-name={name} data-stroke={stroke}>line</span>
+  ),
   CartesianGrid: () => <span>grid</span>,
   XAxis: ({ domain, tickFormatter }: { domain: number[]; tickFormatter: (value: number) => string }) => (
     <span data-testid="network-x-axis" data-domain={domain.join(":")}>{tickFormatter(domain[0])}</span>
@@ -75,6 +78,7 @@ vi.mock("recharts", () => ({
     formatter: (value: number) => [string, string]
     labelFormatter: (value: number) => string
   }) => <span>{formatter(1500)[0]} {labelFormatter(1)}</span>,
+  Legend: () => <span data-testid="network-legend">legend</span>,
 }))
 
 const view = networkView()
@@ -122,7 +126,14 @@ describe("network public components", () => {
         node_id: "node-secret-id",
         from: "",
         to: "",
-        points: [{ timestamp: "2026-07-29T12:00:00Z", average_latency_ms: 12, success_percent: 100, sample_count: 1 }],
+        series: [{
+          target_id: "target-id",
+          label: "移动",
+          carrier: "mobile",
+          region: "",
+          visible_address: false,
+          points: [{ timestamp: "2026-07-29T12:00:00Z", average_latency_ms: 12, success_percent: 100, sample_count: 1 }],
+        }],
       },
       loading: false,
       error: null,
@@ -134,7 +145,7 @@ describe("network public components", () => {
 
   it("shows task and node labels without exposing IDs, then opens history", async () => {
     providers(<NetworkQualityBand />)
-    expect(screen.getByText("Primary API")).toBeInTheDocument()
+    expect(screen.getAllByText("Primary API").length).toBeGreaterThan(0)
     expect(screen.getByText("Edge (node-one)")).toBeInTheDocument()
     expect(screen.queryByText("node-secret-id")).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole("button", { name: "Edge (node-one) History" }))
@@ -185,13 +196,77 @@ describe("network public components", () => {
   })
 
   it("renders chart fixed domain directly", () => {
-    providers(<NetworkHistoryChart data={[{ timestamp: 1, latency: 1500, success: 100 }]} from={1} to={2} rangeHours={1} latencyLabel="Latency" />)
+    providers(<NetworkHistoryChart
+      data={[{ timestamp: 1, "latency-0": 1500, "quality-0": 100 }]}
+      series={[{ key: "0", label: "移动", carrier: "mobile", color: "#2563eb" }]}
+      metric="latency"
+      from={1}
+      to={2}
+      rangeHours={1}
+      latencyLabel="Latency"
+      qualityLabel="Success"
+    />)
     expect(screen.getByTestId("network-x-axis")).toHaveAttribute("data-domain", "1:2")
-    expect(screen.getAllByText(/1.5 s/)).toHaveLength(2)
+    expect(screen.getByText("1.5 s")).toBeInTheDocument()
+  })
+
+  it("renders three independent carrier lines and breaks failed samples", () => {
+    const history: NetworkHistorySeries[] = [
+      {
+        target_id: "mobile", label: "移动", carrier: "mobile", region: "上海", visible_address: false,
+        points: [
+          { timestamp: "2026-07-29T12:00:00Z", average_latency_ms: 20, success_percent: 100, sample_count: 1 },
+          { timestamp: "2026-07-29T12:01:00Z", average_latency_ms: 99, success_percent: 0, sample_count: 1 },
+        ],
+      },
+      {
+        target_id: "unicom", label: "联通", carrier: "unicom", region: "北京", visible_address: false,
+        points: [{ timestamp: "2026-07-29T12:00:00Z", average_latency_ms: 30, success_percent: 100, sample_count: 1 }],
+      },
+      {
+        target_id: "telecom", label: "电信", carrier: "telecom", region: "广州", visible_address: false,
+        points: [{ timestamp: "2026-07-29T12:00:00Z", average_latency_ms: 40, success_percent: 100, sample_count: 1 }],
+      },
+    ]
+    vi.mocked(networkHooks.useNetworkHistory).mockReturnValue({
+      data: { task_id: "task-id", node_id: "node-secret-id", from: "", to: "", series: [...history] },
+      loading: false, error: null, from: 100, to: 200, refresh: vi.fn(),
+    } as never)
+    providers(<NetworkHistoryDialog open view={view} initialNodeId="node-secret-id" onOpenChange={vi.fn()} />)
+    const lines = screen.getAllByTestId("network-line")
+    expect(lines).toHaveLength(3)
+    expect(lines.map((line) => line.getAttribute("data-name"))).toEqual(["移动", "联通", "电信"])
+    expect(lines.map((line) => line.getAttribute("data-stroke"))).toEqual(["#2563eb", "#dc2626", "#16a34a"])
+    const chart = buildChartData([...history], "latency", "success")
+    expect(chart.data.find((row) => row.timestamp === Date.parse("2026-07-29T12:01:00Z") / 1000)?.["latency-0"]).toBeNull()
   })
 })
 
 describe("network admin components", () => {
+  it("edits, toggles, removes, and adds target group entries", () => {
+    providers(<TargetEditorHarness />)
+    const value = () => JSON.parse(screen.getByTestId("targets").textContent ?? "[]") as NetworkTarget[]
+
+    fireEvent.change(screen.getByLabelText("Target label"), { target: { value: "上海移动" } })
+    fireEvent.change(screen.getByLabelText("Region"), { target: { value: "Shanghai" } })
+    fireEvent.change(screen.getByLabelText("Target"), { target: { value: "127.0.0.1" } })
+    fireEvent.change(screen.getByLabelText("ICMP packets"), { target: { value: "7" } })
+    const selects = screen.getAllByTestId("select")
+    fireEvent.change(selects[0], { target: { value: "telecom" } })
+    fireEvent.change(selects[1], { target: { value: "ipv6" } })
+    const switches = screen.getAllByRole("switch")
+    fireEvent.click(switches[0])
+    fireEvent.click(switches[1])
+    expect(value()[0]).toMatchObject({ label: "上海移动", carrier: "telecom", region: "Shanghai", target: "127.0.0.1", ip_family: "ipv6", packet_count: 7, visible_address: true, enabled: false })
+
+    fireEvent.click(screen.getByRole("button", { name: "Remove target" }))
+    expect(screen.getByText(/No targets yet/)).toBeInTheDocument()
+    fireEvent.click(screen.getByRole("button", { name: "Add custom target" }))
+    expect(value()).toHaveLength(1)
+    fireEvent.click(screen.getByRole("button", { name: "Add three carriers" }))
+    expect(value().map((target) => target.carrier)).toEqual(["mobile", "unicom", "telecom"])
+  })
+
   it("renders task facts and invokes every card action", () => {
     const actions = Array.from({ length: 5 }, () => vi.fn())
     providers(
@@ -322,7 +397,41 @@ describe("network admin components", () => {
     fireEvent.click(screen.getByRole("button", { name: "Save" }))
     await waitFor(() => expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ node_ids: [] })))
   })
+
+  it("creates three carrier targets with hidden addresses and keeps them independent", async () => {
+    const onSave = vi.fn().mockResolvedValue(undefined)
+    providers(<NetworkTaskDialog open view={null} nodes={[]} loading={false} error={null} nextSortOrder={0} onOpenChange={vi.fn()} onSave={onSave} />)
+    fireEvent.change(screen.getByLabelText("Task name"), { target: { value: "三网质量" } })
+    fireEvent.click(screen.getByRole("button", { name: "Three-carrier group" }))
+    expect(screen.getAllByLabelText("Target")).toHaveLength(3)
+    for (let index = 0; index < 3; index += 1) {
+      fireEvent.change(screen.getByLabelText(`Target`, { selector: `#target-address-${index}` }), { target: { value: "127.0.0.1" } })
+    }
+    fireEvent.click(screen.getByRole("button", { name: "Save" }))
+    await waitFor(() => expect(onSave).toHaveBeenCalledWith(expect.objectContaining({
+      target_mode: "group",
+      targets: expect.arrayContaining([
+        expect.objectContaining({ carrier: "mobile", target: "127.0.0.1", visible_address: false }),
+        expect.objectContaining({ carrier: "unicom", target: "127.0.0.1", visible_address: false }),
+        expect.objectContaining({ carrier: "telecom", target: "127.0.0.1", visible_address: false }),
+      ]),
+    })))
+  })
 })
+
+function TargetEditorHarness() {
+  const { t } = useLocale()
+  const [targets, setTargets] = useState<NetworkTarget[]>([{
+    id: "", label: "Primary", carrier: "mobile", region: "", target: "example.com",
+    ip_family: "auto", packet_count: 5, visible_address: false, enabled: true, sort_order: 0,
+  }])
+  return (
+    <>
+      <NetworkTargetEditor targets={targets} type="icmp" t={t} onChange={setTargets} />
+      <output data-testid="targets">{JSON.stringify(targets)}</output>
+    </>
+  )
+}
 
 function networkView(): NetworkTaskView {
   return {
@@ -331,7 +440,13 @@ function networkView(): NetworkTaskView {
       name: "Primary API",
       direction: "agent_to_target",
       type: "http",
+      target_mode: "single",
       target: "https://example.com/health",
+      targets: [{
+        id: "target-id", label: "Primary API", carrier: "custom", region: "",
+        target: "https://example.com/health", ip_family: "auto", packet_count: 1,
+        visible_address: false, enabled: true, sort_order: 0,
+      }],
       ip_family: "auto",
       interval_seconds: 60,
       timeout_milliseconds: 3000,
@@ -347,6 +462,7 @@ function networkView(): NetworkTaskView {
     nodes: [{
       node: { id: "node-secret-id", name: "node-one", alias: "Edge" },
       latest: { timestamp: "", latency_ms: 18, success: true, status_code: 204, error_code: "none" },
+      targets: [{ target_id: "target-id", latest: { timestamp: "", latency_ms: 18, success: true, status_code: 204, error_code: "none" } }],
     }],
   }
 }

@@ -95,7 +95,7 @@ jobs:
           cache-dependency-path: go.sum
       - uses: actions/setup-node@v5
         with:
-          node-version: 22
+          node-version: 24
           cache: npm
           cache-dependency-path: webui/package-lock.json
       - name: Install theme gate browser dependencies

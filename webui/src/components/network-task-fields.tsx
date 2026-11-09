@@ -1,5 +1,6 @@
 import { SearchIcon } from "lucide-react"
 
+import { NetworkTargetEditor, newThreeCarrierTargets } from "@/components/network-task-targets"
 import { Checkbox } from "@/components/ui/checkbox"
 import {
   Field,
@@ -15,7 +16,15 @@ import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectVa
 import { Switch } from "@/components/ui/switch"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { networkNodeLabel } from "@/lib/network-quality"
-import type { NetworkDirection, NetworkIPFamily, NetworkProbeType, NetworkTaskPayload, Node } from "@/types"
+import type {
+  NetworkDirection,
+  NetworkIPFamily,
+  NetworkProbeType,
+  NetworkTarget,
+  NetworkTargetMode,
+  NetworkTaskPayload,
+  Node,
+} from "@/types"
 
 interface NetworkTaskFieldsProps {
   payload: NetworkTaskPayload
@@ -44,14 +53,25 @@ function IdentityFields({ payload, t, onChange }: NetworkTaskFieldsProps) {
     onChange({
       type: value,
       target: payload.direction === "server_to_agent" ? serverTarget(value) : "",
-      packet_count: value === "icmp" ? Math.max(payload.packet_count, 5) : 1,
+      packet_count: value === "icmp" ? Math.max(payload.packet_count, 5) : 3,
+      targets: payload.targets.map((target) => ({
+        ...target, packet_count: value === "icmp" ? Math.max(target.packet_count, 5) : Math.max(target.packet_count, 3),
+      })),
     })
   }
   const changeDirection = (value: NetworkDirection) => {
     onChange({
       direction: value,
       target: value === "server_to_agent" ? serverTarget(payload.type) : "",
+      target_mode: "single",
+      targets: value === "server_to_agent" ? [] : payload.targets,
     })
+  }
+  const changeTargetMode = (value: NetworkTargetMode) => {
+    const targets = value === "group"
+      ? payload.targets.length > 0 ? payload.targets : newThreeCarrierTargets(payload.type, t)
+      : payload.targets.slice(0, 1)
+    onChange({ target_mode: value, targets })
   }
   return (
     <>
@@ -71,6 +91,21 @@ function IdentityFields({ payload, t, onChange }: NetworkTaskFieldsProps) {
           <FieldDescription id="network-task-direction-hint">{t(`network.direction_hint.${payload.direction}`)}</FieldDescription>
         </Field>
       </div>
+      {payload.direction === "agent_to_target" && (
+        <Field>
+          <FieldLabel>{t("network.target_mode")}</FieldLabel>
+          <ToggleGroup
+            variant="outline"
+            spacing={0}
+            value={[payload.target_mode]}
+            onValueChange={(value) => value[0] && changeTargetMode(value[0] as NetworkTargetMode)}
+          >
+            <ToggleGroupItem value="single" aria-label={t("network.target_mode.single")}>{t("network.target_mode.single")}</ToggleGroupItem>
+            <ToggleGroupItem value="group" aria-label={t("network.target_mode.group")}>{t("network.target_mode.group")}</ToggleGroupItem>
+          </ToggleGroup>
+          <FieldDescription>{t(`network.target_mode_hint.${payload.target_mode}`)}</FieldDescription>
+        </Field>
+      )}
       <div className="grid gap-4 sm:grid-cols-2">
         <Field>
           <FieldLabel htmlFor="network-task-type">{t("app.type")}</FieldLabel>
@@ -81,27 +116,38 @@ function IdentityFields({ payload, t, onChange }: NetworkTaskFieldsProps) {
             ))}</SelectGroup></SelectContent>
           </Select>
         </Field>
-        <Field>
-          <FieldLabel htmlFor="network-task-target">{t("network.target")}</FieldLabel>
-          <Input
-            id="network-task-target"
-            value={payload.target}
-            onChange={(event) => onChange({ target: event.target.value })}
-            placeholder={payload.direction === "server_to_agent"
-              ? t("network.target_hint.server")
-              : t(`network.target_hint.${payload.type}`)}
-          />
-        </Field>
+        {payload.direction === "agent_to_target" && payload.target_mode === "group" ? null : (
+          <Field>
+            <FieldLabel htmlFor="network-task-target">{t("network.target")}</FieldLabel>
+            <Input
+              id="network-task-target"
+              value={payload.target}
+              onChange={(event) => onChange({ target: event.target.value })}
+              placeholder={payload.direction === "server_to_agent"
+                ? t("network.target_hint.server")
+                : t(`network.target_hint.${payload.type}`)}
+            />
+          </Field>
+        )}
       </div>
+      {payload.direction === "agent_to_target" && payload.target_mode === "group" && (
+        <NetworkTargetEditor
+          targets={payload.targets}
+          type={payload.type}
+          t={t}
+          onChange={(targets: NetworkTarget[]) => onChange({ targets })}
+        />
+      )}
     </>
   )
 }
 
 function ScheduleFields({ payload, t, onChange }: NetworkTaskFieldsProps) {
   const options = familyOptions(t)
+  const grouped = payload.direction === "agent_to_target" && payload.target_mode === "group"
   return (
     <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-      <Field>
+      {!grouped && <Field>
         <FieldLabel htmlFor="network-ip-family">{t("network.ip_family")}</FieldLabel>
         <Select items={options} value={payload.ip_family} onValueChange={(value) => onChange({ ip_family: (value ?? "auto") as NetworkIPFamily })}>
           <SelectTrigger id="network-ip-family" className="w-full"><SelectValue /></SelectTrigger>
@@ -109,10 +155,19 @@ function ScheduleFields({ payload, t, onChange }: NetworkTaskFieldsProps) {
             <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
           ))}</SelectGroup></SelectContent>
         </Select>
-      </Field>
+      </Field>}
       <NumberField id="network-interval" label={t("network.interval_seconds")} value={payload.interval_seconds} min={10} max={86400} onChange={(value) => onChange({ interval_seconds: value })} />
       <NumberField id="network-timeout" label={t("network.timeout_ms")} value={payload.timeout_milliseconds} min={100} max={30000} onChange={(value) => onChange({ timeout_milliseconds: value })} />
-      {payload.type === "icmp" && <NumberField id="network-packet-count" label={t("network.packet_count")} value={payload.packet_count} min={1} max={20} onChange={(value) => onChange({ packet_count: value })} />}
+      {!grouped && (payload.type === "icmp" || payload.direction === "agent_to_target") && (
+        <NumberField
+          id="network-packet-count"
+          label={t(payload.type === "icmp" ? "network.packet_count" : "network.attempt_count")}
+          value={payload.packet_count}
+          min={1}
+          max={20}
+          onChange={(value) => onChange({ packet_count: value })}
+        />
+      )}
     </div>
   )
 }

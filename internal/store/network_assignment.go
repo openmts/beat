@@ -11,9 +11,13 @@ import (
 
 type AssignedNetworkTask struct {
 	TaskID    string
+	TargetID  string
 	NodeID    string
 	TaskType  string
 	Direction string
+	IPFamily  string
+	Carrier   string
+	Region    string
 	Enabled   bool
 	Assigned  bool
 }
@@ -61,12 +65,15 @@ func (s *NetworkTaskStore) ListAssignments(
 	ctx context.Context,
 	nodeID string,
 ) ([]model.NetworkAssignment, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT t.id, t.name, t.direction, t.type, t.target, t.ip_family,
-		t.interval_seconds, t.timeout_milliseconds, t.packet_count
-		FROM network_tasks t JOIN nodes n ON n.id = ?
+	rows, err := s.db.QueryContext(ctx, `SELECT t.id, tt.id, t.name, tt.label, t.direction, t.type,
+		tt.target, tt.carrier, tt.region, tt.ip_family, t.interval_seconds, t.timeout_milliseconds,
+		tt.packet_count
+		FROM network_tasks t
+		JOIN network_task_targets tt ON tt.task_id = t.id AND tt.enabled = 1
+		JOIN nodes n ON n.id = ?
 		WHERE t.enabled = 1 AND t.direction = 'agent_to_target' AND (t.all_nodes = 1 OR EXISTS (
 			SELECT 1 FROM network_task_nodes a WHERE a.task_id = t.id AND a.node_id = n.id
-		)) ORDER BY t.sort_order ASC, t.name ASC`, nodeID)
+		)) ORDER BY t.sort_order ASC, t.name ASC, tt.sort_order ASC, tt.id ASC`, nodeID)
 	if err != nil {
 		return nil, fmt.Errorf("query network assignments: %w", err)
 	}
@@ -74,8 +81,9 @@ func (s *NetworkTaskStore) ListAssignments(
 	assignments := []model.NetworkAssignment{}
 	for rows.Next() {
 		var assignment model.NetworkAssignment
-		if err := rows.Scan(&assignment.ID, &assignment.Name, &assignment.Direction, &assignment.Type,
-			&assignment.Target, &assignment.IPFamily, &assignment.IntervalSeconds,
+		if err := rows.Scan(&assignment.ID, &assignment.TargetID, &assignment.Name, &assignment.TargetLabel,
+			&assignment.Direction, &assignment.Type, &assignment.Target, &assignment.Carrier,
+			&assignment.Region, &assignment.IPFamily, &assignment.IntervalSeconds,
 			&assignment.TimeoutMilliseconds, &assignment.PacketCount); err != nil {
 			return nil, fmt.Errorf("scan network assignment: %w", err)
 		}
@@ -85,6 +93,38 @@ func (s *NetworkTaskStore) ListAssignments(
 		return nil, fmt.Errorf("iterate network assignments: %w", err)
 	}
 	return assignments, nil
+}
+
+func (s *NetworkTaskStore) GetAssignedTarget(
+	ctx context.Context,
+	nodeID string,
+	taskID string,
+	targetID string,
+) (*AssignedNetworkTask, error) {
+	var assigned AssignedNetworkTask
+	var taskEnabled, targetEnabled, nodeAssigned bool
+	err := s.db.QueryRowContext(ctx, `SELECT t.id, tt.id, n.id, t.type, t.direction, tt.ip_family,
+		tt.carrier, tt.region, t.enabled, tt.enabled,
+		(t.all_nodes = 1 OR EXISTS (
+			SELECT 1 FROM network_task_nodes a WHERE a.task_id = t.id AND a.node_id = n.id
+		))
+		FROM network_tasks t
+		JOIN network_task_targets tt ON tt.task_id = t.id
+		JOIN nodes n ON n.id = ?
+		WHERE t.id = ? AND tt.id = ? AND t.lifecycle_state = 'active'`,
+		nodeID, taskID, targetID).
+		Scan(&assigned.TaskID, &assigned.TargetID, &assigned.NodeID, &assigned.TaskType,
+			&assigned.Direction, &assigned.IPFamily, &assigned.Carrier, &assigned.Region, &taskEnabled,
+			&targetEnabled, &nodeAssigned)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("query assigned network target: %w", err)
+	}
+	assigned.Enabled = taskEnabled && targetEnabled
+	assigned.Assigned = nodeAssigned
+	return &assigned, nil
 }
 
 func (s *NetworkTaskStore) GetAssignedTask(

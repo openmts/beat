@@ -19,6 +19,7 @@ const (
 	specFlag        = "spec"
 	keyFlag         = "key"
 	outFlag         = "out"
+	publicOutFlag   = "public-out"
 	keyIDFlag       = "key-id"
 	trustFlag       = "trust"
 	serverTrustFlag = "server-trust"
@@ -41,6 +42,7 @@ func (a *application) releaseSignCommand() *cli.Command {
 			&cli.StringFlag{Name: specFlag, Required: true, Usage: "release spec JSON file"},
 			&cli.StringFlag{Name: keyFlag, Required: true, Usage: "Ed25519 private key file (base64 or hex seed/private key)"},
 			&cli.StringFlag{Name: outFlag, Required: true, Usage: "signed manifest output file"},
+			&cli.StringFlag{Name: publicOutFlag, Usage: "optional Ed25519 public trust file for Agents and the Server"},
 		},
 		Action: func(_ context.Context, command *cli.Command) error {
 			if command.Args().Len() != 0 {
@@ -69,6 +71,14 @@ func (a *application) releaseSignCommand() *cli.Command {
 			}
 			if err := verifySignature(signed, manifest, private.Public().(ed25519.PublicKey), now); err != nil {
 				return err
+			}
+			if path := command.String(publicOutFlag); path != "" {
+				trust := []protocol.SigningTrust{{KeyID: manifest.SigningKeyID, PublicKey: private.Public().(ed25519.PublicKey),
+					NotBefore: manifest.BuiltAt, ExpiresAt: manifest.ExpiresAt}}
+				if err := writeFile(path, encodeJSON(trust), false); err != nil {
+					return err
+				}
+				_, _ = fmt.Fprintf(a.options.Output, "wrote public trust %s\n", path)
 			}
 			if err := writeFile(command.String(outFlag), encodeSigned(signed), false); err != nil {
 				return err

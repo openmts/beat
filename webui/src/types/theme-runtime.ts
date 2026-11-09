@@ -18,11 +18,45 @@ export interface ThemeHistory {
   series: Record<string, ThemeHistoryPoint[]>
   series_info?: Record<string, ThemeHistorySeriesInfo>
 }
-export interface ThemeNetworkHistoryPoint { timestamp: number; latency_ms: number | null }
-export interface ThemeNetworkHistoryTask { id: string; points: ThemeNetworkHistoryPoint[] }
+export interface ThemeNetworkHistoryPoint {
+  timestamp: number
+  latency_ms: number | null
+  loss_percent?: number | null
+  success_percent?: number | null
+}
+export interface ThemeNetworkHistorySeries {
+  id: string
+  label: string
+  carrier: string
+  region: string
+  visible_address: boolean
+  points: ThemeNetworkHistoryPoint[]
+}
+export interface ThemeNetworkHistoryTask {
+  id: string
+  points: ThemeNetworkHistoryPoint[]
+  series?: ThemeNetworkHistorySeries[]
+}
 export interface ThemeNetworkHistory { from: number; to: number; tasks: ThemeNetworkHistoryTask[] }
-export interface ThemeNetworkHistoryInputPoint { timestamp: number; latency_ms: number | null }
-export interface ThemeNetworkHistoryInputTask { task_id: string; points: ThemeNetworkHistoryInputPoint[] }
+export interface ThemeNetworkHistoryInputPoint {
+  timestamp: number
+  latency_ms: number | null
+  loss_percent?: number | null
+  success_percent?: number | null
+}
+export interface ThemeNetworkHistoryInputSeries {
+  target_id: string
+  label: string
+  carrier: string
+  region: string
+  visible_address: boolean
+  points: ThemeNetworkHistoryInputPoint[]
+}
+export interface ThemeNetworkHistoryInputTask {
+  task_id: string
+  points: ThemeNetworkHistoryInputPoint[]
+  series?: ThemeNetworkHistoryInputSeries[]
+}
 export interface ThemeNetworkHistoryInput { from: number; to: number; tasks: ThemeNetworkHistoryInputTask[] }
 
 export interface ThemeNode {

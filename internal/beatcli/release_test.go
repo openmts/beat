@@ -56,11 +56,14 @@ func releaseFixture(t *testing.T) (string, string, ed25519.PublicKey, string) {
 func TestReleaseSignWritesAVerifiableManifest(t *testing.T) {
 	specPath, keyPath, public, directory := releaseFixture(t)
 	out := filepath.Join(directory, "signed.json")
-	result := runCommand(t, nil, nil, "release", "sign", "--"+specFlag, specPath, "--"+keyFlag, keyPath, "--"+outFlag, out)
+	trustOut := filepath.Join(directory, "agent-trust.json")
+	result := runCommand(t, nil, nil, "release", "sign", "--"+specFlag, specPath, "--"+keyFlag, keyPath,
+		"--"+outFlag, out, "--"+publicOutFlag, trustOut)
 	if result.err != nil {
 		t.Fatalf("sign: %v (%s)", result.err, result.stderr)
 	}
-	if !strings.Contains(result.stdout, "manifest 9.9.9 channel=stable artifacts=1 digest=") || !strings.Contains(result.stdout, "wrote "+out) {
+	if !strings.Contains(result.stdout, "manifest 9.9.9 channel=stable artifacts=1 digest=") ||
+		!strings.Contains(result.stdout, "wrote public trust "+trustOut) || !strings.Contains(result.stdout, "wrote "+out) {
 		t.Fatalf("stdout = %q", result.stdout)
 	}
 	content, err := os.ReadFile(out)
@@ -79,6 +82,22 @@ func TestReleaseSignWritesAVerifiableManifest(t *testing.T) {
 		NotBefore: time.Now().UTC().Add(-time.Hour), ExpiresAt: manifest.ExpiresAt}
 	if _, err := protocol.VerifyManifestSignature(signed, trust, time.Now().UTC()); err != nil {
 		t.Fatalf("signed manifest did not verify: %v", err)
+	}
+	trustContent, err := os.ReadFile(trustOut)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var publicTrust []protocol.SigningTrust
+	if err := json.Unmarshal(trustContent, &publicTrust); err != nil {
+		t.Fatal(err)
+	}
+	if len(publicTrust) != 1 || publicTrust[0].KeyID != manifest.SigningKeyID ||
+		!publicTrust[0].PublicKey.Equal(public) || publicTrust[0].Revoked ||
+		!publicTrust[0].NotBefore.Equal(manifest.BuiltAt) || !publicTrust[0].ExpiresAt.Equal(manifest.ExpiresAt) {
+		t.Fatalf("public trust = %+v", publicTrust)
+	}
+	if info, err := os.Stat(trustOut); err != nil || info.Mode().Perm() != 0o600 {
+		t.Fatalf("public trust mode = %v, %v", info, err)
 	}
 }
 

@@ -108,7 +108,15 @@ export function publicNodeNetworkTasks(views: NetworkTaskView[] | null, nodeId?:
 async function loadNodeNetworkHistory(tasks: NetworkTaskView[], nodeId: string, domain: { from: string; to: string }, signal: AbortSignal): Promise<ThemeNetworkHistoryInput> {
   const settled = await Promise.allSettled(tasks.map(async (view) => {
     const response = await networkApi.getPublicNetworkHistory(view.task.id, { nodeId, from: domain.from, to: domain.to, signal })
-    return { task_id: view.task.id, points: publicNetworkHistoryPoints(response.points) }
+    const series = response.series.map((entry) => ({
+      target_id: entry.target_id,
+      label: entry.label,
+      carrier: entry.carrier,
+      region: entry.region,
+      visible_address: entry.visible_address,
+      points: publicNetworkHistoryPoints(entry.points),
+    }))
+    return { task_id: view.task.id, points: series[0]?.points ?? [], series }
   }))
   const historyTasks = settled.flatMap((result) => result.status === "fulfilled" ? [result.value] : [])
   if (!historyTasks.length && settled.length) {

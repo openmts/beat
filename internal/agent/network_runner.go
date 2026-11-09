@@ -45,7 +45,7 @@ type scheduledNetworkTask struct {
 }
 
 type networkProbeCompletion struct {
-	taskID string
+	key    string
 	result model.NetworkProbeResult
 	report bool
 }
@@ -134,7 +134,7 @@ func (runner *NetworkRunner) schedule(
 		case set := <-updates:
 			tasks = mergeNetworkAssignments(tasks, set)
 		case completion := <-completions:
-			if task := tasks[completion.taskID]; task != nil {
+			if task := tasks[completion.key]; task != nil {
 				task.running = false
 			}
 			if completion.report {
@@ -163,7 +163,7 @@ func (runner *NetworkRunner) probeWorker(
 			return
 		case task := <-work:
 			result := runner.options.Prober.Probe(ctx, task)
-			completion := networkProbeCompletion{taskID: task.ID, result: result, report: ctx.Err() == nil}
+			completion := networkProbeCompletion{key: task.SchedulingKey(), result: result, report: ctx.Err() == nil}
 			select {
 			case completions <- completion:
 			case <-ctx.Done():
@@ -228,13 +228,14 @@ func mergeNetworkAssignments(
 	next := make(map[string]*scheduledNetworkTask, len(set.Tasks))
 	now := model.NowUTC()
 	for _, assignment := range set.Tasks {
-		state := current[assignment.ID]
+		key := assignment.SchedulingKey()
+		state := current[key]
 		if state == nil {
 			state = &scheduledNetworkTask{next: now}
 		}
 		state.task = assignment
 		state.expires = set.ExpiresAt
-		next[assignment.ID] = state
+		next[key] = state
 	}
 	return next
 }

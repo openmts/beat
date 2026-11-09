@@ -163,7 +163,8 @@ function networkPanel(snapshot, node, locale) {
     append(head, element("h3", "paper-network-name", task.name || task.id), element("span", "paper-network-type", task.type || ""))
     const reading = latest?.success && Number.isFinite(latest.latency_ms) ? `${decimal(latest.latency_ms, 1)} ms` : "—"
     const when = latest?.timestamp ? shortDate(latest.timestamp, locale) : t.pending
-    append(card, head, element("p", "paper-network-reading", `${reading} · ${when}`), networkChartBlock(task.name || task.id, history?.points ?? [], bounds, locale))
+    const series = history?.series?.length ? history.series : history?.points ?? []
+    append(card, head, element("p", "paper-network-reading", `${reading} · ${when}`), networkChartBlock(task.name || task.id, series, bounds, locale))
     grid.append(card)
   }
   panel.append(grid)

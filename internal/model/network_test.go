@@ -31,7 +31,6 @@ func TestNetworkTaskValidate(t *testing.T) {
 		{name: "invalid ICMP", mutate: func(task *NetworkTask) { task.Type = NetworkProbeICMP; task.Target = "host:80" }, wantErr: true},
 		{name: "valid ICMP IPv6", mutate: func(task *NetworkTask) { task.Type = NetworkProbeICMP; task.Target = "::1" }},
 		{name: "invalid direction", mutate: func(task *NetworkTask) { task.Direction = "sideways" }, wantErr: true},
-		{name: "invalid packet count", mutate: func(task *NetworkTask) { task.PacketCount = 0 }, wantErr: true},
 		{name: "packet count too high", mutate: func(task *NetworkTask) { task.PacketCount = 21 }, wantErr: true},
 		{name: "valid TCP IPv6", mutate: func(task *NetworkTask) { task.Type = NetworkProbeTCP; task.Target = "[::1]:443" }},
 		{name: "invalid TCP", mutate: func(task *NetworkTask) { task.Type = NetworkProbeTCP; task.Target = "example.com" }, wantErr: true},
@@ -84,11 +83,11 @@ func TestNetworkTaskNormalizeDefaults(t *testing.T) {
 		packets   int
 	}{
 		{name: "agent ICMP", input: NetworkTask{Type: NetworkProbeICMP}, direction: NetworkDirectionAgentToTarget, packets: DefaultNetworkPacketCount},
-		{name: "agent TCP", input: NetworkTask{Type: NetworkProbeTCP}, direction: NetworkDirectionAgentToTarget, packets: 1},
+		{name: "agent TCP", input: NetworkTask{Type: NetworkProbeTCP}, direction: NetworkDirectionAgentToTarget, packets: DefaultNetworkAttemptCount},
 		{name: "server ICMP", input: NetworkTask{Direction: NetworkDirectionServerToAgent, Type: NetworkProbeICMP}, direction: NetworkDirectionServerToAgent, target: "{{host}}", packets: DefaultNetworkPacketCount},
 		{name: "server TCP", input: NetworkTask{Direction: NetworkDirectionServerToAgent, Type: NetworkProbeTCP}, direction: NetworkDirectionServerToAgent, target: "{{host_port}}", packets: 1},
 		{name: "server HTTP", input: NetworkTask{Direction: NetworkDirectionServerToAgent, Type: NetworkProbeHTTP}, direction: NetworkDirectionServerToAgent, target: "http://{{host}}/", packets: 1},
-		{name: "non ICMP packet count", input: NetworkTask{Type: NetworkProbeHTTP, PacketCount: 9}, direction: NetworkDirectionAgentToTarget, packets: 1},
+		{name: "non ICMP packet count", input: NetworkTask{Type: NetworkProbeHTTP, PacketCount: 9}, direction: NetworkDirectionAgentToTarget, packets: 9},
 		{name: "existing agent target", input: NetworkTask{Direction: NetworkDirectionAgentToTarget, Type: NetworkProbeICMP, Target: "example.com"}, direction: NetworkDirectionAgentToTarget, target: "example.com", packets: DefaultNetworkPacketCount},
 	}
 	for _, tt := range tests {
@@ -98,7 +97,61 @@ func TestNetworkTaskNormalizeDefaults(t *testing.T) {
 			if task.Direction != tt.direction || task.Target != tt.target || task.PacketCount != tt.packets {
 				t.Fatalf("normalized task = %#v", task)
 			}
+			if len(task.Targets) > 0 && task.Targets[0].VisibleAddress {
+				t.Fatalf("legacy target address must default to hidden: %#v", task.Targets[0])
+			}
 		})
+	}
+}
+
+func TestNetworkTaskValidateTargetGroups(t *testing.T) {
+	valid := groupNetworkTask()
+	tests := []struct {
+		name   string
+		mutate func(*NetworkTask)
+	}{
+		{name: "valid group"},
+		{name: "missing targets", mutate: func(task *NetworkTask) { task.Targets = nil }},
+		{name: "duplicate IDs", mutate: func(task *NetworkTask) { task.Targets[1].ID = task.Targets[0].ID }},
+		{name: "too many targets", mutate: func(task *NetworkTask) {
+			for len(task.Targets) <= MaxNetworkTaskTargets {
+				target := task.Targets[0]
+				target.ID = ""
+				task.Targets = append(task.Targets, target)
+			}
+		}},
+		{name: "invalid carrier", mutate: func(task *NetworkTask) { task.Targets[0].Carrier = "satellite" }},
+		{name: "invalid address", mutate: func(task *NetworkTask) { task.Targets[0].Target = "https://example.com" }},
+		{name: "invalid family", mutate: func(task *NetworkTask) { task.Targets[0].IPFamily = "ipx" }},
+		{name: "invalid packets", mutate: func(task *NetworkTask) { task.Targets[0].PacketCount = MaxNetworkPacketCount + 1 }},
+		{name: "negative sort", mutate: func(task *NetworkTask) { task.Targets[0].SortOrder = -1 }},
+		{name: "long region", mutate: func(task *NetworkTask) { task.Targets[0].Region = strings.Repeat("区", 101) }},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			task := valid
+			task.Targets = append([]NetworkTarget(nil), valid.Targets...)
+			if tt.mutate != nil {
+				tt.mutate(&task)
+			}
+			wantErr := tt.name != "valid group"
+			if gotErr := task.Validate() != nil; gotErr != wantErr {
+				t.Fatalf("Validate() error = %v, wantErr %v", task.Validate(), wantErr)
+			}
+		})
+	}
+}
+
+func groupNetworkTask() NetworkTask {
+	return NetworkTask{
+		Name: "Three carriers", Direction: NetworkDirectionAgentToTarget, Type: NetworkProbeICMP,
+		TargetMode: NetworkTargetModeGroup, IPFamily: IPFamilyAuto,
+		IntervalSeconds: 60, TimeoutMilliseconds: 3000, Enabled: true,
+		Targets: []NetworkTarget{
+			{ID: "mobile", Label: "移动", Carrier: NetworkCarrierMobile, Region: "上海", Target: "127.0.0.1", IPFamily: IPFamilyIPv4, PacketCount: 5, Enabled: true},
+			{ID: "unicom", Label: "联通", Carrier: NetworkCarrierUnicom, Region: "北京", Target: "127.0.0.1", IPFamily: IPFamilyIPv4, PacketCount: 5, Enabled: true},
+			{ID: "telecom", Label: "电信", Carrier: NetworkCarrierTelecom, Region: "广州", Target: "127.0.0.1", IPFamily: IPFamilyIPv4, PacketCount: 5, Enabled: true},
+		},
 	}
 }
 
@@ -134,6 +187,15 @@ func TestRenderNetworkTarget(t *testing.T) {
 	}
 }
 
+func TestNetworkAssignmentSchedulingKey(t *testing.T) {
+	if got := (NetworkAssignment{ID: "task"}).SchedulingKey(); got != "task" {
+		t.Fatalf("task key = %q", got)
+	}
+	if got := (NetworkAssignment{ID: "task", TargetID: "mobile"}).SchedulingKey(); got != "task\x00mobile" {
+		t.Fatalf("target key = %q", got)
+	}
+}
+
 func TestNetworkProbeResultValidate(t *testing.T) {
 	valid := NetworkProbeResult{
 		TaskID: "task-1", FinishedAt: time.Now().UTC(), LatencyMS: 1.25,
@@ -154,6 +216,11 @@ func TestNetworkProbeResultValidate(t *testing.T) {
 		{name: "negative loss", mutate: func(result *NetworkProbeResult) { value := -1.0; result.LossPercent = &value }},
 		{name: "loss over 100", mutate: func(result *NetworkProbeResult) { value := 101.0; result.LossPercent = &value }},
 		{name: "negative jitter", mutate: func(result *NetworkProbeResult) { value := -1.0; result.JitterMS = &value }},
+		{name: "negative success percent", mutate: func(result *NetworkProbeResult) { value := -1.0; result.SuccessPercent = &value }},
+		{name: "success percent over 100", mutate: func(result *NetworkProbeResult) { value := 101.0; result.SuccessPercent = &value }},
+		{name: "inverted attempts", mutate: func(result *NetworkProbeResult) { result.AttemptCount = 1; result.SuccessCount = 2 }},
+		{name: "negative p95", mutate: func(result *NetworkProbeResult) { value := -1.0; result.P95LatencyMS = &value }},
+		{name: "negative stddev", mutate: func(result *NetworkProbeResult) { value := -1.0; result.StdDevLatencyMS = &value }},
 		{name: "negative minimum", mutate: func(result *NetworkProbeResult) { value := -1.0; result.MinLatencyMS = &value }},
 		{name: "inverted latency range", mutate: func(result *NetworkProbeResult) {
 			low, high := 2.0, 1.0

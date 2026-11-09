@@ -17,9 +17,13 @@ const (
 
 type NetworkProbeSample struct {
 	TaskID          string
+	TargetID        string
 	NodeID          string
 	TaskType        string
 	Direction       string
+	Carrier         string
+	Region          string
+	IPFamily        string
 	FinishedAt      time.Time
 	LatencyMS       float64
 	Success         bool
@@ -27,15 +31,22 @@ type NetworkProbeSample struct {
 	ErrorCode       string
 	SentPackets     int
 	ReceivedPackets int
+	AttemptCount    int
+	SuccessCount    int
+	SuccessPercent  *float64
 	LossPercent     *float64
 	JitterMS        *float64
 	MinLatencyMS    *float64
 	MaxLatencyMS    *float64
+	P95LatencyMS    *float64
+	StdDevLatencyMS *float64
 }
 
 type NetworkProbePoint struct {
 	Timestamp      time.Time `json:"timestamp"`
 	AverageLatency float64   `json:"average_latency_ms"`
+	P95LatencyMS   *float64  `json:"p95_latency_ms,omitempty"`
+	LossPercent    *float64  `json:"loss_percent,omitempty"`
 	SuccessPercent float64   `json:"success_percent"`
 	SampleCount    int64     `json:"sample_count"`
 }
@@ -48,10 +59,15 @@ type NetworkProbeLatest struct {
 	ErrorCode       string    `json:"error_code"`
 	SentPackets     int64     `json:"sent_packets"`
 	ReceivedPackets int64     `json:"received_packets"`
+	AttemptCount    int64     `json:"attempt_count"`
+	SuccessCount    int64     `json:"success_count"`
+	SuccessPercent  *float64  `json:"success_percent"`
 	LossPercent     *float64  `json:"loss_percent"`
 	JitterMS        *float64  `json:"jitter_ms"`
 	MinLatencyMS    *float64  `json:"min_latency_ms"`
 	MaxLatencyMS    *float64  `json:"max_latency_ms"`
+	P95LatencyMS    *float64  `json:"p95_latency_ms"`
+	StdDevLatencyMS *float64  `json:"stddev_latency_ms"`
 }
 
 func (s *MTSStore) WriteNetworkProbes(ctx context.Context, samples []NetworkProbeSample) error {
@@ -80,6 +96,11 @@ func (s *MTSStore) WriteNetworkProbes(ctx context.Context, samples []NetworkProb
 			"error_code":       mts.StringValue(sample.ErrorCode),
 			"sent_packets":     mts.Int64Value(int64(sample.SentPackets)),
 			"received_packets": mts.Int64Value(int64(sample.ReceivedPackets)),
+			"attempt_count":    mts.Int64Value(int64(sample.AttemptCount)),
+			"success_count":    mts.Int64Value(int64(sample.SuccessCount)),
+		}
+		if sample.SuccessPercent != nil {
+			fields["success_percent"] = mts.Float64Value(*sample.SuccessPercent)
 		}
 		if sample.LossPercent != nil {
 			fields["loss_percent"] = mts.Float64Value(*sample.LossPercent)
@@ -93,15 +114,34 @@ func (s *MTSStore) WriteNetworkProbes(ctx context.Context, samples []NetworkProb
 		if sample.MaxLatencyMS != nil {
 			fields["max_latency_ms"] = mts.Float64Value(*sample.MaxLatencyMS)
 		}
+		if sample.P95LatencyMS != nil {
+			fields["p95_latency_ms"] = mts.Float64Value(*sample.P95LatencyMS)
+		}
+		if sample.StdDevLatencyMS != nil {
+			fields["stddev_latency_ms"] = mts.Float64Value(*sample.StdDevLatencyMS)
+		}
+		tags := map[string]string{
+			"task": sample.TaskID, "node": sample.NodeID, "type": sample.TaskType,
+			"direction": direction,
+		}
+		if sample.TargetID != "" {
+			tags["target"] = sample.TargetID
+		}
+		if sample.Carrier != "" {
+			tags["carrier"] = sample.Carrier
+		}
+		if sample.Region != "" {
+			tags["region"] = sample.Region
+		}
+		if sample.IPFamily != "" {
+			tags["ip_family"] = sample.IPFamily
+		}
 		points = append(points, mts.Point{
 			Measurement: networkProbeMeasurement,
-			Tags: map[string]string{
-				"task": sample.TaskID, "node": sample.NodeID, "type": sample.TaskType,
-				"direction": direction,
-			},
-			Fields:    fields,
-			Timestamp: sample.FinishedAt.UnixNano(),
-			Precision: mts.PrecisionNanosecond,
+			Tags:        tags,
+			Fields:      fields,
+			Timestamp:   sample.FinishedAt.UnixNano(),
+			Precision:   mts.PrecisionNanosecond,
 		})
 	}
 	if err := s.engine.WritePointsAsTypedBatch(ctx, points, mts.WriteOptions{}); err != nil {
@@ -115,6 +155,15 @@ func (s *MTSStore) QueryNetworkLatest(
 	taskID string,
 	nodeID string,
 ) (*NetworkProbeLatest, error) {
+	return s.QueryNetworkLatestForTarget(ctx, taskID, nodeID, "")
+}
+
+func (s *MTSStore) QueryNetworkLatestForTarget(
+	ctx context.Context,
+	taskID string,
+	nodeID string,
+	targetID string,
+) (*NetworkProbeLatest, error) {
 	s.operationMu.RLock()
 	defer s.operationMu.RUnlock()
 	if err := s.ensureOpen(); err != nil {
@@ -123,7 +172,7 @@ func (s *MTSStore) QueryNetworkLatest(
 
 	end := time.Now().UTC().Add(time.Minute)
 	rows, err := scanLatestRows(ctx, latestScanPlan(time.Unix(0, 0), end, end), func(ctx context.Context, from, to time.Time) ([]mts.Row, error) {
-		return s.queryNetworkProbeRows(ctx, taskID, nodeID, from, to)
+		return s.queryNetworkProbeRows(ctx, taskID, nodeID, targetID, from, to)
 	})
 	if err != nil {
 		return nil, fmt.Errorf("query latest network probe: %w", err)
@@ -145,13 +194,24 @@ func (s *MTSStore) QueryNetworkHistory(
 	start time.Time,
 	end time.Time,
 ) ([]NetworkProbePoint, error) {
+	return s.QueryNetworkHistoryForTarget(ctx, taskID, nodeID, "", start, end)
+}
+
+func (s *MTSStore) QueryNetworkHistoryForTarget(
+	ctx context.Context,
+	taskID string,
+	nodeID string,
+	targetID string,
+	start time.Time,
+	end time.Time,
+) ([]NetworkProbePoint, error) {
 	s.operationMu.RLock()
 	defer s.operationMu.RUnlock()
 	if err := s.ensureOpen(); err != nil {
 		return nil, err
 	}
 
-	query, err := networkProbeQuery(taskID, nodeID, start, end).
+	query, err := networkProbeQuery(taskID, nodeID, targetID, start, end).
 		OrderByTimeAsc().Limit(maxNetworkHistoryPoints + 1).Build()
 	if err != nil {
 		return nil, fmt.Errorf("build raw network probe query: %w", err)
@@ -163,7 +223,7 @@ func (s *MTSStore) QueryNetworkHistory(
 	if len(rows) <= maxNetworkHistoryPoints {
 		return rawNetworkPoints(rows)
 	}
-	return s.queryAggregatedNetworkHistory(ctx, taskID, nodeID, start, end)
+	return s.queryAggregatedNetworkHistory(ctx, taskID, nodeID, targetID, start, end)
 }
 
 func (s *MTSStore) DeleteNetworkTask(ctx context.Context, taskID string) error {
@@ -187,6 +247,7 @@ func (s *MTSStore) queryAggregatedNetworkHistory(
 	ctx context.Context,
 	taskID string,
 	nodeID string,
+	targetID string,
 	start time.Time,
 	end time.Time,
 ) ([]NetworkProbePoint, error) {
@@ -196,12 +257,15 @@ func (s *MTSStore) queryAggregatedNetworkHistory(
 		field    string
 	}{
 		{function: mts.AggregateAvg, field: "latency_ms"},
+		{function: mts.AggregateAvg, field: "p95_latency_ms"},
+		{function: mts.AggregateAvg, field: "loss_percent"},
+		{function: mts.AggregateAvg, field: "success_percent"},
 		{function: mts.AggregateAvg, field: "success"},
 		{function: mts.AggregateCount, field: "latency_ms"},
 	}
 	columns := []mts.ColumnSeries{}
 	for _, aggregate := range aggregates {
-		query, err := networkProbeQuery(taskID, nodeID, start, end).
+		query, err := networkProbeQuery(taskID, nodeID, targetID, start, end).
 			Aggregate(aggregate.function, aggregate.field).
 			GroupByTime(window).OrderByTimeAsc().Limit(maxNetworkHistoryPoints).Build()
 		if err != nil {
@@ -216,10 +280,20 @@ func (s *MTSStore) queryAggregatedNetworkHistory(
 	return networkPointsFromColumns(columns), nil
 }
 
-func networkProbeQuery(taskID, nodeID string, start, end time.Time) *mts.QueryBuilder {
+func networkProbeQuery(taskID, nodeID, targetID string, start, end time.Time) *mts.QueryBuilder {
 	return mts.NewQuery().From("beat", "", networkProbeMeasurement).
 		Select("latency_ms", "success", "status_code", "error_code", "sent_packets",
-			"received_packets", "loss_percent", "jitter_ms", "min_latency_ms", "max_latency_ms").
+			"received_packets", "attempt_count", "success_count", "success_percent",
+			"loss_percent", "jitter_ms", "min_latency_ms", "max_latency_ms",
+			"p95_latency_ms", "stddev_latency_ms").
 		TimeRangeTime(start, end).
-		Where(mts.TagEq("task", taskID), mts.TagEq("node", nodeID))
+		Where(networkProbeConditions(taskID, nodeID, targetID)...)
+}
+
+func networkProbeConditions(taskID, nodeID, targetID string) []mts.QueryPredicate {
+	conditions := []mts.QueryPredicate{mts.TagEq("task", taskID), mts.TagEq("node", nodeID)}
+	if targetID != "" {
+		conditions = append(conditions, mts.TagEq("target", targetID))
+	}
+	return conditions
 }

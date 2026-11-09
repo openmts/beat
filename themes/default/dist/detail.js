@@ -170,7 +170,8 @@ function networkPanel(snapshot, node, locale) {
     append(card, head, element("p", "network-time", `${status}${result ? ` · ${reading}` : ""} · ${time}`))
     const history = snapshot.network_history?.tasks?.find((entry) => entry.id === task.id)
     const now = Math.floor(Date.now() / 1000)
-    card.append(networkChartBlock(task.name || task.id, history?.points ?? [], bounds ?? { from: now - 3600, to: now }, locale))
+    const series = history?.series?.length ? history.series : history?.points ?? []
+    card.append(networkChartBlock(task.name || task.id, series, bounds ?? { from: now - 3600, to: now }, locale))
     list.append(card)
   }
   panel.append(list)

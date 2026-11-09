@@ -11,11 +11,8 @@ import (
 // 因此这个上限只影响合并收益，不影响正确性。
 const historyShareCapacity = 128
 
-// metricHistoryShare 合并公共指标历史读取，networkHistoryShare 合并公共网络探测历史读取。
-type (
-	metricHistoryShare  = historyShare[map[string][]store.TimePoint]
-	networkHistoryShare = historyShare[[]store.NetworkProbePoint]
-)
+// metricHistoryShare 合并公共指标历史读取。
+type metricHistoryShare = historyShare[map[string][]store.TimePoint]
 
 // historyShare 让并发的相同公共历史请求共享一次存储读取：第一个调用方执行读取，其余
 // 等待同一个结果，而不是每个观看者各打一次 MTS。结果集合在调用方之间只读共享。

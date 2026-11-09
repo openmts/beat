@@ -245,6 +245,7 @@ func TestNetworkTaskStoreClosedDatabaseErrors(t *testing.T) {
 		{name: "task nodes", run: func() error { _, err := tasks.listTaskNodes(ctx, "task"); return err }},
 		{name: "assignments", run: func() error { _, err := tasks.ListAssignments(ctx, "node"); return err }},
 		{name: "assigned task", run: func() error { _, err := tasks.GetAssignedTask(ctx, "node", "task"); return err }},
+		{name: "assigned target", run: func() error { _, err := tasks.GetAssignedTarget(ctx, "node", "task", "target"); return err }},
 		{name: "effective nodes", run: func() error { _, err := tasks.ListEffectiveTaskNodes(ctx, "task", true); return err }},
 		{name: "public effective nodes", run: func() error {
 			_, err := tasks.ListEffectivePublicTaskNodes(ctx, "task", true)
@@ -340,6 +341,82 @@ func TestNetworkTaskStoreServerTasksAndDirectionLock(t *testing.T) {
 	changed.Target = "192.0.2.10"
 	if _, err := tasks.UpdateTask(ctx, serverTask.ID, changed, []string{first.ID}); err == nil {
 		t.Fatal("expected direction change rejection")
+	}
+}
+
+func TestNetworkTaskStoreGroupTargetsAndAssignments(t *testing.T) {
+	s := setupTestDB(t)
+	ctx := t.Context()
+	node, err := NewNodeStore(s.DB).UpsertNode(ctx, "group-node", "127.0.0.1", 22)
+	if err != nil {
+		t.Fatalf("create node: %v", err)
+	}
+	tasks := NewNetworkTaskStore(s.DB)
+	input := model.NetworkTask{
+		Name: "Carrier quality", Direction: model.NetworkDirectionAgentToTarget, Type: model.NetworkProbeICMP,
+		TargetMode: model.NetworkTargetModeGroup, IPFamily: model.IPFamilyAuto,
+		IntervalSeconds: 60, TimeoutMilliseconds: 3000, Enabled: true,
+		Targets: []model.NetworkTarget{
+			{Label: "移动", Carrier: model.NetworkCarrierMobile, Region: "上海", Target: "127.0.0.1", IPFamily: model.IPFamilyIPv4, PacketCount: 5, Enabled: true},
+			{Label: "联通", Carrier: model.NetworkCarrierUnicom, Region: "北京", Target: "127.0.0.1", IPFamily: model.IPFamilyIPv4, PacketCount: 5, Enabled: true},
+			{Label: "电信", Carrier: model.NetworkCarrierTelecom, Region: "广州", Target: "127.0.0.1", IPFamily: model.IPFamilyIPv4, PacketCount: 5, Enabled: true},
+		},
+	}
+	created, err := tasks.CreateTask(ctx, input, []string{node.ID})
+	if err != nil {
+		t.Fatalf("create group task: %v", err)
+	}
+	if created.TargetMode != model.NetworkTargetModeGroup || len(created.Targets) != 3 {
+		t.Fatalf("created targets = %#v", created)
+	}
+	originalIDs := make([]string, 3)
+	for index, target := range created.Targets {
+		if target.ID == "" || target.VisibleAddress {
+			t.Fatalf("created target = %#v", target)
+		}
+		originalIDs[index] = target.ID
+	}
+	assignments, err := tasks.ListAssignments(ctx, node.ID)
+	if err != nil || len(assignments) != 3 {
+		t.Fatalf("group assignments = %#v, error = %v", assignments, err)
+	}
+	for index, assignment := range assignments {
+		if assignment.TargetID != originalIDs[index] || assignment.Carrier != created.Targets[index].Carrier {
+			t.Fatalf("assignment %d = %#v", index, assignment)
+		}
+		assigned, err := tasks.GetAssignedTarget(ctx, node.ID, created.ID, assignment.TargetID)
+		if err != nil || assigned == nil || !assigned.Enabled || !assigned.Assigned {
+			t.Fatalf("assigned target = %#v, error = %v", assigned, err)
+		}
+	}
+
+	updatedInput := *created
+	updatedInput.Targets = append([]model.NetworkTarget(nil), created.Targets...)
+	updatedInput.Targets[0].Label = "移动-上海"
+	updatedInput.Targets[1].Enabled = false
+	updated, err := tasks.UpdateTask(ctx, created.ID, updatedInput, []string{node.ID})
+	if err != nil {
+		t.Fatalf("update group task: %v", err)
+	}
+	if updated == nil || len(updated.Targets) != 3 {
+		t.Fatalf("updated group task = %#v", updated)
+	}
+	for index := range originalIDs {
+		if updated.Targets[index].ID != originalIDs[index] {
+			t.Fatalf("target ID %d changed: %q != %q", index, updated.Targets[index].ID, originalIDs[index])
+		}
+	}
+	assignments, err = tasks.ListAssignments(ctx, node.ID)
+	if err != nil || len(assignments) != 2 {
+		t.Fatalf("enabled assignments = %#v, error = %v", assignments, err)
+	}
+	disabled, err := tasks.GetAssignedTarget(ctx, node.ID, created.ID, originalIDs[1])
+	if err != nil || disabled == nil || disabled.Enabled || !disabled.Assigned {
+		t.Fatalf("disabled target = %#v, error = %v", disabled, err)
+	}
+	missing, err := tasks.GetAssignedTarget(ctx, node.ID, created.ID, "missing")
+	if err != nil || missing != nil {
+		t.Fatalf("missing target = %#v, error = %v", missing, err)
 	}
 }
 
