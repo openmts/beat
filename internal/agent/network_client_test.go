@@ -75,8 +75,41 @@ func TestNetworkHTTPClientErrors(t *testing.T) {
 	if _, err := client.FetchAssignments(t.Context()); err == nil {
 		t.Fatal("expected assignment response error")
 	}
-	if err := client.ReportResults(t.Context(), []model.NetworkProbeResult{{TaskID: "task"}}); err == nil {
+	reportErr := client.ReportResults(t.Context(), []model.NetworkProbeResult{{TaskID: "task"}})
+	if reportErr == nil {
 		t.Fatal("expected result response error")
+	}
+	var statusErr *networkStatusError
+	if !errors.As(reportErr, &statusErr) || statusErr.statusCode != http.StatusBadGateway ||
+		!networkReportRetryable(reportErr) {
+		t.Fatalf("report error = %#v", reportErr)
+	}
+}
+
+func TestNetworkReportErrorRetryability(t *testing.T) {
+	for _, test := range []struct {
+		status int
+		want   bool
+	}{
+		{status: http.StatusBadRequest, want: false},
+		{status: http.StatusUnauthorized, want: false},
+		{status: http.StatusConflict, want: false},
+		{status: http.StatusRequestTimeout, want: true},
+		{status: http.StatusTooManyRequests, want: true},
+		{status: http.StatusInternalServerError, want: true},
+		{status: http.StatusBadGateway, want: true},
+	} {
+		response := &http.Response{
+			StatusCode: test.status,
+			Body:       io.NopCloser(strings.NewReader("rejected")),
+		}
+		err := networkResponseError(response, "network results")
+		if got := networkReportRetryable(err); got != test.want {
+			t.Fatalf("status %d retryable = %v, want %v", test.status, got, test.want)
+		}
+	}
+	if !networkReportRetryable(errors.New("transport failed")) {
+		t.Fatal("transport errors must remain retryable")
 	}
 }
 

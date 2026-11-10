@@ -3,7 +3,7 @@
   "id": "beat-paper",
   "name": "Paper",
   "description": "A calm, single-page fleet workspace with a node list and a focused detail pane.",
-  "version": "1.0.0",
+  "version": "1.0.2",
   "author": "Beat contributors",
   "license": "MIT",
   "runtime": "sandboxed",

@@ -141,10 +141,10 @@ function Groups() {
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead className="w-16">#</TableHead>
+                <TableHead className="hidden w-12 sm:table-cell">#</TableHead>
                 <TableHead>{t("group.name")}</TableHead>
-                <TableHead className="w-24">{t("group.default")}</TableHead>
-                <TableHead className="w-40">{t("app.actions")}</TableHead>
+                <TableHead className="hidden w-24 sm:table-cell">{t("group.default")}</TableHead>
+                <TableHead className="w-44">{t("app.actions")}</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -160,13 +160,16 @@ function Groups() {
               ) : groups && groups.length > 0 ? (
                 groups.map((group, idx) => (
                   <TableRow key={group.id}>
-                    <TableCell className="font-mono text-xs text-muted-foreground">{idx + 1}</TableCell>
-                    <TableCell className="font-medium">{group.name}</TableCell>
-                    <TableCell>
+                    <TableCell className="hidden font-mono text-xs text-muted-foreground sm:table-cell">{idx + 1}</TableCell>
+                    <TableCell className="font-medium">
+                      <span>{group.name}</span>
+                      {group.is_default && <Badge variant="secondary" className="ml-2 sm:hidden">{t("group.default")}</Badge>}
+                    </TableCell>
+                    <TableCell className="hidden sm:table-cell">
                       {group.is_default && <Badge variant="secondary">{t("group.default")}</Badge>}
                     </TableCell>
                     <TableCell>
-                      <div className="flex gap-1">
+                      <div className="flex flex-wrap justify-end gap-1">
                         <Button
                           variant="ghost"
                           size="icon-sm"

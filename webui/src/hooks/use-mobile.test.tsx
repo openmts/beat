@@ -16,6 +16,11 @@ it("tracks the mobile breakpoint and removes its listener", () => {
     window.innerWidth = 900
     change?.()
   })
+  expect(result.current).toBe(true)
+  act(() => {
+    window.innerWidth = 1024
+    change?.()
+  })
   expect(result.current).toBe(false)
   unmount()
   expect(remove).toHaveBeenCalled()

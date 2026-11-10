@@ -13,6 +13,7 @@ const (
 	defaultAssignmentRefresh = 30 * time.Second
 	defaultScheduleTick      = 250 * time.Millisecond
 	defaultResultFlush       = 2 * time.Second
+	networkResultRetention   = 4 * time.Minute
 	defaultProbeWorkers      = 4
 	defaultWorkQueueSize     = 128
 	defaultResultQueueSize   = 256
@@ -206,6 +207,7 @@ func (runner *NetworkRunner) flushResults(
 	ctx context.Context,
 	batch []model.NetworkProbeResult,
 ) []model.NetworkProbeResult {
+	batch = discardExpiredNetworkResults(batch, model.NowUTC())
 	if len(batch) == 0 {
 		return batch
 	}
@@ -214,8 +216,34 @@ func (runner *NetworkRunner) flushResults(
 		if ctx.Err() == nil {
 			runner.options.OnError(fmt.Errorf("report network results: %w", err))
 		}
+		if !networkReportRetryable(err) {
+			return discardNetworkResultPrefix(batch, count)
+		}
 		return batch
 	}
+	return discardNetworkResultPrefix(batch, count)
+}
+
+func discardExpiredNetworkResults(
+	batch []model.NetworkProbeResult,
+	now time.Time,
+) []model.NetworkProbeResult {
+	cutoff := now.Add(-networkResultRetention)
+	kept := batch[:0]
+	for _, result := range batch {
+		if result.FinishedAt.IsZero() || result.FinishedAt.Before(cutoff) {
+			continue
+		}
+		kept = append(kept, result)
+	}
+	clear(batch[len(kept):])
+	return kept
+}
+
+func discardNetworkResultPrefix(
+	batch []model.NetworkProbeResult,
+	count int,
+) []model.NetworkProbeResult {
 	remaining := copy(batch, batch[count:])
 	clear(batch[remaining:])
 	return batch[:remaining]

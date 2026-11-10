@@ -152,7 +152,9 @@ function networkPanel(snapshot, node, locale) {
   const list = element("div", "network-list")
   const bounds = snapshot.network_history ?? snapshot.history
   for (const task of tasks) {
-    const result = task.nodes.find((entry) => entry.node_id === node.id)?.latest
+    const nodeState = task.nodes.find((entry) => entry.node_id === node.id)
+    const result = nodeState?.latest
+    const statuses = Object.fromEntries((nodeState?.targets ?? []).map((entry) => [entry.target_id, entry.latest]))
     const card = element("article", "network-card")
     const head = element("div", "network-head")
     append(head, element("h2", "network-name", task.name || task.id), element("span", "network-type", task.type || ""))
@@ -171,7 +173,7 @@ function networkPanel(snapshot, node, locale) {
     const history = snapshot.network_history?.tasks?.find((entry) => entry.id === task.id)
     const now = Math.floor(Date.now() / 1000)
     const series = history?.series?.length ? history.series : history?.points ?? []
-    card.append(networkChartBlock(task.name || task.id, series, bounds ?? { from: now - 3600, to: now }, locale))
+    card.append(networkChartBlock(task.name || task.id, series, bounds ?? { from: now - 3600, to: now }, locale, statuses))
     list.append(card)
   }
   panel.append(list)

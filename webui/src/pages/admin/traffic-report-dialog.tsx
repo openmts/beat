@@ -30,7 +30,7 @@ export function TrafficReportDialog(props: TrafficReportDialogProps) {
   const { t } = useLocale()
   return (
     <Dialog open={props.open} onOpenChange={props.onOpenChange}>
-      <DialogContent className="max-h-[85vh] max-w-2xl overflow-y-auto">
+      <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-2xl">
         <DialogHeader>
           <DialogTitle>{t(props.editing ? "traffic_report.edit" : "traffic_report.create")}</DialogTitle>
           <DialogDescription>{t("traffic_report.description")}</DialogDescription>

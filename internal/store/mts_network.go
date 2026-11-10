@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -145,6 +146,12 @@ func (s *MTSStore) WriteNetworkProbes(ctx context.Context, samples []NetworkProb
 		})
 	}
 	if err := s.engine.WritePointsAsTypedBatch(ctx, points, mts.WriteOptions{}); err != nil {
+		if errors.Is(err, mts.ErrInvalidOptions) {
+			if fallbackErr := s.engine.Write(ctx, points, mts.WriteOptions{}); fallbackErr != nil {
+				return fmt.Errorf("write network probes: %w", fallbackErr)
+			}
+			return nil
+		}
 		return fmt.Errorf("write network probes: %w", err)
 	}
 	return nil

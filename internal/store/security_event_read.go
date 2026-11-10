@@ -158,6 +158,9 @@ func scanSecurityEvent(row rowScanner) (model.SecurityEvent, error) {
 	if err := json.Unmarshal([]byte(encoded), &event.Reasons); err != nil {
 		return model.SecurityEvent{}, err
 	}
+	if event.Reasons == nil {
+		event.Reasons = []string{}
+	}
 	event.OccurredAt = time.UnixMilli(occurred).UTC()
 	event.RetainUntil = time.UnixMilli(retain).UTC()
 	event.AcknowledgedAt = nullableTimeFromMillis(ackedAt)

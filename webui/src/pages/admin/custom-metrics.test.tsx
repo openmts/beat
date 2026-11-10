@@ -62,7 +62,7 @@ describe("custom metrics", () => {
   it("lists custom metrics", async () => {
     view()
     expect(await screen.findByText("http_latency")).toBeInTheDocument()
-    expect(screen.getByText("echo 5")).toBeInTheDocument()
+    expect(screen.getAllByText("echo 5")).toHaveLength(2)
   })
 
   it("creates a custom metric", async () => {

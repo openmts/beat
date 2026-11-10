@@ -11,7 +11,7 @@ import { localeOptions, shippedLocales } from "@/context/locales"
 
 // 语言菜单只列出目录完整的语言：原生名称 + 短码，当前语言带勾选图标。
 // 选中后就地切换语言，不重新加载页面，也不改变导航或表单状态。
-export function LanguageMenu({ size = "icon-sm" }: { size?: "icon-sm" | "icon" }) {
+export function LanguageMenu({ size = "icon-sm" }: { size?: "icon-sm" | "icon" | "icon-lg" }) {
   const { locale, setLocale, t } = useLocale()
   const options = localeOptions.filter((option) => shippedLocales.includes(option.code))
   const current = options.find((option) => option.code === locale)

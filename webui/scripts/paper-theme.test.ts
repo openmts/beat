@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest"
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { renderPaper } from "../../themes/paper/dist/app.js"
 import { resetCharts } from "../../themes/paper/dist/charts.js"
 import { decimal, formatBytes, formatRate, percentValue } from "../../themes/paper/dist/format.js"
@@ -123,6 +123,51 @@ describe("paper single-page workspace", () => {
   })
 })
 
+describe("paper theme chart hover", () => {
+  beforeEach(() => {
+    state.locale = "en"
+    state.tab = "resources"
+    document.body.innerHTML = '<div id="app"></div>'
+    resetCharts()
+    installCanvasContext()
+  })
+
+  afterEach(() => {
+    resetCharts()
+    vi.restoreAllMocks()
+  })
+
+  it("shows the nearest value while following the pointer", () => {
+    const snapshot = detail()
+    renderPaper(snapshot, "en")
+    const block = Array.from(document.querySelectorAll<HTMLElement>(".chart-block"))
+      .find((candidate) => candidate.querySelector(".chart-title")?.textContent === "CPU")!
+    const canvas = prepareCanvas(block.querySelector<HTMLCanvasElement>(".chart-canvas")!)
+    canvas.dispatchEvent(new MouseEvent("pointermove", { bubbles: true, clientX: 630, clientY: 96 }))
+
+    expect(block.querySelector<HTMLElement>(".chart-tooltip")?.hidden).toBe(false)
+    expect(block.querySelector(".chart-tooltip")?.textContent).toContain("CPU")
+    expect(block.querySelector(".chart-tooltip")?.textContent).toContain("20.0%")
+  })
+
+  it("keeps a touch selection visible until another point or outside tap", () => {
+    renderPaper(detail(), "en")
+    const block = Array.from(document.querySelectorAll<HTMLElement>(".chart-block"))
+      .find((candidate) => candidate.querySelector(".chart-title")?.textContent === "CPU")!
+    const canvas = prepareCanvas(block.querySelector<HTMLCanvasElement>(".chart-canvas")!)
+
+    dispatchPointer(canvas, "pointerdown", 630, 96)
+    canvas.dispatchEvent(new MouseEvent("pointerleave", { bubbles: true }))
+    expect(block.querySelector<HTMLElement>(".chart-tooltip")?.hidden).toBe(false)
+    expect(block.querySelector(".chart-tooltip")?.textContent).toContain("20.0%")
+
+    dispatchPointer(canvas, "pointerdown", 56, 96)
+    expect(block.querySelector(".chart-tooltip")?.textContent).toContain("10.0%")
+    document.body.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true }))
+    expect(block.querySelector<HTMLElement>(".chart-tooltip")?.hidden).toBe(true)
+  })
+})
+
 function node(id: string, name: string, country: string, group: string) {
   return {
     id, name, alias: name, country_code: country, group_id: group, status: "online", tags: [], public_remark: "", last_seen: "2026-11-08T12:00:00Z",
@@ -160,4 +205,29 @@ function detail() {
       { id: "tcp", points: [] },
     ] },
   }
+}
+
+function installCanvasContext() {
+  const context = {
+    setTransform: vi.fn(), clearRect: vi.fn(), fillRect: vi.fn(), beginPath: vi.fn(),
+    moveTo: vi.fn(), lineTo: vi.fn(), stroke: vi.fn(), fillText: vi.fn(), setLineDash: vi.fn(),
+    save: vi.fn(), restore: vi.fn(), arc: vi.fn(), fill: vi.fn(),
+  }
+  vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(context as never)
+}
+
+function prepareCanvas(canvas: HTMLCanvasElement): HTMLCanvasElement {
+  Object.defineProperty(canvas, "clientWidth", { configurable: true, value: 640 })
+  Object.defineProperty(canvas, "clientHeight", { configurable: true, value: 190 })
+  canvas.getBoundingClientRect = () => ({
+    bottom: 190, height: 190, left: 0, right: 640, top: 0, width: 640, x: 0, y: 0,
+    toJSON: () => ({}),
+  })
+  return canvas
+}
+
+function dispatchPointer(canvas: HTMLCanvasElement, type: string, clientX: number, clientY: number) {
+  const event = new MouseEvent(type, { bubbles: true, clientX, clientY })
+  Object.defineProperty(event, "pointerType", { value: "touch" })
+  canvas.dispatchEvent(event)
 }

@@ -52,7 +52,7 @@ export function SecurityEventsPanel() {
         <TableCell className="max-w-40 truncate">{event.actor_display_name || "—"}</TableCell>
         <TableCell className="max-w-48 truncate">{event.source_summary || label("source", event.source_class)}</TableCell>
         <TableCell className="max-w-48 truncate">{event.device_summary || "—"}</TableCell>
-        <TableCell className="max-w-48 truncate">{event.reasons.map(reason => label("reason", reason)).join(" / ") || "—"}</TableCell>
+        <TableCell className="max-w-48 truncate">{(event.reasons ?? []).map(reason => label("reason", reason)).join(" / ") || "—"}</TableCell>
         <TableCell><DeliveryCell event={event} /></TableCell>
         <TableCell><Button size="sm" variant="outline" aria-label={`${t("details")}: ${label("kind", event.kind)}`} onClick={() => setSelected(event.id)}>{t("details")}</Button></TableCell>
       </TableRow>)}

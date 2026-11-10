@@ -355,6 +355,57 @@ describe("network admin components", () => {
     })))
   })
 
+  it("normalizes a three-carrier HTTP task before saving it as TCP", async () => {
+    const onSave = vi.fn().mockResolvedValue(undefined)
+    const httpView: NetworkTaskView = {
+      ...view,
+      task: {
+        ...view.task,
+        type: "http",
+        target_mode: "group",
+        target: "http://gd-cm-v4.ip.zstaticcdn.com:80",
+        targets: [
+          { id: "mobile", label: "移动", carrier: "mobile", region: "", target: "http://gd-cm-v4.ip.zstaticcdn.com:80", ip_family: "auto", packet_count: 3, visible_address: false, enabled: true, sort_order: 0 },
+          { id: "unicom", label: "联通", carrier: "unicom", region: "", target: "http://gd-cu-v4.ip.zstaticcdn.com:80", ip_family: "auto", packet_count: 3, visible_address: false, enabled: true, sort_order: 1 },
+          { id: "telecom", label: "电信", carrier: "telecom", region: "", target: "http://gd-ct-v4.ip.zstaticcdn.com:80", ip_family: "auto", packet_count: 3, visible_address: false, enabled: true, sort_order: 2 },
+        ],
+      },
+    }
+    providers(<NetworkTaskDialog open view={httpView} nodes={[]} loading={false} error={null} nextSortOrder={1} onOpenChange={vi.fn()} onSave={onSave} />)
+
+    const selects = screen.getAllByTestId("select")
+    fireEvent.change(selects[1], { target: { value: "tcp" } })
+    expect(screen.getAllByLabelText("Target").map((input) => input.getAttribute("value"))).toEqual([
+      "gd-cm-v4.ip.zstaticcdn.com:80",
+      "gd-cu-v4.ip.zstaticcdn.com:80",
+      "gd-ct-v4.ip.zstaticcdn.com:80",
+    ])
+    fireEvent.click(screen.getByRole("button", { name: "Save" }))
+
+    await waitFor(() => expect(onSave).toHaveBeenCalledWith(expect.objectContaining({
+      type: "tcp",
+      targets: expect.arrayContaining([
+        expect.objectContaining({ carrier: "mobile", target: "gd-cm-v4.ip.zstaticcdn.com:80" }),
+        expect.objectContaining({ carrier: "unicom", target: "gd-cu-v4.ip.zstaticcdn.com:80" }),
+        expect.objectContaining({ carrier: "telecom", target: "gd-ct-v4.ip.zstaticcdn.com:80" }),
+      ]),
+    })))
+  })
+
+  it("normalizes a full-width TCP colon before saving", async () => {
+    const onSave = vi.fn().mockResolvedValue(undefined)
+    providers(<NetworkTaskDialog open view={null} nodes={[]} loading={false} error={null} nextSortOrder={0} onOpenChange={vi.fn()} onSave={onSave} />)
+    fireEvent.change(screen.getByLabelText("Task name"), { target: { value: "TCP probe" } })
+    fireEvent.change(screen.getAllByTestId("select")[1], { target: { value: "tcp" } })
+    fireEvent.change(screen.getByLabelText("Target"), { target: { value: "example.test：443" } })
+    fireEvent.click(screen.getByRole("button", { name: "Save" }))
+
+    await waitFor(() => expect(onSave).toHaveBeenCalledWith(expect.objectContaining({
+      type: "tcp",
+      target: "example.test:443",
+    })))
+  })
+
   it("loads edit labels, filters nodes, and validates every timing boundary", async () => {
     const onSave = vi.fn().mockResolvedValue(undefined)
     const editView: NetworkTaskView = {

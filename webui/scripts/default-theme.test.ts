@@ -1,4 +1,5 @@
-import { beforeEach, describe, expect, it, vi } from "vitest"
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
+import { resetCharts } from "../../themes/default/dist/charts.js"
 import { countryNode, detailHeading, statusPill, trafficPercentage, usedTotal } from "../../themes/default/dist/components.js"
 import { dashboard } from "../../themes/default/dist/dashboard.js"
 import { renderDetail } from "../../themes/default/dist/detail.js"
@@ -188,6 +189,97 @@ describe("default theme detail ranges", () => {
   })
 })
 
+describe("default theme chart hover", () => {
+  beforeEach(() => {
+    state.locale = "en"
+    state.tab = "resources"
+    document.body.innerHTML = '<div id="app"></div>'
+    resetCharts()
+    installCanvasContext()
+  })
+
+  afterEach(() => {
+    resetCharts()
+    vi.restoreAllMocks()
+  })
+
+  it("shows the hovered value for a single-axis series", () => {
+    const snapshot = detailSnapshot()
+    state.snapshot = snapshot
+    renderDetail(snapshot, "en")
+    const block = chartBlockByTitle("CPU")
+    const canvas = prepareCanvas(block.querySelector<HTMLCanvasElement>(".chart-canvas")!)
+    hoverCanvas(canvas)
+
+    expect(block.querySelector<HTMLElement>(".chart-tooltip")?.hidden).toBe(false)
+    expect(block.querySelector(".chart-tooltip")?.textContent).toContain("CPU")
+    expect(block.querySelector(".chart-tooltip")?.textContent).toContain("20.0%")
+    canvas.dispatchEvent(new MouseEvent("pointerleave", { bubbles: true }))
+    expect(block.querySelector<HTMLElement>(".chart-tooltip")?.hidden).toBe(true)
+  })
+
+  it("keeps a touch selection visible until another point or outside tap", () => {
+    const snapshot = detailSnapshot()
+    state.snapshot = snapshot
+    renderDetail(snapshot, "en")
+    const block = chartBlockByTitle("CPU")
+    const canvas = prepareCanvas(block.querySelector<HTMLCanvasElement>(".chart-canvas")!)
+
+    dispatchPointer(canvas, "pointerdown", 630, 96)
+    canvas.dispatchEvent(new MouseEvent("pointerleave", { bubbles: true }))
+    expect(block.querySelector<HTMLElement>(".chart-tooltip")?.hidden).toBe(false)
+    expect(block.querySelector(".chart-tooltip")?.textContent).toContain("20.0%")
+
+    dispatchPointer(canvas, "pointerdown", 56, 96)
+    expect(block.querySelector(".chart-tooltip")?.textContent).toContain("10.0%")
+    document.body.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true }))
+    expect(block.querySelector<HTMLElement>(".chart-tooltip")?.hidden).toBe(true)
+  })
+
+  it("shows every series value for a multi-value axis", () => {
+    const snapshot = detailSnapshot()
+    const { from, to } = snapshot.history
+    snapshot.history.series = {
+      ...snapshot.history.series,
+      net_recv: [{ timestamp: from, value: 1024 }, { timestamp: to, value: 2048 }],
+      net_sent: [{ timestamp: from, value: 512 }, { timestamp: to, value: 1024 }],
+    }
+    state.snapshot = snapshot
+    renderDetail(snapshot, "en")
+    const block = chartBlockByTitle("Network rate")
+    const canvas = prepareCanvas(block.querySelector<HTMLCanvasElement>(".chart-canvas")!)
+    hoverCanvas(canvas)
+
+    const rows = Array.from(block.querySelectorAll(".chart-tooltip-row")).map((row) => row.textContent)
+    expect(rows).toEqual(["Download2.00 KB/s", "Upload1.00 KB/s"])
+  })
+
+  it("shows carrier values independently on a multi-series network chart", () => {
+    state.tab = "network"
+    const now = 1_760_000_000
+    const snapshot = Object.assign(detailSnapshot(), {
+      network: { visible: true, tasks: [{
+        id: "carriers", name: "Three carriers", type: "icmp",
+        targets: [{ id: "mobile" }, { id: "unicom" }, { id: "telecom" }],
+        nodes: [{ node_id: "node-1", latest: { timestamp: new Date(now * 1000).toISOString(), success: true, latency_ms: 40 } }],
+      }] },
+      network_history: { from: now - 21600, to: now, tasks: [{ id: "carriers", series: [
+        { id: "mobile", label: "移动", carrier: "mobile", points: [{ timestamp: now - 3600, latency_ms: 18 }, { timestamp: now, latency_ms: 20 }] },
+        { id: "unicom", label: "联通", carrier: "unicom", points: [{ timestamp: now - 3600, latency_ms: 28 }, { timestamp: now, latency_ms: 30 }] },
+        { id: "telecom", label: "电信", carrier: "telecom", points: [{ timestamp: now - 3600, latency_ms: 38 }, { timestamp: now, latency_ms: 40 }] },
+      ] }] },
+    })
+    state.snapshot = snapshot
+    renderDetail(snapshot as never, "en")
+    const chart = document.querySelector<HTMLElement>(".network-chart")!
+    const canvas = prepareCanvas(chart.querySelector<HTMLCanvasElement>(".chart-canvas")!)
+    hoverCanvas(canvas)
+
+    const rows = Array.from(chart.querySelectorAll(".chart-tooltip-row")).map((row) => row.textContent)
+    expect(rows).toEqual(["移动20.0 ms", "联通30.0 ms", "电信40.0 ms"])
+  })
+})
+
 describe("default theme DOM helpers", () => {
   it("creates text nodes without interpreting markup", () => {
     const root = element("div", "root")
@@ -195,6 +287,42 @@ describe("default theme DOM helpers", () => {
     expect(root.innerHTML).toBe('<span>&lt;b&gt;safe&lt;/b&gt;</span>')
   })
 })
+
+function chartBlockByTitle(title: string): HTMLElement {
+  const block = Array.from(document.querySelectorAll<HTMLElement>(".chart-block"))
+    .find((candidate) => candidate.querySelector(".chart-title")?.textContent === title)
+  if (!block) throw new Error(`chart block not found: ${title}`)
+  return block
+}
+
+function installCanvasContext() {
+  const context = {
+    setTransform: vi.fn(), clearRect: vi.fn(), fillRect: vi.fn(), beginPath: vi.fn(),
+    moveTo: vi.fn(), lineTo: vi.fn(), stroke: vi.fn(), fillText: vi.fn(), setLineDash: vi.fn(),
+    save: vi.fn(), restore: vi.fn(), arc: vi.fn(), fill: vi.fn(),
+  }
+  vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(context as never)
+}
+
+function prepareCanvas(canvas: HTMLCanvasElement): HTMLCanvasElement {
+  Object.defineProperty(canvas, "clientWidth", { configurable: true, value: 640 })
+  Object.defineProperty(canvas, "clientHeight", { configurable: true, value: 218 })
+  canvas.getBoundingClientRect = () => ({
+    bottom: 218, height: 218, left: 0, right: 640, top: 0, width: 640, x: 0, y: 0,
+    toJSON: () => ({}),
+  })
+  return canvas
+}
+
+function hoverCanvas(canvas: HTMLCanvasElement) {
+  canvas.dispatchEvent(new MouseEvent("pointermove", { bubbles: true, clientX: 628, clientY: 96 }))
+}
+
+function dispatchPointer(canvas: HTMLCanvasElement, type: string, clientX: number, clientY: number) {
+  const event = new MouseEvent(type, { bubbles: true, clientX, clientY })
+  Object.defineProperty(event, "pointerType", { value: "touch" })
+  canvas.dispatchEvent(event)
+}
 
 function snapshot() {
   return {

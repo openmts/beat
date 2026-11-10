@@ -112,15 +112,26 @@ function WorkerTable({ workers }: { workers: RuntimeWorker[] }) {
   const { t } = useLocale()
   const now = Date.now()
   return <Table><TableHeader><TableRow>
-    <TableHead>{t("operations.worker")}</TableHead><TableHead>{t("operations.state")}</TableHead><TableHead>{t("operations.last_success")}</TableHead>
-    <TableHead>{t("operations.consecutive_failures")}</TableHead><TableHead>{t("operations.restarts")}</TableHead><TableHead>{t("operations.scheduler_lag")}</TableHead>
+    <TableHead>{t("operations.worker")}</TableHead><TableHead>{t("operations.state")}</TableHead>
+    <TableHead className="hidden xl:table-cell">{t("operations.last_success")}</TableHead>
+    <TableHead className="hidden xl:table-cell">{t("operations.consecutive_failures")}</TableHead>
+    <TableHead className="hidden xl:table-cell">{t("operations.restarts")}</TableHead>
+    <TableHead className="hidden min-w-40 xl:table-cell">{t("operations.scheduler_lag")}</TableHead>
   </TableRow></TableHeader><TableBody>{workers.map((worker) => <TableRow key={worker.name}>
-    <TableCell className="font-medium">{label(t, workerLabelKeys, worker.name)}</TableCell>
+    <TableCell className="whitespace-normal font-medium">
+      <div>{label(t, workerLabelKeys, worker.name)}</div>
+      <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs font-normal text-muted-foreground xl:hidden">
+        <span>{t("operations.last_success")}: {relativeAge(worker.last_success, now, t)}</span>
+        <span>{t("operations.consecutive_failures")}: {worker.consecutive_failures}</span>
+        <span>{t("operations.restarts")}: {worker.restarts}</span>
+        {worker.interval_seconds > 0 && <span>{t("operations.scheduler_lag")}: {worker.scheduler_lag_seconds.toFixed(1)}s / {worker.interval_seconds}s</span>}
+      </div>
+    </TableCell>
     <TableCell><Badge variant={workerVariant(worker)}>{label(t, workerStateLabelKeys, worker.state)}</Badge></TableCell>
-    <TableCell>{relativeAge(worker.last_success, now, t)}</TableCell>
-    <TableCell className="tabular-nums">{worker.consecutive_failures}</TableCell>
-    <TableCell className="tabular-nums">{worker.restarts}</TableCell>
-    <TableCell className="min-w-40">{worker.interval_seconds > 0 ? <div className="space-y-1"><span className="font-mono text-xs tabular-nums">{worker.scheduler_lag_seconds.toFixed(1)}s / {worker.interval_seconds}s</span><Progress value={percent(worker.scheduler_lag_seconds, worker.interval_seconds)} aria-label={t("operations.scheduler_lag")} /></div> : "—"}</TableCell>
+    <TableCell className="hidden xl:table-cell">{relativeAge(worker.last_success, now, t)}</TableCell>
+    <TableCell className="hidden tabular-nums xl:table-cell">{worker.consecutive_failures}</TableCell>
+    <TableCell className="hidden tabular-nums xl:table-cell">{worker.restarts}</TableCell>
+    <TableCell className="hidden xl:table-cell">{worker.interval_seconds > 0 ? <div className="space-y-1"><span className="font-mono text-xs tabular-nums">{worker.scheduler_lag_seconds.toFixed(1)}s / {worker.interval_seconds}s</span><Progress value={percent(worker.scheduler_lag_seconds, worker.interval_seconds)} aria-label={t("operations.scheduler_lag")} /></div> : "—"}</TableCell>
   </TableRow>)}</TableBody></Table>
 }
 

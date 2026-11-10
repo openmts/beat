@@ -145,7 +145,7 @@ export interface SecurityEvent {
   device_summary: string
   country_code: string
   region: string
-  reasons: string[]
+  reasons?: string[] | null
   policy_revision: number
   routing_state: string
   audit_event_id: string

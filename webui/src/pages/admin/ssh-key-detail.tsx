@@ -7,7 +7,7 @@ import { useLocale } from "@/context/locale"
 import type { GeneratedSSHKey } from "@/types"
 export function SSHKeyDetail({ value, close }: { value: GeneratedSSHKey; close: () => void }) {
  const { t } = useLocale()
- return <Dialog open onOpenChange={open => { if (!open) close() }}><DialogContent className="max-w-2xl"><DialogHeader><DialogTitle>{value.name}</DialogTitle><DialogDescription>{t("ssh.generated_description")}</DialogDescription></DialogHeader>
+ return <Dialog open onOpenChange={open => { if (!open) close() }}><DialogContent className="sm:max-w-2xl"><DialogHeader><DialogTitle>{value.name}</DialogTitle><DialogDescription>{t("ssh.generated_description")}</DialogDescription></DialogHeader>
   <KeyField label={t("ssh.fingerprint")} value={value.fingerprint} /><KeyField label={t("ssh.public_key")} value={value.public_key} /><KeyField label={t("ssh.private_key")} value={value.private_key || ""} />
   <DialogFooter><Button variant="outline" onClick={close}>{t("app.cancel")}</Button></DialogFooter></DialogContent></Dialog>
 }

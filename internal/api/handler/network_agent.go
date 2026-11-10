@@ -10,6 +10,8 @@ import (
 	"github.com/beat/backend/internal/store"
 )
 
+const networkResultMaxAge = 5 * time.Minute
+
 func (h *NetworkHandler) HandleNetworkAssignments(w http.ResponseWriter, r *http.Request) {
 	identity, ok := middleware.AgentIdentity(r.Context())
 	if !ok {
@@ -46,7 +48,13 @@ func (h *NetworkHandler) HandleNetworkResults(w http.ResponseWriter, r *http.Req
 		JSONError(w, http.StatusBadRequest, "invalid network result batch")
 		return
 	}
-	samples, status, err := h.validateNetworkResults(r, identity.NodeID, body.Results)
+	now := h.now()
+	fresh, expired := splitExpiredNetworkResults(body.Results, now)
+	if len(fresh) == 0 && len(expired) > 0 {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	samples, status, err := h.validateNetworkResults(r, identity.NodeID, fresh, now)
 	if err != nil {
 		JSONError(w, status, err.Error())
 		return
@@ -63,12 +71,12 @@ func (h *NetworkHandler) validateNetworkResults(
 	r *http.Request,
 	nodeID string,
 	results []model.NetworkProbeResult,
+	now time.Time,
 ) ([]store.NetworkProbeSample, int, error) {
-	now := h.now()
 	samples := make([]store.NetworkProbeSample, 0, len(results))
 	for _, result := range results {
-		if err := result.Validate(); err != nil || result.TargetID == "" || result.FinishedAt.Before(now.Add(-5*time.Minute)) ||
-			result.FinishedAt.After(now.Add(5*time.Minute)) {
+		if err := result.Validate(); err != nil || result.TargetID == "" ||
+			result.FinishedAt.After(now.Add(networkResultMaxAge)) {
 			return nil, http.StatusBadRequest, errors.New("invalid network result")
 		}
 		assigned, err := h.tasks.GetAssignedTarget(r.Context(), nodeID, result.TaskID, result.TargetID)
@@ -97,4 +105,23 @@ func (h *NetworkHandler) validateNetworkResults(
 		})
 	}
 	return samples, http.StatusNoContent, nil
+}
+
+// splitExpiredNetworkResults 丢弃超过服务端接收窗口的结果。旧版 Agent 在
+// 整批永久失败时不会清空队列，继续返回 400 会让它永远阻塞；确认该批次而不
+// 落库可让客户端丢弃过期数据并重新上报。
+func splitExpiredNetworkResults(
+	results []model.NetworkProbeResult,
+	now time.Time,
+) (fresh, expired []model.NetworkProbeResult) {
+	cutoff := now.Add(-networkResultMaxAge)
+	fresh = make([]model.NetworkProbeResult, 0, len(results))
+	for _, result := range results {
+		if !result.FinishedAt.IsZero() && result.FinishedAt.Before(cutoff) {
+			expired = append(expired, result)
+			continue
+		}
+		fresh = append(fresh, result)
+	}
+	return fresh, expired
 }

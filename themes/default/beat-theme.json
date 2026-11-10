@@ -3,7 +3,7 @@
   "id": "beat-default",
   "name": "Default",
   "description": "A quiet, light-first fleet monitor with compact node cards, resource history and network quality details.",
-  "version": "1.1.0",
+  "version": "1.1.4",
   "author": "Beat contributors",
   "license": "MIT",
   "runtime": "sandboxed",

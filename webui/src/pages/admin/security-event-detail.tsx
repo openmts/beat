@@ -51,7 +51,7 @@ function EventFacts({ event }: { event: SecurityEvent }) {
   const t = useSecurityEventsText()
   const label = useSecurityLabel()
   const { locale } = useLocale()
-  const reasons = event.reasons.map(reason => label("reason", reason)).join(" / ")
+  const reasons = (event.reasons ?? []).map(reason => label("reason", reason)).join(" / ")
   const facts: [string, string][] = [
     [t("severity"), label("severity", event.severity)],
     [t("actor"), event.actor_display_name || "—"],

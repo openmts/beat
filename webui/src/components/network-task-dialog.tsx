@@ -13,6 +13,7 @@ import {
 } from "@/components/ui/dialog"
 import { FieldGroup } from "@/components/ui/field"
 import { useLocale } from "@/context/locale"
+import { networkTargetFormatError, normalizeTargetForType } from "@/lib/network-target-format"
 import type { NetworkTaskPayload, NetworkTaskView, Node } from "@/types"
 
 interface NetworkTaskDialogProps {
@@ -94,7 +95,10 @@ export function NetworkTaskDialog({
             search={search}
             t={t}
             onSearchChange={setSearch}
-            onChange={(changes) => setPayload((current) => ({ ...current, ...changes }))}
+            onChange={(changes) => {
+              setValidationError(null)
+              setPayload((current) => ({ ...current, ...changes }))
+            }}
           />
         </FieldGroup>
         <DialogFooter>
@@ -110,16 +114,22 @@ function normalizePayload(payload: NetworkTaskPayload, t: (key: string) => strin
   if (payload.direction === "server_to_agent") {
     return { ...payload, target_mode: "single", targets: [] }
   }
+  const target = normalizeTargetForType(payload.type, payload.target)
+  const targets = payload.targets.map((item) => ({
+    ...item,
+    target: normalizeTargetForType(payload.type, item.target),
+  }))
   if (payload.target_mode === "single") {
-    const current = payload.targets[0]
+    const current = targets[0]
     return {
       ...payload,
+      target,
       targets: [{
         id: current?.id ?? "",
         label: current?.label || payload.name || t("network.target_mode.single"),
         carrier: current?.carrier ?? "custom",
         region: current?.region ?? "",
-        target: payload.target,
+        target,
         ip_family: current?.ip_family ?? payload.ip_family,
         packet_count: current?.packet_count ?? payload.packet_count,
         visible_address: current?.visible_address ?? false,
@@ -128,7 +138,7 @@ function normalizePayload(payload: NetworkTaskPayload, t: (key: string) => strin
       }],
     }
   }
-  return { ...payload, targets: payload.targets.map((target, index) => ({ ...target, sort_order: index })) }
+  return { ...payload, target, targets: targets.map((item, index) => ({ ...item, sort_order: index })) }
 }
 
 function payloadFromView(view: NetworkTaskView): NetworkTaskPayload {
@@ -161,6 +171,11 @@ function validatePayload(payload: NetworkTaskPayload, t: (key: string) => string
   if (payload.direction === "agent_to_target" && payload.target_mode === "group" &&
     (payload.targets.length === 0 || payload.targets.some((target) => !target.target.trim()))) {
     return t("network.validation_targets")
+  }
+  if (payload.direction === "agent_to_target") {
+    const targets = payload.target_mode === "group" ? payload.targets.map((target) => target.target) : [payload.target]
+    const error = targets.map((target) => networkTargetFormatError(payload.type, target)).find(Boolean)
+    if (error) return t(`network.validation_${error}_target`)
   }
   if ((payload.type === "icmp" || payload.direction === "agent_to_target") &&
     (!Number.isInteger(payload.packet_count) || payload.packet_count < 1 || payload.packet_count > 20)) {

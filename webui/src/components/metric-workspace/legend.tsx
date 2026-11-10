@@ -53,7 +53,7 @@ function LegendName(props: { panel: DashboardPanel; series: MetricResultSeries; 
   const label = workspaceSeriesName(props.panel, props.series, props.expanded)
   const muted = props.hidden.includes(props.series.ref_id)
   return <button type="button" title={label} aria-pressed={!muted}
-    className={`max-w-64 truncate text-xs ${muted ? "text-muted-foreground line-through" : "text-foreground"}`}
+    className={`inline-flex min-h-8 max-w-64 items-center truncate text-left text-xs ${muted ? "text-muted-foreground line-through" : "text-foreground"}`}
     onClick={() => props.toggle(props.series.ref_id)}>{label}</button>
 }
 

@@ -36,7 +36,7 @@ export function AgentSetupCode({ title, code }: AgentSetupCodeProps) {
           {t(copied ? "setup.copied" : "setup.copy")}
         </Button>
       </div>
-      <pre tabIndex={0} aria-label={title} className="max-h-96 overflow-auto p-4 font-mono text-xs leading-relaxed whitespace-pre">
+      <pre tabIndex={0} aria-label={title} className="max-h-96 overflow-auto p-4 font-mono text-xs leading-relaxed whitespace-pre-wrap break-all sm:whitespace-pre">
         <code>{code}</code>
       </pre>
       {errorText === code && (

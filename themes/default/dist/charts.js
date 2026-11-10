@@ -2,6 +2,7 @@ import { append, element } from "./dom.js"
 import { decimal, formatBytes, formatDate, formatRate, percentValue } from "./format.js"
 import { strings } from "./i18n.js"
 import { chartRuntime, chartTasks, state } from "./state.js"
+import { bindChartHover, chartTooltip, disposeChartHover, drawChartHover } from "./chart-hover.js"
 
 function numericValues(snapshot, keys) {
   const values = []
@@ -52,14 +53,17 @@ export function chartBlock(snapshot, spec, locale) {
   const canvas = element("canvas", "chart-canvas")
   canvas.setAttribute("role", "img")
   canvas.setAttribute("aria-label", `${spec.title}: ${note.textContent}`)
-  wrap.append(canvas)
+  const tooltip = chartTooltip()
+  wrap.append(canvas, tooltip)
   append(block, head, wrap)
   if (spec.labels?.length > 1) block.append(legend(spec.labels))
-  chartTasks.push({ canvas, spec })
+  const task = { canvas, spec, tooltip }
+  chartTasks.push(task)
+  bindChartHover(task, drawChart)
   return block
 }
 
-export function networkChartBlock(title, source, bounds, locale) {
+export function networkChartBlock(title, source, bounds, locale, statuses = {}) {
   const t = strings(locale)
   const series = Array.isArray(source) && source.length && Array.isArray(source[0]?.points)
     ? source
@@ -75,27 +79,48 @@ export function networkChartBlock(title, source, bounds, locale) {
   const canvas = element("canvas", "chart-canvas network-canvas")
   canvas.setAttribute("role", "img")
   canvas.setAttribute("aria-label", `${title}: ${note}`)
-  wrap.append(canvas)
-  append(root, element("p", "network-chart-note", note), wrap)
-  if (series.length > 1) {
-    const labels = element("div", "legend")
-    for (const entry of series) {
-      const item = element("span", "legend-item")
-      const swatch = element("span", "legend-swatch")
-      swatch.style.background = networkCarrierColor(entry.carrier)
-      append(item, swatch, element("span", "", entry.label || entry.carrier || title))
-      labels.append(item)
-    }
-    root.append(labels)
-  }
-  chartTasks.push({
+  const tooltip = chartTooltip()
+  wrap.append(canvas, tooltip)
+  append(root, element("p", "network-chart-note", note), networkLegend(series, statuses, title, t), wrap)
+  const task = {
     canvas, spec: { title, unit: "ms" }, bounds,
     series: series.map((entry) => ({
       points: entry.points.map((point) => ({ timestamp: point.timestamp, value: point.latency_ms })),
+      label: entry.label || entry.carrier || title,
       color: networkCarrierColor(entry.carrier),
     })),
-  })
+    tooltip,
+  }
+  chartTasks.push(task)
+  bindChartHover(task, drawChart)
   return root
+}
+
+function networkLegend(series, statuses, title, t) {
+  const labels = element("div", "legend")
+  for (const entry of series) {
+    const color = networkCarrierColor(entry.carrier)
+    const hasLatency = Array.isArray(entry.points) && entry.points.some((point) => Number.isFinite(point.latency_ms))
+    const item = element("span", "legend-item")
+    const swatch = element("span", "legend-swatch")
+    const label = element("span", "", `${entry.label || entry.carrier || title}${legendState(entry, statuses[entry.id], hasLatency, t)}`)
+    swatch.style.background = color
+    if (!hasLatency) {
+      swatch.classList.add("empty")
+      swatch.style.background = "transparent"
+      swatch.style.borderTopColor = color || "currentColor"
+    }
+    append(item, swatch, label)
+    labels.append(item)
+  }
+  return labels
+}
+
+function legendState(entry, latest, hasLatency, t) {
+  if (hasLatency) return ""
+  if (!latest) return ` · ${t.pending}`
+  if (Number.isFinite(latest.status_code) && latest.status_code) return ` · HTTP ${latest.status_code}`
+  return ` · ${latest.success ? t.success : t.failed}`
 }
 
 function networkCarrierColor(carrier) {
@@ -220,7 +245,7 @@ function drawSeries(context, options) {
 
 function drawChart(task) {
   const prepared = prepareCanvas(task.canvas)
-  if (!prepared) return
+  if (!prepared) return null
   const { context, width, height } = prepared
   const palette = chartPalette()
   context.clearRect(0, 0, width, height)
@@ -231,9 +256,15 @@ function drawChart(task) {
   const plotHeight = Math.max(1, height - insert.top - insert.bottom)
   insert.plotHeight = plotHeight
   const bounds = task.bounds ?? chartBounds(state.snapshot)
-  const series = task.series ?? task.spec.keys.map((key, index) => ({ points: state.snapshot.history?.series?.[key] ?? [], index }))
+  const series = (task.series ?? task.spec.keys.map((key) => ({ points: state.snapshot.history?.series?.[key] ?? [] })))
+    .map((entry, index) => ({
+      ...entry,
+      label: entry.label || task.spec.labels?.[index] || task.spec.title || `#${index + 1}`,
+      color: entry.color || (index ? palette.muted : palette.text),
+    }))
   const values = series.flatMap((entry) => entry.points.map((point) => point.value)).filter(Number.isFinite)
   const yMax = chartYMax(values, task.spec.unit)
+  task.layout = { bounds, height, insert, plotHeight, plotWidth, series, width, yMax }
   drawYAxis(context, palette, insert, plotWidth, plotHeight, yMax, task.spec.unit)
   drawXAxis(context, palette, insert, plotWidth, height, bounds, state.locale)
   context.setLineDash([])
@@ -242,12 +273,15 @@ function drawChart(task) {
     context.textAlign = "center"
     context.font = "12px ui-sans-serif, system-ui, sans-serif"
     context.fillText(strings(state.locale).noSample, insert.left + plotWidth / 2, insert.top + plotHeight / 2)
-    return
+    task.tooltip.hidden = true
+    return task.layout
   }
-  series.forEach((entry, index) => drawSeries(context, {
+  series.forEach((entry) => drawSeries(context, {
     points: entry.points, bounds, yMax, insert, plotWidth, plotHeight,
-    color: entry.color || (index ? palette.muted : palette.text),
+    color: entry.color,
   }))
+  if (task.hover) drawChartHover(context, palette, task.layout, task.hover)
+  return task.layout
 }
 
 function drawCharts() {
@@ -269,6 +303,7 @@ export function registerCharts() {
 }
 
 export function resetCharts() {
+  for (const task of chartTasks) disposeChartHover(task)
   chartTasks.length = 0
   if (chartRuntime.frame) cancelAnimationFrame(chartRuntime.frame)
   chartRuntime.frame = 0

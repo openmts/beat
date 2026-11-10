@@ -135,7 +135,7 @@ export function DiagnosticsCreateDialog(props: DiagnosticsCreateDialogProps) {
 
   return (
     <Dialog open={props.open} onOpenChange={props.onOpenChange}>
-      <DialogContent className="max-w-xl">
+      <DialogContent className="sm:max-w-xl">
         <DialogHeader>
           <DialogTitle>{t("diagnostics.create_title")}</DialogTitle>
           <DialogDescription>{t("diagnostics.create_description")}</DialogDescription>

@@ -12,7 +12,7 @@ const types = [{ label: "Ed25519", value: "ed25519" }, { label: "RSA 2048", valu
 export function SSHKeyEditor({ close, submit }: { close: () => void; submit: (draft: SSHKeyDraft) => void }) {
  const { t } = useLocale(), [draft, setDraft] = useState<SSHKeyDraft>({ mode: "import", name: "", publicKey: "", privateKey: "", keyType: "ed25519" })
  const change = (field: keyof SSHKeyDraft, value: string) => setDraft(current => ({ ...current, [field]: value }))
- return <Dialog open onOpenChange={open => { if (!open) close() }}><DialogContent className="max-w-lg"><DialogHeader><DialogTitle>{t("ssh.keys")}</DialogTitle><DialogDescription>{t("ssh.keys_description")}</DialogDescription></DialogHeader>
+ return <Dialog open onOpenChange={open => { if (!open) close() }}><DialogContent className="sm:max-w-lg"><DialogHeader><DialogTitle>{t("ssh.keys")}</DialogTitle><DialogDescription>{t("ssh.keys_description")}</DialogDescription></DialogHeader>
   <Tabs value={draft.mode} onValueChange={mode => { change("mode", mode); change("privateKey", "") }}><TabsList className="w-full"><TabsTrigger value="import">{t("ssh.import")}</TabsTrigger><TabsTrigger value="generate">{t("ssh.generate")}</TabsTrigger></TabsList>
    <div className="my-4 space-y-2"><Label htmlFor="ssh-key-name">{t("node.name")}</Label><Input id="ssh-key-name" value={draft.name} onChange={e => change("name", e.target.value)} /></div>
    <TabsContent value="import" className="space-y-3"><Label htmlFor="ssh-import-public">{t("ssh.public_key")}</Label><Textarea id="ssh-import-public" value={draft.publicKey} onChange={e => change("publicKey", e.target.value)} />

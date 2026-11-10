@@ -122,6 +122,33 @@ func TestMTSNetworkProbeDirectionAndQualityFields(t *testing.T) {
 	}
 }
 
+func TestMTSNetworkProbeMixedOptionalFields(t *testing.T) {
+	s := setupTestMTS(t)
+	ctx := t.Context()
+	start := time.Date(2026, 11, 9, 13, 22, 0, 0, time.UTC)
+	successPercent, jitter, minimum, maximum, p95, stddev := 100.0, 1.5, 10.0, 20.0, 19.0, 2.0
+	samples := []NetworkProbeSample{
+		{TaskID: "carrier", TargetID: "mobile", NodeID: "node", TaskType: "http",
+			FinishedAt: start, LatencyMS: 15, Success: true, ErrorCode: "none",
+			AttemptCount: 5, SuccessCount: 5, SuccessPercent: &successPercent,
+			JitterMS: &jitter, MinLatencyMS: &minimum, MaxLatencyMS: &maximum,
+			P95LatencyMS: &p95, StdDevLatencyMS: &stddev},
+		{TaskID: "carrier", TargetID: "unicom", NodeID: "node", TaskType: "http",
+			FinishedAt: start.Add(time.Second), LatencyMS: 16, Success: false,
+			StatusCode: 403, ErrorCode: "http_status", AttemptCount: 5,
+			SuccessPercent: &successPercent},
+	}
+	if err := s.WriteNetworkProbes(ctx, samples); err != nil {
+		t.Fatalf("write mixed optional fields: %v", err)
+	}
+	for _, sample := range samples {
+		latest, err := s.QueryNetworkLatestForTarget(ctx, sample.TaskID, sample.NodeID, sample.TargetID)
+		if err != nil || latest == nil || latest.Success != sample.Success {
+			t.Fatalf("latest %s = %#v, error = %v", sample.TargetID, latest, err)
+		}
+	}
+}
+
 func TestMTSNetworkProbeTargetIsolationAndStatistics(t *testing.T) {
 	s := setupTestMTS(t)
 	ctx := t.Context()

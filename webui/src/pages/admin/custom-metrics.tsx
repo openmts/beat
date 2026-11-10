@@ -223,31 +223,42 @@ function CustomMetrics() {
           ) : metrics.length === 0 ? (
             <p className="py-8 text-center text-sm text-muted-foreground">{t("custom_metric.empty")}</p>
           ) : (
-            <Table>
+            <Table className="max-sm:table-fixed">
               <TableHeader>
                 <TableRow>
                   <TableHead>{t("custom_metric.name")}</TableHead>
-                  <TableHead>{t("custom_metric.shell_command")}</TableHead>
-                  <TableHead>{t("custom_metric.interval")}</TableHead>
-                  <TableHead>{t("custom_metric.status")}</TableHead>
-                  <TableHead className="text-right">{t("app.actions")}</TableHead>
+                  <TableHead className="hidden lg:table-cell">{t("custom_metric.shell_command")}</TableHead>
+                  <TableHead className="hidden sm:table-cell">{t("custom_metric.interval")}</TableHead>
+                  <TableHead className="hidden sm:table-cell">{t("custom_metric.status")}</TableHead>
+                  <TableHead className="w-28 text-right sm:w-48">{t("app.actions")}</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {metrics.map((metric) => (
                   <TableRow key={metric.id}>
-                    <TableCell className="font-medium">{metric.name}</TableCell>
-                    <TableCell className="max-w-[280px] truncate font-mono text-xs text-muted-foreground">
+                    <TableCell className="whitespace-normal font-medium">
+                      <div>{metric.name}</div>
+                      <div className="mt-1 max-w-[22rem] truncate font-mono text-xs font-normal text-muted-foreground lg:hidden">
+                        {metric.shell_command}
+                      </div>
+                      <div className="mt-1 flex items-center gap-2 text-xs font-normal text-muted-foreground sm:hidden">
+                        <span>{metric.interval_seconds}s</span>
+                        <Badge variant={metric.enabled ? "default" : "secondary"}>
+                          {metric.enabled ? t("custom_metric.enabled") : t("custom_metric.disabled")}
+                        </Badge>
+                      </div>
+                    </TableCell>
+                    <TableCell className="hidden max-w-[180px] truncate font-mono text-xs text-muted-foreground lg:table-cell">
                       {metric.shell_command}
                     </TableCell>
-                    <TableCell className="tabular-nums">{metric.interval_seconds}s</TableCell>
-                    <TableCell>
+                    <TableCell className="hidden tabular-nums sm:table-cell">{metric.interval_seconds}s</TableCell>
+                    <TableCell className="hidden sm:table-cell">
                       <Badge variant={metric.enabled ? "default" : "secondary"}>
                         {metric.enabled ? t("custom_metric.enabled") : t("custom_metric.disabled")}
                       </Badge>
                     </TableCell>
-                    <TableCell className="text-right">
-                      <div className="flex justify-end gap-1">
+                    <TableCell className="w-28 min-w-0 text-right sm:w-48">
+                      <div className="flex flex-wrap justify-end gap-1">
                         <Button variant="ghost" size="icon" aria-label={t("custom_metric.view_data")}
                           onClick={() => void openView(metric)}>
                           <ChartLineIcon data-icon />
@@ -395,7 +406,7 @@ function CustomMetrics() {
       </Dialog>
 
       <Dialog open={!!viewMetric} onOpenChange={(o) => { if (!o) setViewMetric(null) }}>
-        <DialogContent className="max-w-2xl">
+        <DialogContent className="sm:max-w-2xl">
           <DialogHeader>
             <DialogTitle>{viewMetric ? `${viewMetric.name} ${t("custom_metric.view_data")}` : ""}</DialogTitle>
             <DialogDescription>{t("custom_metric.view_description")}</DialogDescription>

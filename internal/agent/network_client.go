@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -35,6 +36,31 @@ type NetworkHTTPClient struct {
 	resultsURL     string
 	token          string
 	client         *http.Client
+}
+
+type networkStatusError struct {
+	operation  string
+	statusCode int
+	message    string
+	cause      error
+}
+
+func (err *networkStatusError) Error() string {
+	if err.cause != nil {
+		return fmt.Sprintf("server rejected %s with status %d: %v", err.operation, err.statusCode, err.cause)
+	}
+	return fmt.Sprintf("server rejected %s with status %d: %s", err.operation, err.statusCode, err.message)
+}
+
+func (err *networkStatusError) Unwrap() error {
+	return err.cause
+}
+
+func (err *networkStatusError) retryable() bool {
+	if err.statusCode == http.StatusRequestTimeout || err.statusCode == http.StatusTooManyRequests {
+		return true
+	}
+	return err.statusCode >= http.StatusInternalServerError
 }
 
 func NewNetworkHTTPClient(config Config) (*NetworkHTTPClient, error) {
@@ -115,9 +141,19 @@ func (client *NetworkHTTPClient) ReportResults(ctx context.Context, results []mo
 
 func networkResponseError(response *http.Response, operation string) error {
 	message, err := io.ReadAll(io.LimitReader(response.Body, maxErrorBody))
+	statusErr := &networkStatusError{operation: operation, statusCode: response.StatusCode}
 	if err != nil {
-		return fmt.Errorf("server rejected %s with status %d: %w", operation, response.StatusCode, err)
+		statusErr.cause = err
+		return statusErr
 	}
-	return fmt.Errorf("server rejected %s with status %d: %s",
-		operation, response.StatusCode, strings.TrimSpace(string(message)))
+	statusErr.message = strings.TrimSpace(string(message))
+	return statusErr
+}
+
+func networkReportRetryable(err error) bool {
+	var statusErr *networkStatusError
+	if errors.As(err, &statusErr) {
+		return statusErr.retryable()
+	}
+	return true
 }

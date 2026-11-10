@@ -48,6 +48,24 @@ func TestSecurityEventHistoryFiltersAndAcknowledgement(t *testing.T) {
 	}
 }
 
+func TestSecurityEventReadNormalizesNullReasons(t *testing.T) {
+	database := setupTestDB(t)
+	store := NewAdminStore(database.DB)
+	now := time.Date(2026, 7, 30, 4, 0, 0, 0, time.UTC)
+	seedSecurityEvent(t, store, "event-null-reasons", model.SecurityEventLoginSucceeded, model.SecuritySeverityInfo,
+		"", model.SecuritySourceClassPrivate, "private", now)
+	if _, err := database.DB.Exec(`UPDATE security_events SET reasons_json = 'null' WHERE id = 'event-null-reasons'`); err != nil {
+		t.Fatalf("set null reasons: %v", err)
+	}
+	event, err := store.GetSecurityEvent(t.Context(), "event-null-reasons")
+	if err != nil {
+		t.Fatalf("read event: %v", err)
+	}
+	if event.Reasons == nil || len(event.Reasons) != 0 {
+		t.Fatalf("reasons = %#v, want non-nil empty slice", event.Reasons)
+	}
+}
+
 func TestSecuritySettingsUpdateRequiresRevisionAndAudits(t *testing.T) {
 	database := setupTestDB(t)
 	store := NewAdminStore(database.DB)

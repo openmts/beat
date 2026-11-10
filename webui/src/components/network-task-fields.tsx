@@ -16,6 +16,7 @@ import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectVa
 import { Switch } from "@/components/ui/switch"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { networkNodeLabel } from "@/lib/network-quality"
+import { normalizeTargetForType } from "@/lib/network-target-format"
 import type {
   NetworkDirection,
   NetworkIPFamily,
@@ -52,10 +53,12 @@ function IdentityFields({ payload, t, onChange }: NetworkTaskFieldsProps) {
   const changeType = (value: NetworkProbeType) => {
     onChange({
       type: value,
-      target: payload.direction === "server_to_agent" ? serverTarget(value) : "",
+      target: payload.direction === "server_to_agent" ? serverTarget(value) : normalizeTargetForType(value, payload.target),
       packet_count: value === "icmp" ? Math.max(payload.packet_count, 5) : 3,
       targets: payload.targets.map((target) => ({
-        ...target, packet_count: value === "icmp" ? Math.max(target.packet_count, 5) : Math.max(target.packet_count, 3),
+        ...target,
+        target: payload.direction === "server_to_agent" ? target.target : normalizeTargetForType(value, target.target),
+        packet_count: value === "icmp" ? Math.max(target.packet_count, 5) : Math.max(target.packet_count, 3),
       })),
     })
   }

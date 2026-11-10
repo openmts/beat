@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -162,9 +163,17 @@ func TestNetworkRunnerDefaultsAndFlushBranches(t *testing.T) {
 	if got := runner.flushResults(t.Context(), nil); len(got) != 0 {
 		t.Fatalf("empty flush = %#v", got)
 	}
-	batch := []model.NetworkProbeResult{{TaskID: "one"}, {TaskID: "two"}}
+	finished := model.NowUTC()
+	batch := []model.NetworkProbeResult{
+		{TaskID: "one", FinishedAt: finished},
+		{TaskID: "two", FinishedAt: finished},
+	}
 	if got := runner.flushResults(t.Context(), batch); len(got) != 0 {
 		t.Fatalf("successful flush = %#v", got)
+	}
+	batch = []model.NetworkProbeResult{
+		{TaskID: "one", FinishedAt: finished},
+		{TaskID: "two", FinishedAt: finished},
 	}
 	client.reportErr = errors.New("offline")
 	if got := runner.flushResults(t.Context(), batch); len(got) != len(batch) {
@@ -199,6 +208,57 @@ func TestNetworkRunnerDefaultsAndFlushBranches(t *testing.T) {
 	}
 }
 
+func TestNetworkRunnerDropsPermanentReportErrors(t *testing.T) {
+	client := &fakeNetworkClient{
+		reportErr: &networkStatusError{
+			operation: "network results", statusCode: http.StatusBadRequest, message: "invalid network result",
+		},
+	}
+	errorsSeen := []error{}
+	runner := NewNetworkRunner(NetworkRunnerOptions{
+		Client: client, Prober: &trackingProber{},
+		OnError: func(err error) { errorsSeen = append(errorsSeen, err) },
+	})
+	finished := model.NowUTC()
+	batch := []model.NetworkProbeResult{
+		{TaskID: "invalid", FinishedAt: finished},
+		{TaskID: "fresh", FinishedAt: finished},
+	}
+	if got := runner.flushResults(t.Context(), batch); len(got) != 0 {
+		t.Fatalf("permanently rejected batch = %#v", got)
+	}
+	if len(errorsSeen) != 1 {
+		t.Fatalf("errors = %#v", errorsSeen)
+	}
+}
+
+func TestNetworkRunnerRetriesTransientReportErrors(t *testing.T) {
+	client := &fakeNetworkClient{
+		reportErr: &networkStatusError{
+			operation: "network results", statusCode: http.StatusServiceUnavailable, message: "unavailable",
+		},
+	}
+	runner := NewNetworkRunner(NetworkRunnerOptions{Client: client, Prober: &trackingProber{}})
+	finished := model.NowUTC()
+	batch := []model.NetworkProbeResult{{TaskID: "retry", FinishedAt: finished}}
+	if got := runner.flushResults(t.Context(), batch); len(got) != 1 || got[0].TaskID != "retry" {
+		t.Fatalf("retryable batch = %#v", got)
+	}
+}
+
+func TestDiscardExpiredNetworkResults(t *testing.T) {
+	now := model.NowUTC()
+	batch := []model.NetworkProbeResult{
+		{TaskID: "old", FinishedAt: now.Add(-networkResultRetention - time.Second)},
+		{TaskID: "zero"},
+		{TaskID: "fresh", FinishedAt: now.Add(-networkResultRetention + time.Second)},
+	}
+	got := discardExpiredNetworkResults(batch, now)
+	if len(got) != 1 || got[0].TaskID != "fresh" {
+		t.Fatalf("retained results = %#v", got)
+	}
+}
+
 func TestNetworkRunnerResultBatchKeepsCapacityAfterFlushes(t *testing.T) {
 	client := &fakeNetworkClient{reported: make(chan []model.NetworkProbeResult, 16)}
 	runner := NewNetworkRunner(NetworkRunnerOptions{
@@ -206,7 +266,7 @@ func TestNetworkRunnerResultBatchKeepsCapacityAfterFlushes(t *testing.T) {
 	})
 	results := make(chan model.NetworkProbeResult, defaultResultQueueSize+1)
 	for index := range defaultResultQueueSize + 1 {
-		results <- model.NetworkProbeResult{TaskID: fmt.Sprintf("task-%d", index)}
+		results <- model.NetworkProbeResult{TaskID: fmt.Sprintf("task-%d", index), FinishedAt: model.NowUTC()}
 	}
 
 	ctx, cancel := context.WithCancel(t.Context())

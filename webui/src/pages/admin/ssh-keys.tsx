@@ -42,8 +42,17 @@ function SSHKeysSession() {
 }
 function SSHKeyTable({ keys, loading, busy, remove, reveal, copy }: { keys: SSHKey[]; loading: boolean; busy: boolean; remove: (key: SSHKey) => void; reveal: (key: SSHKey) => void; copy: (value: string) => Promise<void> }) {
  const { t } = useLocale()
- return <Card><CardContent className="p-0"><Table><TableHeader><TableRow><TableHead>{t("node.name")}</TableHead><TableHead>{t("app.type")}</TableHead><TableHead>{t("ssh.fingerprint")}</TableHead><TableHead>{t("app.actions")}</TableHead></TableRow></TableHeader><TableBody>
-  {loading ? <TableRow><TableCell colSpan={4}><Skeleton className="h-12 w-full" /></TableCell></TableRow> : keys.map(key => <TableRow key={key.id}><TableCell className="max-w-48 truncate font-medium">{key.name}</TableCell><TableCell>{key.key_type}</TableCell><TableCell className="max-w-48 truncate font-mono text-xs">{key.fingerprint || "--"}</TableCell><TableCell><div className="flex gap-1">
+ return <Card><CardContent className="p-0"><Table className="max-sm:table-fixed"><TableHeader><TableRow><TableHead>{t("node.name")}</TableHead><TableHead className="hidden md:table-cell">{t("app.type")}</TableHead><TableHead className="hidden md:table-cell">{t("ssh.fingerprint")}</TableHead><TableHead className="w-28 sm:w-32">{t("app.actions")}</TableHead></TableRow></TableHeader><TableBody>
+  {loading ? <TableRow><TableCell colSpan={4}><Skeleton className="h-12 w-full" /></TableCell></TableRow> : keys.map(key => <TableRow key={key.id}>
+   <TableCell className="max-w-64 font-medium">
+    <span className="block truncate">{key.name}</span>
+    <span className="mt-1 block truncate font-mono text-xs font-normal text-muted-foreground md:hidden">
+     {key.key_type} · {key.fingerprint || "--"}
+    </span>
+   </TableCell>
+   <TableCell className="hidden md:table-cell">{key.key_type}</TableCell>
+   <TableCell className="hidden max-w-48 truncate font-mono text-xs md:table-cell">{key.fingerprint || "--"}</TableCell>
+   <TableCell><div className="flex justify-end gap-1">
    <Button variant="ghost" size="icon-sm" onClick={() => void copy(key.public_key)} aria-label={t("ssh.copy_key")} title={t("ssh.copy_key")}><CopyIcon /></Button>
    <Button variant="ghost" size="icon-sm" disabled={busy} onClick={() => reveal(key)} aria-label={`${t("ssh.private_key")} · ${key.name}`} title={t("ssh.private_key")}><EyeIcon /></Button>
    <Button variant="ghost" size="icon-sm" disabled={busy} onClick={() => remove(key)} aria-label={`${t("app.delete")} · ${key.name}`} title={t("app.delete")}><Trash2Icon className="text-destructive" /></Button>

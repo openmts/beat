@@ -133,7 +133,7 @@ export function AgentOptionalFields() {
         <CardTitle><h3>{text.title}</h3></CardTitle>
         <CardDescription>{text.description}</CardDescription>
       </CardHeader>
-      <CardContent className="grid gap-6">
+      <CardContent className="grid min-w-0 gap-6">
         {sections.map((section) => <AgentOptionalSectionTable key={section.name} section={section} />)}
       </CardContent>
     </Card>
@@ -143,7 +143,7 @@ export function AgentOptionalFields() {
 function AgentOptionalSectionTable({ section }: { section: ResolvedAgentOptionalSection }) {
   const { t } = useLocale()
   return (
-    <section className="space-y-3">
+    <section className="min-w-0 space-y-3">
       <div className="space-y-1">
         <h4 className="font-mono text-sm font-medium">{section.name}</h4>
         <p className="text-sm leading-relaxed text-muted-foreground">{section.meaning}</p>

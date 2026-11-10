@@ -54,7 +54,7 @@ export function AlertRuleDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-md">
+      <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle>{editing ? t("app.edit") : t("app.create")} {t("alert.rules")}</DialogTitle>
         </DialogHeader>

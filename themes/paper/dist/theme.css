@@ -201,6 +201,30 @@ button { color: inherit; }
 .legend-swatch.secondary { background: var(--muted); }
 .chart-wrap { position: relative; width: 100%; height: 190px; margin-top: 7px; overflow: hidden; border-radius: 4px; background: var(--plot); }
 .chart-canvas { display: block; width: 100%; height: 100%; }
+.chart-tooltip {
+  position: absolute;
+  z-index: 3;
+  display: grid;
+  min-width: 138px;
+  max-width: calc(100% - 16px);
+  gap: 5px;
+  padding: 8px 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--paper) 96%, transparent);
+  box-shadow: var(--shadow);
+  color: var(--text);
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+  backdrop-filter: blur(8px);
+}
+.chart-tooltip[hidden] { display: none; }
+.chart-tooltip-time { color: var(--muted); font-size: 9.5px; }
+.chart-tooltip-row { display: grid; align-items: center; grid-template-columns: 8px minmax(0, 1fr) auto; gap: 7px; }
+.chart-tooltip-swatch { width: 8px; height: 2px; border-radius: 999px; background: var(--muted); }
+.chart-tooltip-label { overflow: hidden; color: var(--text-soft); text-overflow: ellipsis; white-space: nowrap; }
+.chart-tooltip-value { margin-left: 10px; color: var(--text); font-weight: 600; }
 .paper-network-head { justify-content: space-between; gap: 12px; }
 .paper-network-name { margin: 0; overflow: hidden; font-size: 12px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
 .paper-network-type { color: var(--muted); font-size: 9px; letter-spacing: .06em; text-transform: uppercase; }

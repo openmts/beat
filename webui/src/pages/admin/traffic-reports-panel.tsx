@@ -162,7 +162,7 @@ export default function TrafficReportsPanel() {
         onOpenChange={setDialogOpen} onChange={setForm} onSave={save}
       />
       <Dialog open={deleteID !== null} onOpenChange={(open) => { if (!open) setDeleteID(null) }}>
-        <DialogContent className="max-w-sm">
+        <DialogContent className="sm:max-w-sm">
           <DialogHeader><DialogTitle>{t("app.delete")}</DialogTitle></DialogHeader>
           <p className="text-sm text-muted-foreground">{t("confirm.delete")}</p>
           <DialogFooter>

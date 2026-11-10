@@ -46,14 +46,14 @@ export function SecuritySessionsPanel() {
         {sessions.map((session) => (
           <Card key={session.id}>
             <CardHeader>
-              <div className="flex items-center justify-between gap-2">
-                <CardTitle className="truncate text-sm">{session.user_agent || session.ip_address}</CardTitle>
-                {session.current && <Badge>{t("security.current_session")}</Badge>}
+              <div className="flex min-w-0 items-center justify-between gap-2">
+                <CardTitle className="min-w-0 flex-1 truncate text-sm">{session.user_agent || session.ip_address}</CardTitle>
+                {session.current && <Badge className="shrink-0">{t("security.current_session")}</Badge>}
               </div>
-              <CardDescription>{session.ip_address} · {session.token_prefix}</CardDescription>
+              <CardDescription className="truncate">{session.ip_address} · {session.token_prefix}</CardDescription>
             </CardHeader>
             <CardContent className="flex items-end justify-between gap-3">
-              <div className="text-xs text-muted-foreground">
+              <div className="min-w-0 text-xs text-muted-foreground">
                 <p>{t("security.last_activity")}: {formatDateTime(locale, session.last_activity_at)}</p>
                 <p>{t("security.expires")}: {formatDateTime(locale, session.absolute_expires_at)}</p>
               </div>

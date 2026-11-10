@@ -15,7 +15,7 @@ function AdminHeader() {
 
   return (
     <header className="sticky top-0 z-20 flex h-12 shrink-0 items-center gap-2 border-b bg-background/85 px-3 backdrop-blur-md supports-[backdrop-filter]:bg-background/70 sm:px-4">
-      <SidebarTrigger label={t("app.toggle_sidebar")} />
+      <SidebarTrigger label={t("app.toggle_sidebar")} size="icon-lg" />
       {settings.logo_url && (
         <img
           src={settings.logo_url}
@@ -30,7 +30,7 @@ function AdminHeader() {
       <div className="ml-auto flex shrink-0 items-center gap-1">
         <Button
           variant="ghost"
-          size="icon-sm"
+          size="icon-lg"
           onClick={toggleTheme}
           aria-label={t("app.theme")}
         >
@@ -40,10 +40,10 @@ function AdminHeader() {
             <MoonIcon />
           )}
         </Button>
-        <LanguageMenu />
+        <LanguageMenu size="icon-lg" />
         <Button
           variant="ghost"
-          size="icon-sm"
+          size="icon-lg"
           onClick={() => void logout()}
           aria-label={t("auth.logout")}
         >

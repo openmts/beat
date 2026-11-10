@@ -42,15 +42,39 @@ export default function EvaluationRulesPanel() {
   return <div className="space-y-4">
     <div className="flex justify-end gap-2"><Button variant="outline" disabled={rules.loading} onClick={() => void rules.refresh()}>{t("refresh")}</Button><Button disabled={!sources.data || sources.loading || busy} onClick={() => open(null)}><PlusIcon />{t("create")}</Button></div>
     {(error || rules.error || sources.error) && <Alert variant="destructive"><AlertDescription>{t(error ?? rules.error ?? sources.error ?? "")}</AlertDescription></Alert>}
-    <Card><CardContent className="p-0"><Table><TableHeader><TableRow>{["name", "metric", "scope", "threshold", "severity", "enabled", "detail"].map(key => <TableHead key={key}>{t(key)}</TableHead>)}</TableRow></TableHeader><TableBody>
-      {(rules.data ?? []).map(rule => <TableRow key={rule.id}>
-        <TableCell className="font-medium">{rule.name}{rule.numeric_policy_locked && <Badge variant="outline" className="ml-2">{t("policyLocked")}</Badge>}</TableCell>
-        <TableCell>{sources.data?.metrics.find(metric => metric.key === rule.metric)?.label ?? rule.metric}</TableCell><TableCell>{t(rule.scope.kind)}</TableCell>
-        <TableCell className="font-mono text-xs">{rule.operator} {rule.threshold} · {rule.duration}s<br />{rule.aggregation} / {rule.window_seconds}s</TableCell>
-        <TableCell><Badge variant={rule.severity === "critical" ? "destructive" : "outline"}>{rule.severity}</Badge></TableCell>
-        <TableCell><Switch aria-label={`${rule.name} ${t("enabled")}`} checked={rule.enabled} disabled={busy} onCheckedChange={() => void mutate(rule)} /></TableCell>
-        <TableCell><div className="flex gap-1"><Button variant="ghost" size="icon-sm" aria-label={`${t("history")} ${rule.name}`} render={<Link to={evaluationHistoryLink(rule.id)} />}><HistoryIcon /></Button><Button variant="ghost" size="icon-sm" aria-label={`${t("duplicate")} ${rule.name}`} disabled={busy} onClick={() => open(null, evaluationCopySeed(rule, t("copySuffix")))}><CopyIcon /></Button><Button variant="ghost" size="icon-sm" aria-label={`${t("edit")} ${rule.name}`} disabled={!sources.data || busy} onClick={() => open(rule)}><PencilIcon /></Button><Button variant="ghost" size="icon-sm" aria-label={`${t("remove")} ${rule.name}`} disabled={busy} onClick={() => setDeleting(rule)}><Trash2Icon className="text-destructive" /></Button></div></TableCell>
-      </TableRow>)}
+    <Card><CardContent className="p-0"><Table><TableHeader><TableRow>
+      <TableHead>{t("name")}</TableHead>
+      <TableHead className="hidden xl:table-cell">{t("metric")}</TableHead>
+      <TableHead className="hidden xl:table-cell">{t("scope")}</TableHead>
+      <TableHead className="hidden xl:table-cell">{t("threshold")}</TableHead>
+      <TableHead className="hidden xl:table-cell">{t("severity")}</TableHead>
+      <TableHead>{t("enabled")}</TableHead>
+      <TableHead className="w-36">{t("detail")}</TableHead>
+    </TableRow></TableHeader><TableBody>
+      {(rules.data ?? []).map(rule => {
+        const metric = sources.data?.metrics.find(item => item.key === rule.metric)?.label ?? rule.metric
+        const threshold = `${rule.operator} ${rule.threshold} · ${rule.duration}s · ${rule.aggregation} / ${rule.window_seconds}s`
+        return <TableRow key={rule.id}>
+          <TableCell className="whitespace-normal font-medium">
+            <div className="flex flex-wrap items-center gap-2">
+              <span>{rule.name}</span>
+              {rule.numeric_policy_locked && <Badge variant="outline">{t("policyLocked")}</Badge>}
+            </div>
+            <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs font-normal text-muted-foreground xl:hidden">
+              <span>{metric}</span>
+              <span>· {t(rule.scope.kind)}</span>
+              <span className="font-mono">· {threshold}</span>
+              <Badge variant={rule.severity === "critical" ? "destructive" : "outline"}>{rule.severity}</Badge>
+            </div>
+          </TableCell>
+          <TableCell className="hidden xl:table-cell">{metric}</TableCell>
+          <TableCell className="hidden xl:table-cell">{t(rule.scope.kind)}</TableCell>
+          <TableCell className="hidden font-mono text-xs xl:table-cell">{threshold}</TableCell>
+          <TableCell className="hidden xl:table-cell"><Badge variant={rule.severity === "critical" ? "destructive" : "outline"}>{rule.severity}</Badge></TableCell>
+          <TableCell><Switch aria-label={`${rule.name} ${t("enabled")}`} checked={rule.enabled} disabled={busy} onCheckedChange={() => void mutate(rule)} /></TableCell>
+          <TableCell><div className="flex justify-end gap-1"><Button variant="ghost" size="icon-sm" aria-label={`${t("history")} ${rule.name}`} render={<Link to={evaluationHistoryLink(rule.id)} />}><HistoryIcon /></Button><Button variant="ghost" size="icon-sm" aria-label={`${t("duplicate")} ${rule.name}`} disabled={busy} onClick={() => open(null, evaluationCopySeed(rule, t("copySuffix")))}><CopyIcon /></Button><Button variant="ghost" size="icon-sm" aria-label={`${t("edit")} ${rule.name}`} disabled={!sources.data || busy} onClick={() => open(rule)}><PencilIcon /></Button><Button variant="ghost" size="icon-sm" aria-label={`${t("remove")} ${rule.name}`} disabled={busy} onClick={() => setDeleting(rule)}><Trash2Icon className="text-destructive" /></Button></div></TableCell>
+        </TableRow>
+      })}
       {!rules.data?.length && <TableRow><TableCell colSpan={7} className="py-8 text-center text-muted-foreground">{t(rules.loading ? "loading" : "empty")}</TableCell></TableRow>}
     </TableBody></Table></CardContent></Card>
     {editing !== undefined && sources.data && <EvaluationRuleEditor rule={editing} sources={sources.data} seed={editing === null ? draft : undefined} onClose={() => { setEditing(undefined); setDraft(undefined); setSeed(null) }} onSaved={() => void rules.refresh()} />}

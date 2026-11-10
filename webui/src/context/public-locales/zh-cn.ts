@@ -413,6 +413,9 @@ export const zhCNPublicCatalog: Catalog = {
     "network.validation_timeout_interval": "超时时间不能超过执行间隔。",
     "network.validation_packet_count": "ICMP 包数必须在 1 到 20 之间。",
     "network.validation_targets": "请至少添加一个填写完整的目标。",
+    "network.validation_icmp_target": "ICMP 目标必须是 IP 地址或主机名，不能包含端口。",
+    "network.validation_tcp_target": "TCP 目标必须使用 host:port 格式。",
+    "network.validation_http_target": "HTTP 目标必须是完整的 http:// 或 https:// URL。",
     "network.validation_server_target": "服务端目标必须使用支持的节点地址占位符。",
     "agent.releases": "Agent 版本与灰度升级",
 

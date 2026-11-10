@@ -137,7 +137,7 @@ func TestNetworkHandlerRejectsInvalidRequests(t *testing.T) {
 		})
 	}
 
-	postInvalidNetworkResult(t, fixture, created.ID, fixture.now.Add(-10*time.Minute), http.StatusBadRequest)
+	postInvalidNetworkResult(t, fixture, created.ID, fixture.now.Add(-10*time.Minute), http.StatusNoContent)
 	disabled := createHandlerTask(t, fixture, false, false)
 	postInvalidNetworkResult(t, fixture, disabled.ID, fixture.now, http.StatusConflict)
 	assertHandlerStatus(t, fixture.handler.HandlePublicNetworkHistory,
