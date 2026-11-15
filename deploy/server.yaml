@@ -1,0 +1,18 @@
+# Beat Server configuration. Command-line flags override these values.
+listen: "[::]:9099"
+data_dir: /var/lib/beat
+agent_binary_dir: /usr/local/bin
+demo_mode: false
+enrollment_token_ttl: 10m
+
+# Native HTTPS protects both the web console and gRPC. Keep the private key
+# readable only by root.
+# tls_cert: /etc/beat/tls/server.crt
+# tls_key: /etc/beat/tls/server.key
+
+# Optional fixed enrollment token, at least 32 characters. Prefer short-lived
+# tokens generated from the admin console.
+# agent_token: replace-with-at-least-32-random-characters
+
+# SQLite path, MTS directory, retention, WAL policy and site identity are
+# maintained in the Beat admin console settings page.

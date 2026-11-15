@@ -1,0 +1,147 @@
+syntax = "proto3";
+
+package beat.agent.v1;
+
+option go_package = "beat/internal/protocol/beatv1;beatv1";
+
+import "google/protobuf/timestamp.proto";
+
+// AgentControl keeps one long-lived bidirectional stream per Agent. The Agent
+// sends metrics and execution results; the Server pushes task dispatch and
+// control messages over the same stream.
+service AgentControl {
+  rpc Connect(stream AgentMessage) returns (stream ServerMessage);
+}
+
+message AgentMessage {
+  oneof payload {
+    Hello hello = 1;
+    Report report = 2;
+    TaskResult task_result = 3;
+    Heartbeat heartbeat = 4;
+    UpgradeEvent upgrade_event = 5;
+  }
+}
+
+message ServerMessage {
+  oneof payload {
+    Welcome welcome = 1;
+    TaskDispatch task_dispatch = 2;
+    TaskResultAck task_result_ack = 3;
+    ServerHeartbeat heartbeat = 4;
+    AgentUpgrade agent_upgrade = 5;
+  }
+}
+
+message Hello {
+  string agent_id = 1;
+  string hostname = 2;
+  string version = 3;
+}
+
+message Welcome {
+  string node_id = 1;
+  google.protobuf.Timestamp server_time = 2;
+  int32 max_concurrent_tasks = 3;
+  int32 heartbeat_interval_seconds = 4;
+  string server_version = 5;
+}
+
+message Heartbeat {
+  google.protobuf.Timestamp sent_at = 1;
+}
+
+message ServerHeartbeat {
+  google.protobuf.Timestamp sent_at = 1;
+}
+
+message Report {
+  string agent_id = 1;
+  string hostname = 2;
+  string address = 3;
+  string os = 4;
+  string kernel = 5;
+  string arch = 6;
+  string agent_version = 7;
+  int32 interval_seconds = 8;
+  map<string, string> labels = 9;
+  repeated NetworkInterface interfaces = 10;
+  int32 cpu_cores = 11;
+  string cpu_model = 12;
+  Metrics metrics = 13;
+}
+
+message Metrics {
+  google.protobuf.Timestamp timestamp = 1;
+  double cpu_usage = 2;
+  double cpu_user = 3;
+  double cpu_system = 4;
+  double cpu_iowait = 5;
+  uint64 memory_used_bytes = 6;
+  uint64 memory_total_bytes = 7;
+  double memory_usage = 8;
+  uint64 swap_used_bytes = 9;
+  uint64 disk_used_bytes = 10;
+  uint64 disk_total_bytes = 11;
+  double disk_usage = 12;
+  double network_rx_bps = 13;
+  double network_tx_bps = 14;
+  double load1 = 15;
+  double load5 = 16;
+  double load15 = 17;
+  int32 processes = 18;
+  int32 tcp_connections = 19;
+  int64 uptime_seconds = 20;
+}
+
+message NetworkInterface {
+  string name = 1;
+  repeated string addresses = 2;
+  string mac = 3;
+  uint64 rx_bytes = 4;
+  uint64 tx_bytes = 5;
+}
+
+message TaskDispatch {
+  string run_id = 1;
+  string task_id = 2;
+  string kind = 3;
+  string name = 4;
+  string script = 5;
+  int32 timeout_seconds = 6;
+  google.protobuf.Timestamp scheduled_at = 7;
+  string config_json = 8;
+}
+
+message TaskResult {
+  string run_id = 1;
+  string task_id = 2;
+  string status = 3;
+  string output = 4;
+  int32 exit_code = 5;
+  int64 duration_ms = 6;
+}
+
+message TaskResultAck {
+  string run_id = 1;
+  bool accepted = 2;
+  string message = 3;
+}
+
+// AgentUpgrade is only sent by the authenticated Server. Agent must never
+// initiate or discover upgrades on its own.
+message AgentUpgrade {
+  string operation_id = 1;
+  string target_version = 2;
+  string arch = 3;
+  string download_url = 4;
+  string sha256 = 5;
+  int64 size = 6;
+  int32 timeout_seconds = 7;
+}
+
+message UpgradeEvent {
+  string operation_id = 1;
+  string phase = 2;
+  string message = 3;
+}

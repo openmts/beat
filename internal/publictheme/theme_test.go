@@ -1,0 +1,83 @@
+package publictheme
+
+import (
+	"encoding/json"
+	"testing"
+)
+
+func TestDefaultDocumentIsValid(t *testing.T) {
+	doc := DefaultDocument()
+	normalized, err := Normalize(doc)
+	if err != nil {
+		t.Fatalf("normalize default theme: %v", err)
+	}
+	if normalized.SchemaVersion != SchemaVersion {
+		t.Fatalf("unexpected schema version: %d", normalized.SchemaVersion)
+	}
+	if len(normalized.Home.Blocks) == 0 || len(normalized.NodeDetail.Blocks) == 0 {
+		t.Fatal("default theme must include home and node detail blocks")
+	}
+	if normalized.PresetID != "minimal" {
+		t.Fatalf("unexpected preset id: %q", normalized.PresetID)
+	}
+}
+
+func TestPresetCatalogContainsDefault(t *testing.T) {
+	presets := Presets()
+	if len(presets) != 2 {
+		t.Fatalf("expected two built-in presets, got %d", len(presets))
+	}
+	preset, ok := PresetByID("minimal")
+	if !ok || !preset.IsDefault {
+		t.Fatal("expected minimal preset")
+	}
+	if preset.Document.PresetID != preset.ID {
+		t.Fatalf("preset document id mismatch: %q", preset.Document.PresetID)
+	}
+	if preset.Document.NodeDetail.Blocks[0].Props == nil {
+		t.Fatal("preset documents must be normalized before being exposed")
+	}
+	classic, ok := PresetByID("beat-default")
+	if !ok || classic.IsDefault {
+		t.Fatal("expected beat-default preset to remain available and non-default")
+	}
+	if classic.Document.PresetID != classic.ID || classic.Document.Appearance.Surface != "gradient" {
+		t.Fatal("expected the original Beat theme document to be preserved")
+	}
+}
+
+func TestParseRejectsUnknownBlockType(t *testing.T) {
+	doc := DefaultDocument()
+	doc.Home.Blocks[0].Type = "raw-html"
+	raw, err := json.Marshal(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Parse(raw); err == nil {
+		t.Fatal("expected unsupported block type to be rejected")
+	}
+}
+
+func TestParseRejectsDuplicateBlockID(t *testing.T) {
+	doc := DefaultDocument()
+	doc.NodeDetail.Blocks[1].ID = doc.NodeDetail.Blocks[0].ID
+	raw, err := json.Marshal(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Parse(raw); err == nil {
+		t.Fatal("expected duplicate block ids to be rejected")
+	}
+}
+
+func TestParseRejectsInvalidColor(t *testing.T) {
+	doc := DefaultDocument()
+	doc.Appearance.Primary = "blue"
+	raw, err := json.Marshal(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Parse(raw); err == nil {
+		t.Fatal("expected invalid color to be rejected")
+	}
+}

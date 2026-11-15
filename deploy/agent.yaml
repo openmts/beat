@@ -1,0 +1,10 @@
+# Beat Agent configuration. Command-line flags override these values.
+server: "http://127.0.0.1:9099"
+token: ""
+interval: 15s
+name: ""
+labels:
+  env: production
+state_file: /etc/beat/agent-id
+disk_path: /
+insecure_skip_verify: false

@@ -1,0 +1,146 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 216 33% 97%;
+    --foreground: 220 27% 14%;
+    --card: 0 0% 100%;
+    --card-foreground: 220 27% 14%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 220 27% 14%;
+    --primary: 214 90% 43%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 215 25% 95%;
+    --secondary-foreground: 220 27% 18%;
+    --muted: 215 24% 95%;
+    --muted-foreground: 218 11% 42%;
+    --accent: 214 100% 96%;
+    --accent-foreground: 214 90% 36%;
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 0 0% 100%;
+    --success: 152 65% 30%;
+    --success-foreground: 0 0% 100%;
+    --warning: 35 92% 34%;
+    --warning-foreground: 0 0% 100%;
+    --info: 214 90% 43%;
+    --info-foreground: 0 0% 100%;
+    --border: 216 20% 89%;
+    --input: 216 20% 87%;
+    --ring: 214 90% 43%;
+    --radius: 0.625rem;
+    --chart-cpu: 214 90% 50%;
+    --chart-memory: 166 72% 36%;
+    --chart-disk: 35 92% 46%;
+    --chart-network: 262 72% 58%;
+  }
+
+  .dark {
+    --background: 222 28% 9%;
+    --foreground: 214 26% 94%;
+    --card: 222 26% 12%;
+    --card-foreground: 214 26% 94%;
+    --popover: 222 27% 11%;
+    --popover-foreground: 214 26% 94%;
+    --primary: 214 92% 66%;
+    --primary-foreground: 222 36% 10%;
+    --secondary: 218 22% 17%;
+    --secondary-foreground: 214 24% 92%;
+    --muted: 218 21% 16%;
+    --muted-foreground: 215 17% 68%;
+    --accent: 216 31% 20%;
+    --accent-foreground: 214 30% 96%;
+    --destructive: 0 76% 68%;
+    --destructive-foreground: 222 36% 10%;
+    --success: 152 56% 66%;
+    --success-foreground: 222 36% 10%;
+    --warning: 38 92% 62%;
+    --warning-foreground: 222 36% 10%;
+    --info: 214 92% 70%;
+    --info-foreground: 222 36% 10%;
+    --border: 217 20% 24%;
+    --input: 217 20% 28%;
+    --ring: 214 92% 68%;
+    --chart-cpu: 214 92% 70%;
+    --chart-memory: 166 62% 58%;
+    --chart-disk: 38 92% 62%;
+    --chart-network: 262 78% 72%;
+  }
+
+  * { @apply border-border; }
+  html { @apply antialiased; width: 100%; overflow-x: hidden; }
+  body { @apply bg-background text-foreground; width: 100%; min-width: 0; overflow-x: hidden; font-feature-settings: "cv02", "cv03", "cv04", "cv11"; }
+  #root { width: 100%; min-width: 0; overflow-x: hidden; }
+  ::selection { @apply bg-primary/15 text-foreground; }
+}
+
+.detail-info-shell { container-type: inline-size; }
+.detail-info-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 1px;
+  background: hsl(var(--border));
+}
+.detail-info-grid > section { min-width: 0; background: hsl(var(--card)); }
+@container (min-width: 560px) {
+  .detail-info-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .detail-info-grid > section:last-child { grid-column: span 2; }
+}
+@container (min-width: 860px) {
+  .detail-info-grid { grid-template-columns: minmax(0, 1.45fr) minmax(240px, 0.9fr) minmax(220px, 1fr); }
+  .detail-info-grid > section:last-child { grid-column: auto; }
+}
+
+.public-theme[data-preset="minimal"] .shadow-panel,
+.public-theme[data-preset="minimal"] .shadow-float {
+  box-shadow: none;
+}
+.public-theme[data-preset="minimal"] .rounded-xl,
+.public-theme[data-preset="minimal"] .rounded-2xl {
+  border-radius: 0.5rem;
+}
+
+.public-theme-preview { container-type: inline-size; }
+@container (max-width: 980px) {
+  .public-theme-preview .public-grid-3,
+  .public-theme-preview .public-grid-4,
+  .public-theme-preview .minimal-summary-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@container (max-width: 520px) {
+  .public-theme-preview .public-grid-3,
+  .public-theme-preview .public-grid-4 {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@layer utilities {
+  .scrollbar-thin::-webkit-scrollbar { width: 6px; height: 6px; }
+  .scrollbar-thin::-webkit-scrollbar-thumb { @apply rounded-full bg-border; }
+  .scrollbar-thin::-webkit-scrollbar-track { background: transparent; }
+  .soft-wrap { overflow-wrap: anywhere; word-break: normal; }
+  .grid-background {
+    background-image: linear-gradient(rgba(255,255,255,.09) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,.09) 1px, transparent 1px);
+    background-size: 32px 32px;
+  }
+  .public-surface-solid { background-image: none; }
+  .public-surface-gradient {
+    background-image:
+      radial-gradient(circle at 15% 0%, hsl(var(--primary) / 0.09), transparent 32%),
+      radial-gradient(circle at 85% 10%, hsl(var(--public-accent, var(--primary)) / 0.08), transparent 30%);
+  }
+  .public-surface-mesh {
+    background-image:
+      radial-gradient(circle at 12% 8%, hsl(var(--primary) / 0.16), transparent 30%),
+      radial-gradient(circle at 88% 4%, hsl(var(--public-accent, var(--primary)) / 0.12), transparent 26%),
+      radial-gradient(circle at 52% 92%, hsl(var(--chart-memory) / 0.08), transparent 32%),
+      linear-gradient(135deg, hsl(var(--primary) / 0.025), transparent 55%);
+  }
+  .public-theme[data-density="compact"] { --public-block-gap: 0.75rem; }
+  .public-theme[data-density="comfortable"] { --public-block-gap: 1rem; }
+  .public-theme[data-density="spacious"] { --public-block-gap: 1.5rem; }
+  .public-theme .public-stack { gap: var(--public-block-gap, 1rem); }
+}
+

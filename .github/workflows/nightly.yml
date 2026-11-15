@@ -1,0 +1,58 @@
+name: Nightly
+
+on:
+  push:
+    branches:
+      - "**"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build nightly assets
+    uses: ./.github/workflows/_build.yml
+    with:
+      version: nightly
+
+  publish:
+    name: Publish Nightly Release
+    needs: build
+    runs-on: ubuntu-latest
+    concurrency:
+      group: nightly-release
+      cancel-in-progress: false
+    steps:
+      - name: Download Linux binaries
+        uses: actions/download-artifact@v4
+        with:
+          pattern: beat-linux-*
+          path: release-assets
+          merge-multiple: true
+
+      - name: Generate checksums
+        working-directory: release-assets
+        run: |
+          set -euo pipefail
+          sha256sum beat-* > checksums.txt
+          cat checksums.txt
+
+      - name: Publish nightly release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+
+          tag="nightly"
+          notes="$(printf 'Temporary build from branch %s.\n\nCommit: %s\nRun: %s/%s/actions/runs/%s' \
+            "$REF_NAME" "$GITHUB_SHA" "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID")"
+
+          gh release delete "$tag" --cleanup-tag --yes >/dev/null 2>&1 || true
+          gh release create "$tag" \
+            --target "$GITHUB_SHA" \
+            --prerelease \
+            --title "Nightly" \
+            --notes "$notes" \
+            release-assets/*

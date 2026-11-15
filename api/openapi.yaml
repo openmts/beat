@@ -1,0 +1,1565 @@
+openapi: 3.1.0
+info:
+  title: Beat API
+  version: 0.1.0
+  description: Beat 网络节点指标采集平台控制台 HTTP API。Agent 数据面使用同端口 gRPC 双向流 `beat.agent.v1.AgentControl/Connect`，契约见 `proto/beat/v1/agent.proto`。
+servers:
+  - url: http://127.0.0.1:9099
+paths:
+  /healthz:
+    get:
+      summary: 存活检查
+      responses:
+        "200":
+          description: OK
+  /readyz:
+    get:
+      summary: 就绪检查
+      responses:
+        "200":
+          description: MTS 存储已就绪
+        "503":
+          description: 存储未就绪
+  /api/v1/auth/login:
+    post:
+      summary: 管理员登录
+      description: Beat 仅支持一个管理员账号。首次启动默认账号和密码均为 admin。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, password]
+              properties:
+                username: { type: string }
+                password: { type: string, format: password }
+      responses:
+        "200":
+          description: 登录成功，设置 HttpOnly 管理员会话 Cookie，并返回后续写请求所需的 csrfToken
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AuthStatus" }
+        "400":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "429":
+          description: 登录失败次数过多，请按 Retry-After 响应头等待后重试
+  /api/v1/auth/logout:
+    post:
+      summary: 退出管理员登录
+      responses:
+        "200":
+          description: 会话已注销且 Cookie 已清除
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AuthStatus" }
+  /api/v1/auth/me:
+    get:
+      summary: 查询当前管理员登录状态
+      responses:
+        "200":
+          description: 当前会话状态；未登录时 authenticated 为 false
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AuthStatus" }
+  /api/v1/auth/credentials:
+    put:
+      summary: 修改管理员账号或重置密码
+      description: 必须验证当前密码。保存后轮换会话，并立即使其他旧会话失效。
+      security:
+        - adminSession: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [currentPassword, username]
+              properties:
+                currentPassword: { type: string, format: password }
+                username: { type: string, minLength: 1, maxLength: 64 }
+                newPassword:
+                  type: string
+                  format: password
+                  description: 留空表示仅修改登录账号；非空时为 8–128 个字符
+      responses:
+        "200":
+          description: 凭据已更新并续期当前会话
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/AuthStatus"
+                  - type: object
+                    properties:
+                      updatedAt: { type: string, format: date-time }
+        "400":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Problem"
+  /api/v1/meta:
+    get:
+      summary: 服务元数据与 Agent 接入指引
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  version: { type: string }
+                  serverTime: { type: string, format: date-time }
+                  demoMode: { type: boolean }
+                  nodeCount: { type: integer }
+                  agentArchitectures:
+                    type: array
+                    items: { $ref: "#/components/schemas/AgentArchitecture" }
+                  enrollmentTokenTtlSeconds: { type: integer }
+  /api/v1/overview:
+    get:
+      summary: 总览
+      security:
+        - adminSession: []
+      parameters:
+        - $ref: "#/components/parameters/Range"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Overview"
+  /api/v1/public/bootstrap:
+    get:
+      summary: 前台启动数据
+      description: 返回站点信息、已发布前台主题、节点计数。前台不得直接依赖后台内部 DTO。
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PublicBootstrap" }
+  /api/v1/public/theme:
+    get:
+      summary: 已发布前台主题
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PublicThemeEnvelope" }
+  /api/v1/public/nodes:
+    get:
+      summary: 公开节点列表
+      description: 使用 PublicNode 投影，不包含 Agent ID、Agent 版本、网络接口名称、地址或 MAC。
+      parameters:
+        - name: q
+          in: query
+          schema: { type: string }
+        - name: status
+          in: query
+          schema: { type: string, enum: [online, warning, offline, all] }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/PublicNode" }
+                  total: { type: integer }
+                  counts: { type: object, additionalProperties: { type: integer } }
+  /api/v1/public/nodes/{id}:
+    get:
+      summary: 公开节点详情
+      parameters:
+        - $ref: "#/components/parameters/NodeID"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PublicNode" }
+        "404":
+          $ref: "#/components/responses/Problem"
+  /api/v1/public/nodes/{id}/metrics:
+    get:
+      summary: 公开节点指标时序
+      parameters:
+        - $ref: "#/components/parameters/NodeID"
+        - $ref: "#/components/parameters/Range"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/NodeMetrics"
+  /api/v1/public/nodes/{id}/network-probes:
+    get:
+      summary: 公开节点三网探针时序
+      parameters:
+        - $ref: "#/components/parameters/NodeID"
+        - $ref: "#/components/parameters/Range"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/NodeNetworkProbes" }
+  /api/v1/public/groups:
+    get:
+      summary: 公开节点分组
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/PublicGroup" }
+                  total: { type: integer }
+                  ungroupedCount: { type: integer }
+  /api/v1/admin/theme/draft:
+    get:
+      summary: 读取前台主题草稿
+      security:
+        - adminSession: []
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AdminThemeDraft" }
+    put:
+      summary: 保存前台主题草稿
+      security:
+        - adminSession: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [document]
+              properties:
+                document: { $ref: "#/components/schemas/PublicThemeDocument" }
+      responses:
+        "200":
+          description: 草稿已保存，不改变线上版本
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AdminThemeDraft" }
+        "400":
+          $ref: "#/components/responses/Problem"
+  /api/v1/admin/theme/publish:
+    post:
+      summary: 发布当前前台主题草稿
+      security:
+        - adminSession: []
+      responses:
+        "200":
+          description: 主题已发布
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PublicThemeEnvelope" }
+        "409":
+          $ref: "#/components/responses/Problem"
+  /api/v1/admin/theme/revisions:
+    get:
+      summary: 前台主题版本记录
+      security:
+        - adminSession: []
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        revision: { type: integer }
+                        status: { type: string, enum: [draft, published, archived] }
+                        createdAt: { type: string, format: date-time }
+                        publishedAt: { type: string, format: date-time }
+  /api/v1/admin/theme/catalog:
+    get:
+      summary: 内置前台主题库
+      description: 返回 Beat 维护的完整主题包。控制台只需选择并应用，不需要组装外观或模块布局。
+      security:
+        - adminSession: []
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/PublicThemePreset" }
+  /api/v1/nodes:
+    get:
+      summary: 后台节点列表
+      security:
+        - adminSession: []
+      parameters:
+        - name: q
+          in: query
+          schema: { type: string }
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [online, warning, offline, all]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/Node" }
+                  total: { type: integer }
+                  counts:
+                    type: object
+                    additionalProperties: { type: integer }
+  /api/v1/nodes/{id}:
+    get:
+      summary: 后台节点详情
+      security:
+        - adminSession: []
+      parameters:
+        - $ref: "#/components/parameters/NodeID"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Node" }
+        "404":
+          $ref: "#/components/responses/Problem"
+    patch:
+      summary: 更新节点名称与标签
+      security:
+        - adminSession: []
+      parameters:
+        - $ref: "#/components/parameters/NodeID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/NodeUpdate"
+      responses:
+        "200":
+          description: 更新后的节点
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Node" }
+        "400":
+          $ref: "#/components/responses/Problem"
+        "404":
+          $ref: "#/components/responses/Problem"
+    delete:
+      summary: 卸载 Agent 并从 Beat 删除节点及历史指标
+      security:
+        - adminSession: []
+      parameters:
+        - $ref: "#/components/parameters/NodeID"
+      responses:
+        "202":
+          description: 节点已删除，本地卸载任务已排队
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  deleted: { type: boolean }
+                  nodeId: { type: string }
+                  hostname: { type: string }
+                  agentId: { type: string }
+                  task: { $ref: "#/components/schemas/AgentTask" }
+                  metricsDeleted: { type: boolean }
+        "404":
+          $ref: "#/components/responses/Problem"
+  /api/v1/nodes/{id}/metrics:
+    get:
+      summary: 后台节点时序指标
+      security:
+        - adminSession: []
+      parameters:
+        - $ref: "#/components/parameters/NodeID"
+        - $ref: "#/components/parameters/Range"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  nodeId: { type: string }
+                  from: { type: string, format: date-time }
+                  to: { type: string, format: date-time }
+                  stepSeconds: { type: integer }
+                  points:
+                    type: array
+                    items: { $ref: "#/components/schemas/SeriesPoint" }
+        "404":
+          $ref: "#/components/responses/Problem"
+  /api/v1/nodes/{id}/network-probes:
+    get:
+      summary: 后台节点三网时延与丢包时序
+      security:
+        - adminSession: []
+      description: 仅返回已启用的三网任务。从 MTS network_probe 测量读取结果，按任务和运营商聚合；任务启用但尚未采集时 timestamps/targets 为空数组。时延不可测时对应元素为 null。
+      parameters:
+        - $ref: "#/components/parameters/NodeID"
+        - $ref: "#/components/parameters/Range"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/NodeNetworkProbes" }
+        "404":
+          $ref: "#/components/responses/Problem"
+  /api/v1/groups:
+    get:
+      summary: 后台节点分组列表与节点统计
+      security:
+        - adminSession: []
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/NodeGroup" }
+                  total: { type: integer }
+                  ungroupedCount: { type: integer }
+    post:
+      summary: 创建节点分组
+      security:
+        - adminSession: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/NodeGroupInput" }
+      responses:
+        "201":
+          description: 分组已创建
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/NodeGroup" }
+        "400":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+  /api/v1/groups/{id}:
+    patch:
+      summary: 更新节点分组
+      security:
+        - adminSession: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/NodeGroupInput" }
+      responses:
+        "200":
+          description: 更新后的分组
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/NodeGroup" }
+        "400":
+          $ref: "#/components/responses/Problem"
+        "404":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+    delete:
+      summary: 删除节点分组；节点保留并转为未分组
+      security:
+        - adminSession: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: 分组已删除
+        "404":
+          $ref: "#/components/responses/Problem"
+  /api/v1/groups/{id}/members:
+    put:
+      summary: 批量设置分组成员；节点会从原分组移入当前分组
+      security:
+        - adminSession: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [nodeIds]
+              properties:
+                nodeIds:
+                  type: array
+                  items: { type: string }
+      responses:
+        "200":
+          description: 更新后的分组
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/NodeGroup" }
+        "400":
+          $ref: "#/components/responses/Problem"
+        "404":
+          $ref: "#/components/responses/Problem"
+  /api/v1/agents:
+    get:
+      summary: Agent 列表与接入配置
+      security:
+        - adminSession: []
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/Agent" }
+                  total: { type: integer }
+                  tokenTtlSeconds: { type: integer }
+                  architectures:
+                    type: array
+                    items: { $ref: "#/components/schemas/AgentArchitecture" }
+  /api/v1/agent-tokens:
+    post:
+      summary: 生成短期 Agent 注册令牌与一键接入命令
+      security:
+        - adminSession: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string }
+                labels: { type: string }
+      responses:
+        "201":
+          description: 注册令牌已生成
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AgentEnrollment" }
+        "400":
+          $ref: "#/components/responses/Problem"
+        "503":
+          $ref: "#/components/responses/Problem"
+  /api/v1/agent-upgrades/overview:
+    get:
+      summary: Agent 版本升级概览
+      description: 返回发布版本、节点版本分布、不可升级数量以及当前或最近的升级批次。
+      security:
+        - adminSession: []
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AgentUpgradeOverview" }
+        "401":
+          $ref: "#/components/responses/Problem"
+  /api/v1/agent-upgrades:
+    post:
+      summary: 创建全部 Agent 升级批次
+      description: 仅允许一个运行中的批次。目标版本和安装包由 Server 固定，客户端不能提交下载地址。
+      security:
+        - adminSession: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                includeOffline:
+                  type: boolean
+                  default: true
+                  description: 是否将离线节点加入排队，待其重新连接后升级
+      responses:
+        "202":
+          description: 升级批次已创建
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  batch: { $ref: "#/components/schemas/AgentUpgradeBatch" }
+                  skipped: { type: integer }
+        "409":
+          description: 没有可升级节点，或已有升级任务正在执行
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code: { type: string, enum: [no_upgradable_agents, upgrade_in_progress] }
+                  message: { type: string }
+  /api/v1/agent-upgrades/{id}:
+    get:
+      summary: 查询 Agent 升级批次与节点明细
+      security:
+        - adminSession: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AgentUpgradeBatch" }
+        "404":
+          $ref: "#/components/responses/Problem"
+  /api/v1/agent-upgrades/{id}/retry:
+    post:
+      summary: 重试升级批次中的失败节点
+      security:
+        - adminSession: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "202":
+          description: 失败节点已重新排队
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AgentUpgradeBatch" }
+        "404":
+          $ref: "#/components/responses/Problem"
+  /api/v1/tasks:
+    get:
+      summary: 任务定义列表与执行统计
+      security:
+        - adminSession: []
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/TaskDefinition" }
+                  total: { type: integer }
+                  summary:
+                    type: object
+                    additionalProperties: { type: integer }
+    post:
+      summary: 创建三网探测或 Shell 周期任务
+      security:
+        - adminSession: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/TaskInput" }
+      responses:
+        "201":
+          description: 任务已创建
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TaskDefinition" }
+        "400":
+          $ref: "#/components/responses/Problem"
+  /api/v1/tasks/{id}:
+    patch:
+      summary: 更新任务
+      description: 任务可更新名称、说明、模板配置、脚本、周期、超时和启用状态；任务类型创建后不可修改。
+      security:
+        - adminSession: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string }
+                description: { type: string }
+                kind:
+                  type: string
+                  enum: [shell_script, three_network_probe]
+                script: { type: string }
+                config: { $ref: "#/components/schemas/ThreeNetworkConfig" }
+                intervalSeconds: { type: integer }
+                timeoutSeconds: { type: integer }
+                enabled: { type: boolean }
+      responses:
+        "200":
+          description: 更新后的任务定义
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TaskDefinition" }
+        "400":
+          $ref: "#/components/responses/Problem"
+        "404":
+          $ref: "#/components/responses/Problem"
+    delete:
+      summary: 删除任务，保留历史执行记录
+      security:
+        - adminSession: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: 已删除
+        "400":
+          $ref: "#/components/responses/Problem"
+        "404":
+          $ref: "#/components/responses/Problem"
+  /api/v1/task-runs:
+    get:
+      summary: 最近任务执行记录
+      security:
+        - adminSession: []
+      parameters:
+        - name: taskId
+          in: query
+          schema: { type: string }
+        - name: limit
+          in: query
+          schema: { type: integer, default: 50, maximum: 200 }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/TaskRun" }
+                  total: { type: integer }
+  /api/v1/task-runs/{id}:
+    get:
+      summary: 任务执行详情与完整输出
+      security:
+        - adminSession: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TaskRun" }
+        "404":
+          $ref: "#/components/responses/Problem"
+  /downloads/beat-agent:
+    get:
+      summary: 下载当前 Server 架构的 Agent 二进制（兼容入口）
+      responses:
+        "200":
+          description: 名为 beat-agent 的 Agent 二进制文件
+          content:
+            application/octet-stream:
+              schema: { type: string, format: binary }
+        "503":
+          $ref: "#/components/responses/Problem"
+  /downloads/beat-agent/{arch}:
+    get:
+      summary: 按架构下载 Agent 二进制
+      parameters:
+        - name: arch
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [amd64, arm64]
+      responses:
+        "200":
+          description: 名为 beat-agent 的 Agent 二进制文件
+          content:
+            application/octet-stream:
+              schema: { type: string, format: binary }
+        "404":
+          $ref: "#/components/responses/Problem"
+        "503":
+          $ref: "#/components/responses/Problem"
+  /api/v1/settings:
+    get:
+      summary: 服务端与存储状态
+      security:
+        - adminSession: []
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+    put:
+      summary: 保存站点与 MTS 存储配置
+      security:
+        - adminSession: []
+      responses:
+        "200":
+          description: 设置已保存
+components:
+  securitySchemes:
+    adminSession:
+      type: apiKey
+      in: cookie
+      name: beat_admin_session
+    adminCSRF:
+      type: apiKey
+      in: header
+      name: X-Beat-CSRF
+  parameters:
+    NodeID:
+      name: id
+      in: path
+      required: true
+      schema: { type: string }
+    Range:
+      name: range
+      in: query
+      schema:
+        type: string
+        enum: [1h, 6h, 24h, 7d]
+        default: 24h
+  responses:
+    Problem:
+      description: 错误响应
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              code: { type: string }
+              message: { type: string }
+  schemas:
+    AuthStatus:
+      type: object
+      required: [authenticated]
+      properties:
+        authenticated: { type: boolean }
+        username: { type: string }
+        csrfToken: { type: string, description: 管理员写请求必须通过 X-Beat-CSRF 回传 }
+        expiresAt: { type: string, format: date-time }
+    Labels:
+      type: object
+      additionalProperties: { type: string }
+    Metrics:
+      type: object
+      required: [timestamp, cpuUsage, memoryUsage, diskUsage, networkRxBps, networkTxBps, load1]
+      properties:
+        timestamp: { type: string, format: date-time }
+        cpuUsage: { type: number }
+        cpuUser: { type: number }
+        cpuSystem: { type: number }
+        cpuIowait: { type: number }
+        memoryUsedBytes: { type: integer, format: uint64 }
+        memoryTotalBytes: { type: integer, format: uint64 }
+        memoryUsage: { type: number }
+        swapUsedBytes: { type: integer, format: uint64 }
+        diskUsedBytes: { type: integer, format: uint64 }
+        diskTotalBytes: { type: integer, format: uint64 }
+        diskUsage: { type: number }
+        networkRxBps: { type: number }
+        networkTxBps: { type: number }
+        load1: { type: number }
+        load5: { type: number }
+        load15: { type: number }
+        processes: { type: integer }
+        tcpConnections: { type: integer }
+        uptimeSeconds: { type: integer, format: int64 }
+    NetworkInterface:
+      type: object
+      properties:
+        name: { type: string }
+        addresses:
+          type: array
+          items: { type: string }
+        mac: { type: string }
+        rxBytes: { type: integer, format: uint64 }
+        txBytes: { type: integer, format: uint64 }
+    AgentReport:
+      type: object
+      required: [agentId, hostname, metrics]
+      properties:
+        agentId: { type: string }
+        hostname: { type: string }
+        address: { type: string }
+        os: { type: string }
+        kernel: { type: string }
+        arch: { type: string }
+        agentVersion: { type: string }
+        intervalSeconds: { type: integer }
+        labels: { $ref: "#/components/schemas/Labels" }
+        interfaces:
+          type: array
+          writeOnly: true
+          description: Agent 上报的网卡明细。仅写入，不会出现在节点查询响应中。
+          items: { $ref: "#/components/schemas/NetworkInterface" }
+        cpuCores: { type: integer }
+        cpuModel: { type: string }
+        metrics: { $ref: "#/components/schemas/Metrics" }
+    NodeMetrics:
+      type: object
+      properties:
+        nodeId: { type: string }
+        from: { type: string, format: date-time }
+        to: { type: string, format: date-time }
+        stepSeconds: { type: integer }
+        points:
+          type: array
+          items: { $ref: "#/components/schemas/SeriesPoint" }
+    PublicNode:
+      type: object
+      description: 前台公开节点投影。刻意不包含 agentId、agentVersion 与网络接口信息。
+      required: [id, hostname, status, metrics]
+      properties:
+        id: { type: string }
+        hostname: { type: string }
+        groupId: { type: string }
+        groupName: { type: string }
+        groupColor: { type: string }
+        address: { type: string }
+        os: { type: string }
+        kernel: { type: string }
+        arch: { type: string }
+        status: { type: string, enum: [online, warning, offline] }
+        labels: { $ref: "#/components/schemas/Labels" }
+        cpuCores: { type: integer }
+        cpuModel: { type: string }
+        totalMemoryBytes: { type: integer, format: uint64 }
+        totalDiskBytes: { type: integer, format: uint64 }
+        collectorIntervalSeconds: { type: integer }
+        firstSeen: { type: string, format: date-time }
+        lastSeen: { type: string, format: date-time }
+        metrics: { $ref: "#/components/schemas/Metrics" }
+    PublicGroup:
+      type: object
+      properties:
+        id: { type: string }
+        name: { type: string }
+        description: { type: string }
+        color: { type: string }
+        nodeCount: { type: integer }
+        onlineCount: { type: integer }
+        warningCount: { type: integer }
+        offlineCount: { type: integer }
+    PublicThemeAppearance:
+      type: object
+      required: [mode, primary, accent, contentWidth, radius, surface, density]
+      properties:
+        mode: { type: string, enum: [system, light, dark] }
+        primary: { type: string, pattern: "^#[0-9a-fA-F]{6}$" }
+        accent: { type: string, pattern: "^#[0-9a-fA-F]{6}$" }
+        contentWidth: { type: string, enum: [standard, wide, full] }
+        radius: { type: string, enum: [sm, md, lg] }
+        surface: { type: string, enum: [solid, gradient, mesh] }
+        density: { type: string, enum: [compact, comfortable, spacious] }
+    PublicThemeLayout:
+      type: object
+      properties:
+        minHeight: { type: string, enum: [auto, sm, md, lg, tall, viewport] }
+        padding: { type: string, enum: [none, sm, md, lg] }
+        columns: { type: integer, minimum: 0, maximum: 4 }
+        gap: { type: string, enum: [sm, md, lg] }
+    PublicThemeBlock:
+      type: object
+      required: [id, type, enabled, layout, props]
+      properties:
+        id: { type: string, pattern: "^[a-z0-9][a-z0-9-]{0,63}$" }
+        type: { type: string }
+        enabled: { type: boolean }
+        layout: { $ref: "#/components/schemas/PublicThemeLayout" }
+        props: { type: object, additionalProperties: true }
+    PublicThemePage:
+      type: object
+      properties:
+        blocks:
+          type: array
+          maxItems: 24
+          items: { $ref: "#/components/schemas/PublicThemeBlock" }
+    PublicThemeDocument:
+      type: object
+      required: [schemaVersion, revision, appearance, home, nodeDetail]
+      properties:
+        schemaVersion: { type: integer, enum: [1] }
+        revision: { type: integer }
+        presetId: { type: string }
+        appearance: { $ref: "#/components/schemas/PublicThemeAppearance" }
+        home: { $ref: "#/components/schemas/PublicThemePage" }
+        nodeDetail: { $ref: "#/components/schemas/PublicThemePage" }
+    PublicThemePreset:
+      type: object
+      required: [id, name, description, isDefault, document]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        description: { type: string }
+        isDefault: { type: boolean }
+        document: { $ref: "#/components/schemas/PublicThemeDocument" }
+    PublicThemeEnvelope:
+      type: object
+      properties:
+        document: { $ref: "#/components/schemas/PublicThemeDocument" }
+        revision: { type: integer }
+        publishedAt: { type: string, format: date-time, nullable: true }
+    AdminThemeDraft:
+      allOf:
+        - $ref: "#/components/schemas/PublicThemeEnvelope"
+        - type: object
+          properties:
+            updatedAt: { type: string, format: date-time, nullable: true }
+            publishedRevision: { type: integer }
+            hasDraft: { type: boolean }
+    PublicBootstrap:
+      type: object
+      properties:
+        site: { type: object, additionalProperties: true }
+        theme: { $ref: "#/components/schemas/PublicThemeDocument" }
+        revision: { type: integer }
+        publishedAt: { type: string, format: date-time, nullable: true }
+        counts: { type: object, additionalProperties: { type: integer } }
+        generatedAt: { type: string, format: date-time }
+    Node:
+      description: 节点查询响应。网卡名称、地址、MAC 与累计接口流量不会返回。
+      allOf:
+        - $ref: "#/components/schemas/AgentReport"
+        - type: object
+          properties:
+            id: { type: string }
+            groupId: { type: string }
+            groupName: { type: string }
+            groupColor: { type: string }
+            status:
+              type: string
+              enum: [online, warning, offline]
+            firstSeen: { type: string, format: date-time }
+            lastSeen: { type: string, format: date-time }
+    NodeGroup:
+      type: object
+      properties:
+        id: { type: string }
+        name: { type: string }
+        description: { type: string }
+        color:
+          type: string
+          enum: [blue, cyan, violet, emerald, amber, rose]
+        nodeCount: { type: integer }
+        onlineCount: { type: integer }
+        warningCount: { type: integer }
+        offlineCount: { type: integer }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    NodeGroupInput:
+      type: object
+      required: [name, color]
+      properties:
+        name: { type: string }
+        description: { type: string }
+        color:
+          type: string
+          enum: [blue, cyan, violet, emerald, amber, rose]
+    SeriesPoint:
+      type: object
+      properties:
+        timestamp: { type: string, format: date-time }
+        cpuUsage: { type: number }
+        cpuUser: { type: number }
+        cpuSystem: { type: number }
+        memoryUsage: { type: number }
+        diskUsage: { type: number }
+        networkRxBps: { type: number }
+        networkTxBps: { type: number }
+        load1: { type: number }
+        load5: { type: number }
+        load15: { type: number }
+        processes: { type: number }
+        tcpConnections: { type: number }
+    NetworkProbeTargetSeries:
+      type: object
+      properties:
+        carrier: { type: string, enum: [telecom, unicom, mobile] }
+        label: { type: string }
+        lossPercent:
+          type: array
+          items: { type: number, nullable: true }
+        latencyAvgMs:
+          type: array
+          items: { type: number, nullable: true }
+          description: 与 timestamps 对齐；全部丢包或没有成功请求时为 null，不能按 0 ms 处理。
+        latencyP95Ms:
+          type: array
+          items: { type: number, nullable: true }
+        latencyJitterMs:
+          type: array
+          items: { type: number, nullable: true }
+    NetworkProbeTaskSeries:
+      type: object
+      properties:
+        taskId: { type: string }
+        taskName: { type: string }
+        lastRunAt: { type: string, format: date-time }
+        timestamps:
+          type: array
+          items: { type: string, format: date-time }
+        targets:
+          type: array
+          items: { $ref: "#/components/schemas/NetworkProbeTargetSeries" }
+    NodeNetworkProbes:
+      type: object
+      properties:
+        nodeId: { type: string }
+        from: { type: string, format: date-time }
+        to: { type: string, format: date-time }
+        stepSeconds: { type: integer }
+        tasks:
+          type: array
+          items: { $ref: "#/components/schemas/NetworkProbeTaskSeries" }
+    FleetPoint:
+      type: object
+      properties:
+        timestamp: { type: string, format: date-time }
+        cpuUsage: { type: number }
+        memoryUsage: { type: number }
+        diskUsage: { type: number }
+        networkRx: { type: number }
+        networkTx: { type: number }
+    Summary:
+      type: object
+      properties:
+        nodeCount: { type: integer }
+        onlineCount: { type: integer }
+        offlineCount: { type: integer }
+        warningCount: { type: integer }
+        avgCpu: { type: number }
+        avgMemory: { type: number }
+        avgDisk: { type: number }
+        networkRx: { type: number }
+        networkTx: { type: number }
+    Overview:
+      type: object
+      properties:
+        generatedAt: { type: string, format: date-time }
+        range: { type: string }
+        summary: { $ref: "#/components/schemas/Summary" }
+        fleet:
+          type: array
+          items: { $ref: "#/components/schemas/FleetPoint" }
+        nodes:
+          type: array
+          items: { $ref: "#/components/schemas/Node" }
+        topCpu:
+          type: array
+          items: { $ref: "#/components/schemas/Node" }
+    Agent:
+      type: object
+      properties:
+        id: { type: string }
+        nodeId: { type: string }
+        nodeName: { type: string }
+        version: { type: string }
+        status:
+          type: string
+          enum: [online, warning, offline]
+        intervalSeconds: { type: integer }
+        lastSeen: { type: string, format: date-time }
+        createdAt: { type: string, format: date-time }
+    AgentUpgradeArtifact:
+      type: object
+      properties:
+        arch: { type: string, enum: [amd64, arm64] }
+        version: { type: string }
+        size: { type: integer, format: int64 }
+        sha256: { type: string }
+        available: { type: boolean }
+    AgentUpgradeItem:
+      type: object
+      properties:
+        id: { type: string }
+        batchId: { type: string }
+        agentId: { type: string }
+        nodeId: { type: string }
+        nodeName: { type: string }
+        arch: { type: string }
+        fromVersion: { type: string }
+        toVersion: { type: string }
+        artifactSha256: { type: string }
+        artifactSize: { type: integer, format: int64 }
+        status:
+          type: string
+          enum: [queued, delivered, installing, restarting, succeeded, failed]
+        message: { type: string }
+        attempt: { type: integer }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+        deliveredAt: { type: string, format: date-time }
+        completedAt: { type: string, format: date-time }
+    AgentUpgradeBatch:
+      type: object
+      properties:
+        id: { type: string }
+        targetVersion: { type: string }
+        status: { type: string, enum: [running, completed, partial] }
+        total: { type: integer }
+        queued: { type: integer }
+        delivered: { type: integer }
+        succeeded: { type: integer }
+        failed: { type: integer }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+        completedAt: { type: string, format: date-time }
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/AgentUpgradeItem" }
+    AgentUpgradeOverview:
+      type: object
+      properties:
+        targetVersion: { type: string }
+        artifacts:
+          type: array
+          items: { $ref: "#/components/schemas/AgentUpgradeArtifact" }
+        totalNodes: { type: integer }
+        upToDate: { type: integer }
+        upgradable: { type: integer }
+        online: { type: integer }
+        offline: { type: integer }
+        unsupported: { type: integer }
+        activeBatch: { $ref: "#/components/schemas/AgentUpgradeBatch" }
+        recentBatches:
+          type: array
+          items: { $ref: "#/components/schemas/AgentUpgradeBatch" }
+    AgentTask:
+      type: object
+      required: [id, agentId, nodeId, kind, status, createdAt]
+      properties:
+        id: { type: string }
+        taskId: { type: string }
+        agentId: { type: string }
+        nodeId: { type: string }
+        kind:
+          type: string
+          enum: [uninstall_agent, shell_script, three_network_probe]
+        name: { type: string }
+        script:
+          type: string
+          description: 仅 shell_script 类型返回
+        config:
+          oneOf:
+            - $ref: "#/components/schemas/ThreeNetworkConfig"
+            - $ref: "#/components/schemas/ShellMetricConfig"
+        timeoutSeconds: { type: integer }
+        status: { type: string }
+        createdAt: { type: string, format: date-time }
+    TaskDefinition:
+      type: object
+      properties:
+        id: { type: string }
+        slug: { type: string }
+        name: { type: string }
+        description: { type: string }
+        source:
+          type: string
+          enum: [custom]
+        kind:
+          type: string
+          enum: [shell_script, three_network_probe]
+        script: { type: string }
+        config:
+          oneOf:
+            - $ref: "#/components/schemas/ThreeNetworkConfig"
+            - $ref: "#/components/schemas/ShellMetricConfig"
+        intervalSeconds: { type: integer }
+        timeoutSeconds: { type: integer }
+        enabled: { type: boolean }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+        lastRunAt: { type: string, format: date-time }
+        lastStatus:
+          type: string
+          enum: [delivered, success, failed, timeout]
+        runCount: { type: integer }
+        successCount: { type: integer }
+        failureCount: { type: integer }
+    TaskInput:
+      type: object
+      required: [name, kind, intervalSeconds, timeoutSeconds, enabled]
+      properties:
+        name: { type: string, maxLength: 64 }
+        description: { type: string, maxLength: 500 }
+        kind:
+          type: string
+          enum: [shell_script, three_network_probe]
+        script: { type: string, maxLength: 16384 }
+        config:
+          oneOf:
+            - $ref: "#/components/schemas/ThreeNetworkConfig"
+            - $ref: "#/components/schemas/ShellMetricConfig"
+        intervalSeconds: { type: integer, minimum: 30, maximum: 604800 }
+        timeoutSeconds: { type: integer, minimum: 1, maximum: 300 }
+        enabled: { type: boolean }
+    ThreeNetworkConfig:
+      type: object
+      required: [targets, probe]
+      properties:
+        targets:
+          type: array
+          minItems: 3
+          maxItems: 3
+          items: { $ref: "#/components/schemas/ThreeNetworkTarget" }
+        probe: { $ref: "#/components/schemas/ProbeSettings" }
+    ShellMetricConfig:
+      type: object
+      required: [metricSchema]
+      properties:
+        metricSchema:
+          type: object
+          required: [enabled, measurement, metrics]
+          properties:
+            enabled: { type: boolean }
+            measurement:
+              type: string
+              pattern: '^[a-z][a-z0-9_]{0,63}$'
+              default: task_metrics
+              description: 自定义 MTS measurement 名称，不能使用 node_metrics 或 network_probe。
+            metrics:
+              type: array
+              maxItems: 64
+              items: { $ref: "#/components/schemas/TaskMetricDefinition" }
+    TaskMetricDefinition:
+      type: object
+      required: [key, extractor]
+      properties:
+        key:
+          type: string
+          pattern: '^[a-z][a-z0-9_]{0,63}$'
+          description: 写入 MTS 的字段名。
+        name: { type: string, maxLength: 64 }
+        extractor: { $ref: "#/components/schemas/TaskMetricExtractor" }
+        unit: { type: string, maxLength: 16 }
+    TaskMetricExtractor:
+      type: object
+      required: [type, expression]
+      properties:
+        type:
+          type: string
+          enum: [json_path, key_value, regex]
+        expression: { type: string, maxLength: 512 }
+    ThreeNetworkTarget:
+      type: object
+      required: [carrier, label, host, port, protocol, addressFamily]
+      properties:
+        carrier:
+          type: string
+          enum: [telecom, unicom, mobile]
+        label: { type: string, maxLength: 64 }
+        host: { type: string, maxLength: 253 }
+        port: { type: integer, minimum: 1, maximum: 65535, default: 443 }
+        protocol:
+          type: string
+          enum: [tcp]
+          default: tcp
+        addressFamily:
+          type: string
+          enum: [auto, ipv4, ipv6]
+          default: auto
+    ProbeSettings:
+      type: object
+      properties:
+        count: { type: integer, minimum: 1, maximum: 30, default: 10 }
+        intervalMs: { type: integer, minimum: 50, maximum: 5000, default: 200 }
+        timeoutMs: { type: integer, minimum: 100, maximum: 10000, default: 1000 }
+    NetworkProbeLoss:
+      type: object
+      description: 丢包维度。单次握手超时/无响应计入 lost，连接拒绝/重置计入 failed；DNS 解析失败时 available=false。
+      properties:
+        available: { type: boolean }
+        sent: { type: integer }
+        received: { type: integer }
+        lost: { type: integer }
+        failed: { type: integer }
+        percent:
+          type: number
+          nullable: true
+          description: lost / sent；无法发出探测请求时为 null。
+    NetworkProbeLatency:
+      type: object
+      description: 时延维度，只使用成功握手样本。全部丢包或无成功请求时 available=false，所有统计字段为 null。
+      properties:
+        available: { type: boolean }
+        sampleCount: { type: integer }
+        minMs: { type: number, nullable: true }
+        avgMs: { type: number, nullable: true }
+        maxMs: { type: number, nullable: true }
+        p50Ms: { type: number, nullable: true }
+        p95Ms: { type: number, nullable: true }
+        jitterMs: { type: number, nullable: true }
+    NetworkProbeSample:
+      type: object
+      properties:
+        index: { type: integer }
+        outcome:
+          type: string
+          enum: [success, lost, failed]
+        rttMs:
+          type: number
+          nullable: true
+          description: 仅 success 时有值；lost/failed 为 null。
+        error: { type: string }
+    NetworkProbeTargetResult:
+      type: object
+      properties:
+        carrier: { type: string, enum: [telecom, unicom, mobile] }
+        label: { type: string }
+        host: { type: string }
+        port: { type: integer }
+        protocol: { type: string, enum: [tcp] }
+        family: { type: string, enum: [auto, ipv4, ipv6] }
+        resolvedIp: { type: string }
+        resolveMs: { type: number }
+        loss: { $ref: "#/components/schemas/NetworkProbeLoss" }
+        latency: { $ref: "#/components/schemas/NetworkProbeLatency" }
+        samples:
+          type: array
+          items: { $ref: "#/components/schemas/NetworkProbeSample" }
+        status: { type: string, enum: [ok, degraded, failed] }
+        errors:
+          type: array
+          items: { type: string }
+    NetworkProbeResult:
+      type: object
+      description: 三网任务 output 字段的 JSON 结构。
+      properties:
+        kind: { type: string, enum: [three_network_probe] }
+        startedAt: { type: string, format: date-time }
+        durationMs: { type: integer, format: int64 }
+        targets:
+          type: array
+          items: { $ref: "#/components/schemas/NetworkProbeTargetResult" }
+    TaskRun:
+      type: object
+      properties:
+        id: { type: string }
+        taskId: { type: string }
+        taskName: { type: string }
+        taskSource:
+          type: string
+          enum: [custom]
+        agentId: { type: string }
+        nodeId: { type: string }
+        nodeName: { type: string }
+        script: { type: string }
+        timeoutSeconds: { type: integer }
+        status:
+          type: string
+          enum: [delivered, success, failed, timeout]
+        scheduledAt: { type: string, format: date-time }
+        deliveredAt: { type: string, format: date-time }
+        completedAt: { type: string, format: date-time }
+        exitCode: { type: integer }
+        durationMs: { type: integer, format: int64 }
+        output:
+          type: string
+          description: Shell 任务为文本输出；三网任务为序列化后的 NetworkProbeResult JSON。
+        error: { type: string }
+        createdAt: { type: string, format: date-time }
+    NodeUpdate:
+      type: object
+      required: [hostname, labels]
+      properties:
+        hostname: { type: string }
+        groupId:
+          type: string
+          description: 空字符串表示未分组
+        labels:
+          $ref: "#/components/schemas/Labels"
+    AgentEnrollment:
+      type: object
+      properties:
+        token: { type: string }
+        name: { type: string }
+        labels: { type: string }
+        createdAt: { type: string, format: date-time }
+        expiresAt: { type: string, format: date-time }
+        ttlSeconds: { type: integer }
+        accessCommand: { type: string }
+    AgentArchitecture:
+      type: object
+      required: [id, label, available, downloadUrl, downloadCommand]
+      properties:
+        id:
+          type: string
+          enum: [amd64, arm64]
+        label: { type: string }
+        available: { type: boolean }
+        downloadUrl: { type: string }
+        checksumSha256: { type: string }
+        downloadCommand: { type: string }

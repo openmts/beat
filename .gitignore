@@ -1,0 +1,10 @@
+/bin/
+/data/
+/web/dist/
+/web/node_modules
+/beat-agent-id
+*.db
+*.db-shm
+*.db-wal
+.DS_Store
+

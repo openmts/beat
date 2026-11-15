@@ -1,0 +1,91 @@
+name: Build Linux binaries
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: Version embedded in the binaries
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  web:
+    name: Build web console
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - name: Install web dependencies
+        run: npm --prefix web install
+
+      - name: Build web console
+        run: npm --prefix web run build
+
+      - name: Upload web console
+        uses: actions/upload-artifact@v4
+        with:
+          name: beat-web-dist
+          path: web/dist
+          if-no-files-found: error
+          retention-days: 3
+
+  binaries:
+    name: Build linux/${{ matrix.arch }}
+    needs: web
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        arch:
+          - amd64
+          - arm64
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Download web console
+        uses: actions/download-artifact@v4
+        with:
+          name: beat-web-dist
+          path: web/dist
+
+      - name: Build Server and Agent
+        env:
+          TARGET_ARCH: ${{ matrix.arch }}
+          REQUESTED_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+
+          version="$REQUESTED_VERSION"
+          commit="${GITHUB_SHA:0:12}"
+          build_date="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          ldflags="-s -w -X beat/internal/version.Version=${version} -X beat/internal/version.Commit=${commit} -X beat/internal/version.Date=${build_date}"
+
+          mkdir -p dist
+          CGO_ENABLED=0 GOOS=linux GOARCH="$TARGET_ARCH" go build -trimpath -ldflags "$ldflags" -o "dist/beat-server-linux-${TARGET_ARCH}" ./cmd/beat-server
+          CGO_ENABLED=0 GOOS=linux GOARCH="$TARGET_ARCH" go build -trimpath -ldflags "$ldflags" -o "dist/beat-agent-linux-${TARGET_ARCH}" ./cmd/beat-agent
+
+          file "dist/beat-server-linux-${TARGET_ARCH}" "dist/beat-agent-linux-${TARGET_ARCH}"
+
+      - name: Upload Linux binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: beat-linux-${{ matrix.arch }}
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 3
