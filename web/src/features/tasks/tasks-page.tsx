@@ -49,6 +49,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Modal } from "@/components/ui/modal";
+import { Switch } from "@/components/ui/switch";
 import { formatRelative, formatTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
@@ -327,7 +328,7 @@ function TaskCard({ task, toggling, onToggle, onShowScript, onEdit, onDelete, on
             {metricMetrics.length > 6 ? <span className="text-[9px] text-muted-foreground">+{metricMetrics.length - 6}</span> : null}
           </div> : null}
         </div>
-        <Toggle checked={task.enabled} onChange={onToggle} disabled={toggling} label={`${task.enabled ? "停用" : "启用"}${task.name}`} />
+        <Switch checked={task.enabled} onCheckedChange={onToggle} loading={toggling} label={`${task.enabled ? "停用" : "启用"}${task.name}`} />
       </div>
 
       <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
@@ -379,10 +380,6 @@ function RunStatusIcon({ status }: { status: TaskRunStatus }) {
 function RunStatusBadge({ status }: { status: TaskRunStatus }) {
   const variant = status === "success" ? "success" : status === "failed" ? "destructive" : status === "timeout" ? "warning" : "default";
   return <Badge variant={variant} className="shrink-0 px-1.5 py-0 text-[8px]">{runStatusLabel(status)}</Badge>;
-}
-
-function Toggle({ checked, onChange, disabled, label }: { checked: boolean; onChange: () => void; disabled: boolean; label: string }) {
-  return <button type="button" role="switch" aria-checked={checked} aria-label={label} disabled={disabled} onClick={onChange} className={cn("relative h-6 w-11 shrink-0 rounded-full border transition-colors disabled:opacity-50", checked ? "border-primary bg-primary" : "border-input bg-muted")}>{disabled ? <LoaderCircle className="absolute left-3.5 top-1 h-4 w-4 animate-spin text-white" /> : <span className={cn("absolute top-[3px] h-[18px] w-[18px] rounded-full bg-white shadow-sm transition-transform", checked ? "translate-x-[21px]" : "translate-x-[3px]")} />}</button>;
 }
 
 type MetricCandidate = {
@@ -516,7 +513,7 @@ function MetricOrchestration({ enabled, measurement, metrics, onEnabledChange, o
           <div className="flex flex-wrap items-center gap-2"><p className="text-xs font-semibold">指标编排</p><Badge variant={enabled ? "default" : "outline"}>{enabled ? `${metrics.length} 项指标` : "未开启"}</Badge></div>
           <p className="mt-0.5 text-[9px] leading-4 text-muted-foreground">从 Shell 输出提取数值，写入指定的 MTS 表。</p>
         </div>
-        <Toggle checked={enabled} onChange={toggleEnabled} disabled={false} label={`${enabled ? "关闭" : "开启"}指标采集`} />
+        <Switch checked={enabled} onCheckedChange={toggleEnabled} label={`${enabled ? "关闭" : "开启"}指标采集`} />
       </div>
 
       {!enabled ? (

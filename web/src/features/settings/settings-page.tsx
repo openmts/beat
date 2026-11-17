@@ -29,6 +29,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Switch } from "@/components/ui/switch";
 import { formatBytes, formatNumber, formatTime, formatUptime } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
@@ -142,7 +143,7 @@ export function SettingsPage() {
                 <div className="grid gap-4 sm:grid-cols-[minmax(0,220px)_minmax(0,1fr)] sm:items-end">
                   <Field label="数据保留周期" hint="按天保留多值指标，范围 1–365 天。"><div className="relative"><Input type="number" min={1} max={365} value={configuration.storage.retentionDays} onChange={(event) => updateStorage("retentionDays", Number(event.target.value))} className="pr-12 tabular-nums" /><span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[11px] text-muted-foreground">天</span></div></Field>
                   <div className="rounded-lg border bg-background/55 p-3">
-                    <div className="flex items-center justify-between gap-4"><div><p className="text-xs font-medium">WAL 同步落盘</p><p className="mt-1 text-[10px] leading-5 text-muted-foreground">开启后每次写入等待落盘，持久性更高、吞吐略低。</p></div><Toggle checked={configuration.storage.walSync} onChange={(checked) => updateStorage("walSync", checked)} label="WAL 同步落盘" /></div>
+                    <div className="flex items-center justify-between gap-4"><div><p className="text-xs font-medium">WAL 同步落盘</p><p className="mt-1 text-[10px] leading-5 text-muted-foreground">开启后每次写入等待落盘，持久性更高、吞吐略低。</p></div><Switch checked={configuration.storage.walSync} onCheckedChange={(checked) => updateStorage("walSync", checked)} label="WAL 同步落盘" /></div>
                   </div>
                 </div>
 
@@ -331,8 +332,4 @@ function DefaultStat({ icon: Icon, label, value }: { icon: typeof Timer; label: 
 
 function SideRow({ label, value, mono = false, tone = "default" }: { label: string; value: string; mono?: boolean; tone?: "default" | "success" | "warning" }) {
   return <div className="flex items-center justify-between gap-3 border-b pb-2 last:border-0 last:pb-0"><span className="shrink-0 text-muted-foreground">{label}</span><span className={cn("min-w-0 truncate text-right font-medium", mono && "font-mono text-[10px]", tone === "success" && "text-success", tone === "warning" && "text-warning")}>{value}</span></div>;
-}
-
-function Toggle({ checked, onChange, label }: { checked: boolean; onChange: (checked: boolean) => void; label: string }) {
-  return <button type="button" role="switch" aria-checked={checked} aria-label={label} onClick={() => onChange(!checked)} className={cn("relative h-6 w-11 shrink-0 rounded-full border transition-colors", checked ? "border-primary bg-primary" : "border-input bg-muted")}><span className={cn("absolute top-[3px] h-[18px] w-[18px] rounded-full bg-white shadow-sm transition-transform", checked ? "translate-x-[21px]" : "translate-x-[3px]")} /></button>;
 }
