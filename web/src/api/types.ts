@@ -424,7 +424,7 @@ export interface SettingsResponse {
     retention: string;
     retentionDays: number;
     walSync: boolean;
-    mts: { driver: string; path: string; healthy: boolean; ready: boolean; measurements: number };
+    mts: { driver: string; path: string; healthy: boolean; ready: boolean; measurements: number; sizeBytes: number };
   };
   collector: { intervalSeconds: number; offlineAfterSeconds: number; defaultRange: string; enrollmentTokenTTLSeconds: number };
   configuration: {

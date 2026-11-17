@@ -29,7 +29,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { formatTime, formatUptime } from "@/lib/format";
+import { formatBytes, formatNumber, formatTime, formatUptime } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
 const TIMEZONES = ["Asia/Shanghai", "Asia/Singapore", "Asia/Tokyo", "UTC", "Europe/London", "America/New_York"];
@@ -130,9 +130,10 @@ export function SettingsPage() {
             <Card id="storage-settings" className="scroll-mt-24 overflow-hidden">
               <CardHeader className="border-b"><div className="flex items-start justify-between gap-4"><div><CardTitle className="flex items-center gap-2"><Database className="h-4 w-4 text-primary" />MTS 时序数据库</CardTitle><p className="mt-1 text-xs text-muted-foreground">管理嵌入式 MTS 的数据目录、保留周期与写入持久性。</p></div><Badge variant={restartPending ? "warning" : "success"}>{restartPending ? "等待重启" : "参数一致"}</Badge></div></CardHeader>
               <CardContent className="space-y-5 pt-5">
-                <div className="grid gap-2 sm:grid-cols-3">
-                  <MiniStat label="引擎状态" value={data.storage.mts.ready ? "Ready" : "Starting"} tone={data.storage.mts.ready ? "success" : "warning"} />
+                <div className="grid grid-cols-2 gap-2">
+                  <MiniStat label="数据占用" value={formatBytes(data.storage.mts.sizeBytes, 2)} detail={`${formatNumber(data.storage.mts.sizeBytes)} bytes`} tone="success" />
                   <MiniStat label="Measurement" value={String(data.storage.mts.measurements)} />
+                  <MiniStat label="引擎状态" value={data.storage.mts.ready ? "Ready" : "Starting"} tone={data.storage.mts.ready ? "success" : "warning"} />
                   <MiniStat label="驱动" value={data.storage.mts.driver.toUpperCase()} />
                 </div>
 
@@ -320,8 +321,8 @@ function Field({ label, hint, children }: { label: string; hint: string; childre
   return <label className="block space-y-1.5"><span className="text-xs font-medium text-muted-foreground">{label}</span>{children}<span className="block text-[10px] font-normal leading-5 text-muted-foreground">{hint}</span></label>;
 }
 
-function MiniStat({ label, value, tone = "default" }: { label: string; value: string; tone?: "default" | "success" | "warning" }) {
-  return <div className="rounded-lg bg-muted/40 p-3"><p className="text-[9px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">{label}</p><p className={cn("mt-1 font-mono text-xs font-semibold", tone === "success" && "text-success", tone === "warning" && "text-warning")}>{value}</p></div>;
+function MiniStat({ label, value, detail, tone = "default" }: { label: string; value: string; detail?: string; tone?: "default" | "success" | "warning" }) {
+  return <div className="min-w-0 rounded-lg bg-muted/40 p-3"><p className="text-[9px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">{label}</p><p className={cn("mt-1 truncate font-mono text-xs font-semibold", tone === "success" && "text-success", tone === "warning" && "text-warning")}>{value}</p>{detail ? <p className="mt-1 truncate font-mono text-[9px] text-muted-foreground">{detail}</p> : null}</div>;
 }
 
 function DefaultStat({ icon: Icon, label, value }: { icon: typeof Timer; label: string; value: string }) {

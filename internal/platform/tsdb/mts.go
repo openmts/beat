@@ -2,8 +2,12 @@ package tsdb
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"time"
 
 	"beat/internal/domain"
@@ -247,6 +251,10 @@ func (m *MTS) Stats(ctx context.Context) (Stats, error) {
 	if err != nil {
 		return Stats{}, err
 	}
+	sizeBytes, err := directorySize(m.path)
+	if err != nil {
+		return Stats{}, err
+	}
 	checks := make([]HealthCheck, 0, len(health.Checks))
 	for _, check := range health.Checks {
 		checks = append(checks, HealthCheck{Name: check.Name, Status: check.Status, Reason: check.Reason})
@@ -261,9 +269,40 @@ func (m *MTS) Stats(ctx context.Context) (Stats, error) {
 		Healthy:      health.Healthy,
 		Ready:        health.Ready,
 		Measurements: len(measurements),
+		SizeBytes:    sizeBytes,
 		Reasons:      reasons,
 		Checks:       checks,
 	}, nil
+}
+
+func directorySize(root string) (int64, error) {
+	var total int64
+	err := filepath.WalkDir(root, func(_ string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			if errors.Is(walkErr, fs.ErrNotExist) {
+				return nil
+			}
+			return walkErr
+		}
+		if entry.IsDir() {
+			return nil
+		}
+		info, err := entry.Info()
+		if err != nil {
+			if errors.Is(err, fs.ErrNotExist) {
+				return nil
+			}
+			return err
+		}
+		if info.Mode().IsRegular() {
+			total += info.Size()
+		}
+		return nil
+	})
+	if err != nil {
+		return 0, fmt.Errorf("scan MTS data size: %w", err)
+	}
+	return total, nil
 }
 
 func (m *MTS) Close(ctx context.Context) error {

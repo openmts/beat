@@ -13,6 +13,7 @@ type Stats struct {
 	Healthy      bool          `json:"healthy"`
 	Ready        bool          `json:"ready"`
 	Measurements int           `json:"measurements"`
+	SizeBytes    int64         `json:"sizeBytes"`
 	Reasons      []string      `json:"reasons,omitempty"`
 	Checks       []HealthCheck `json:"checks,omitempty"`
 }

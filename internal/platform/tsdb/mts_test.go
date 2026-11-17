@@ -53,6 +53,30 @@ func TestMTSRoundTrip(t *testing.T) {
 	}
 }
 
+func TestMTSStatsIncludesDataDirectorySize(t *testing.T) {
+	ctx := context.Background()
+	store, err := OpenMTS(ctx, t.TempDir(), 24*time.Hour, false, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatalf("OpenMTS() error = %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close(ctx) })
+
+	now := time.Now().UTC().Truncate(time.Second)
+	if err := store.Append(ctx, "node-1", domain.Metrics{Timestamp: now, CPUUsage: 12.5}); err != nil {
+		t.Fatalf("Append() error = %v", err)
+	}
+	if err := store.engine.Flush(ctx); err != nil {
+		t.Fatalf("Flush() error = %v", err)
+	}
+	stats, err := store.Stats(ctx)
+	if err != nil {
+		t.Fatalf("Stats() error = %v", err)
+	}
+	if stats.SizeBytes <= 0 {
+		t.Fatalf("Stats().SizeBytes = %d, want > 0", stats.SizeBytes)
+	}
+}
+
 func TestMTSNetworkProbeRoundTripAndDelete(t *testing.T) {
 	ctx := context.Background()
 	store, err := OpenMTS(ctx, t.TempDir(), 24*time.Hour, false, slog.New(slog.NewTextHandler(io.Discard, nil)))
