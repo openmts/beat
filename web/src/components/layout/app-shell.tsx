@@ -59,6 +59,7 @@ export function AppShell() {
   const [query, setQuery] = useState("");
   const menuButtonRef = useRef<HTMLButtonElement>(null);
   const sidebarRef = useRef<HTMLElement>(null);
+  const mainRef = useRef<HTMLElement>(null);
   const auth = useQuery({ queryKey: ["auth", "me"], queryFn: api.authMe, refetchInterval: 60_000 });
   const meta = useQuery({ queryKey: ["meta"], queryFn: api.meta, refetchInterval: 30_000 });
   const authenticated = auth.data?.authenticated === true;
@@ -73,6 +74,7 @@ export function AppShell() {
 
   useEffect(() => {
     setMobileOpen(false);
+    mainRef.current?.scrollTo(0, 0);
   }, [pathname]);
 
   useEffect(() => {
@@ -89,8 +91,6 @@ export function AppShell() {
 
   useEffect(() => {
     if (!mobileOpen) return;
-    const previous = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
     const close = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         setMobileOpen(false);
@@ -99,7 +99,6 @@ export function AppShell() {
     };
     document.addEventListener("keydown", close);
     return () => {
-      document.body.style.overflow = previous;
       document.removeEventListener("keydown", close);
     };
   }, [mobileOpen]);
@@ -114,6 +113,9 @@ export function AppShell() {
   const mtsReady = settings.data?.storage.mts.ready ?? false;
   const siteName = meta.data?.site.name || "Beat";
   const siteSubtitle = meta.data?.site.subtitle || "Node telemetry";
+  const runtimeLabel = meta.isError ? "服务连接异常" : meta.data?.demoMode ? "演示环境" : meta.data ? "服务运行中" : "服务连接中";
+  const runtimeDotClass = meta.isError ? "bg-destructive" : meta.data ? "bg-success" : "bg-warning";
+  const serverVersion = meta.data?.version ? `v${meta.data.version.replace(/^v/, "")}` : "—";
 
   useEffect(() => {
     document.title = `${pageTitle} · ${siteName}`;
@@ -124,10 +126,10 @@ export function AppShell() {
   }
 
   return (
-    <div className="min-h-screen bg-background">
+    <div className="flex h-dvh min-h-0 overflow-hidden bg-background">
       {mobileOpen ? <button type="button" aria-label="关闭导航" className="fixed inset-0 z-40 bg-slate-950/35 backdrop-blur-[1px] lg:hidden" onClick={() => setMobileOpen(false)} /> : null}
       <aside ref={sidebarRef} className={cn(
-        "fixed inset-y-0 left-0 z-50 flex w-[248px] flex-col border-r bg-card transition-transform duration-200 lg:translate-x-0",
+        "fixed inset-y-0 left-0 z-50 flex w-[248px] shrink-0 flex-col border-r bg-card transition-transform duration-200 lg:static lg:h-full lg:translate-x-0 lg:transition-none",
         mobileOpen ? "translate-x-0 shadow-float" : "-translate-x-full",
       )}>
         <div className="flex h-16 items-center justify-between border-b px-5">
@@ -147,10 +149,10 @@ export function AppShell() {
         <div className="px-4 pt-5">
           <div className="flex items-center justify-between rounded-lg border bg-background/70 px-3 py-2.5">
             <div className="flex items-center gap-2 text-xs">
-              <span className="relative flex h-2 w-2"><span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-success opacity-40" /><span className="relative inline-flex h-2 w-2 rounded-full bg-success" /></span>
-              <span className="font-medium">生产环境</span>
+              <span className="relative flex h-2 w-2">{meta.data && !meta.isError ? <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-success opacity-40" /> : null}<span className={cn("relative inline-flex h-2 w-2 rounded-full", runtimeDotClass)} /></span>
+              <span className="font-medium">{runtimeLabel}</span>
             </div>
-            <Badge variant="outline" className="font-mono text-[9px]">v0.1</Badge>
+            <Badge variant="outline" className="font-mono text-[9px]" title={meta.data?.version ? `Beat Server ${meta.data.version}` : "Server 版本读取中"}>{serverVersion}</Badge>
           </div>
         </div>
 
@@ -183,8 +185,8 @@ export function AppShell() {
         </div>
       </aside>
 
-      <div className="min-w-0 lg:pl-[248px]">
-        <header className="sticky top-0 z-30 flex h-16 items-center gap-3 border-b bg-background/85 px-4 backdrop-blur-md sm:px-6">
+      <div className="flex h-full min-w-0 flex-1 flex-col">
+        <header className="z-30 flex h-16 shrink-0 items-center gap-3 border-b bg-background/85 px-4 backdrop-blur-md sm:px-6">
           <Button ref={menuButtonRef} variant="ghost" size="icon" className="lg:hidden" onClick={() => setMobileOpen(true)} aria-label="打开导航"><Menu className="h-5 w-5" /></Button>
           <div className="hidden min-w-0 items-center gap-1.5 text-xs text-muted-foreground sm:flex">
             <span>Beat</span><ChevronRight className="h-3.5 w-3.5" /><span className="font-medium text-foreground">{pageTitle}</span>
@@ -207,8 +209,10 @@ export function AppShell() {
             </div>
           </div>
         </header>
-        <main className="mx-auto w-full min-w-0 max-w-[1440px] px-4 py-6 sm:px-6 lg:py-7">
-          <Outlet />
+        <main ref={mainRef} className={cn("min-h-0 flex-1 overscroll-contain scrollbar-thin", mobileOpen ? "overflow-hidden" : "overflow-y-auto")}>
+          <div className="mx-auto w-full min-w-0 max-w-[1440px] px-4 py-6 sm:px-6 lg:py-7">
+            <Outlet />
+          </div>
         </main>
       </div>
     </div>
