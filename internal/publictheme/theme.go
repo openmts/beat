@@ -69,11 +69,11 @@ func DefaultDocument() Document {
 			ContentWidth: "wide", Radius: "sm", Surface: "solid", Density: "compact",
 		},
 		Home: Page{Blocks: []Block{
-			{ID: "summary", Type: "summary-stats", Enabled: true, Layout: Layout{MinHeight: "auto", Padding: "none", Columns: 4, Gap: "sm"}, Props: map[string]any{
-				"variant": "minimal", "items": []any{"all", "online", "warning", "offline"},
-			}},
 			{ID: "groups", Type: "group-filter", Enabled: true, Layout: Layout{MinHeight: "auto", Padding: "none", Gap: "sm"}, Props: map[string]any{
 				"variant": "minimal", "title": "全部", "description": "选择分组查看节点",
+			}},
+			{ID: "summary", Type: "summary-stats", Enabled: true, Layout: Layout{MinHeight: "auto", Padding: "none", Columns: 4, Gap: "sm"}, Props: map[string]any{
+				"variant": "minimal", "items": []any{"all", "online", "warning", "offline"},
 			}},
 			{ID: "nodes", Type: "node-collection", Enabled: true, Layout: Layout{MinHeight: "auto", Padding: "none", Columns: 4, Gap: "sm"}, Props: map[string]any{
 				"variant": "minimal", "view": "card", "title": "节点", "description": "点击节点查看指标详情",
@@ -104,14 +104,14 @@ func BeatDefaultDocument() Document {
 			ContentWidth: "wide", Radius: "md", Surface: "gradient", Density: "comfortable",
 		},
 		Home: Page{Blocks: []Block{
-			{ID: "hero", Type: "hero", Enabled: true, Layout: Layout{MinHeight: "auto", Padding: "lg", Gap: "md"}, Props: map[string]any{
+			{ID: "hero", Type: "hero", Enabled: true, Layout: Layout{MinHeight: "auto", Padding: "none", Gap: "md"}, Props: map[string]any{
 				"eyebrow": "Node observatory", "title": "网络节点运行概览",
 				"description": "一眼掌握节点在线状态与资源水位。选择任意节点，进入多值指标监控视图，查看 CPU、内存、磁盘、网络与系统负载趋势。",
 			}},
 			{ID: "summary", Type: "summary-stats", Enabled: true, Layout: Layout{MinHeight: "auto", Padding: "none", Columns: 4, Gap: "sm"}, Props: map[string]any{
 				"items": []any{"all", "online", "warning", "offline"},
 			}},
-			{ID: "groups", Type: "group-filter", Enabled: true, Layout: Layout{MinHeight: "auto", Padding: "md", Gap: "sm"}, Props: map[string]any{
+			{ID: "groups", Type: "group-filter", Enabled: true, Layout: Layout{MinHeight: "auto", Padding: "none", Gap: "sm"}, Props: map[string]any{
 				"title": "按分组查看", "description": "选择分组，只看旗下节点",
 			}},
 			{ID: "nodes", Type: "node-collection", Enabled: true, Layout: Layout{MinHeight: "tall", Padding: "none", Columns: 3, Gap: "md"}, Props: map[string]any{

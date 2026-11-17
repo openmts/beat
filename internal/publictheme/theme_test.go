@@ -20,6 +20,9 @@ func TestDefaultDocumentIsValid(t *testing.T) {
 	if normalized.PresetID != "minimal" {
 		t.Fatalf("unexpected preset id: %q", normalized.PresetID)
 	}
+	if normalized.Home.Blocks[0].Type != "group-filter" || normalized.Home.Blocks[1].Type != "summary-stats" {
+		t.Fatalf("default home blocks must lead with group navigation before summary stats: %+v", normalized.Home.Blocks[:2])
+	}
 }
 
 func TestPresetCatalogContainsDefault(t *testing.T) {
@@ -43,6 +46,20 @@ func TestPresetCatalogContainsDefault(t *testing.T) {
 	}
 	if classic.Document.PresetID != classic.ID || classic.Document.Appearance.Surface != "gradient" {
 		t.Fatal("expected the original Beat theme document to be preserved")
+	}
+}
+
+func TestBeatDefaultHomeCardsShareTheSameWidth(t *testing.T) {
+	doc, err := Normalize(BeatDefaultDocument())
+	if err != nil {
+		t.Fatalf("normalize beat default theme: %v", err)
+	}
+	for _, block := range doc.Home.Blocks {
+		if block.Type == "hero" || block.Type == "group-filter" || block.Type == "summary-stats" || block.Type == "node-collection" {
+			if block.Layout.Padding != "none" {
+				t.Fatalf("beat default %s block must render at the full content width, got padding %q", block.Type, block.Layout.Padding)
+			}
+		}
 	}
 }
 

@@ -57,8 +57,8 @@ function PublicShellContent() {
             <button type="button" onClick={toggleMode} aria-label="切换主题" className="grid h-8 w-8 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground">
               {resolvedMode === "light" ? <Moon className="h-4 w-4" /> : <Sun className="h-4 w-4" />}
             </button>
-            <Link to="/admin" className={buttonVariants({ variant: minimal ? "ghost" : "outline", size: "sm" })}>
-              <LayoutDashboard className="h-3.5 w-3.5" />管理后台<ArrowUpRight className="hidden h-3 w-3 sm:block" />
+            <Link to="/admin" aria-label="管理后台" className={buttonVariants({ variant: minimal ? "ghost" : "outline", size: "sm" })}>
+              <LayoutDashboard className="h-3.5 w-3.5" /><span className="max-[359px]:hidden">管理后台</span><ArrowUpRight className="hidden h-3 w-3 sm:block" />
             </Link>
           </div>
         </div>

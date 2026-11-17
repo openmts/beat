@@ -17,8 +17,8 @@ export const DEFAULT_PUBLIC_THEME: PublicThemeDocument = {
   },
   home: {
     blocks: [
-      { id: "summary", type: "summary-stats", enabled: true, layout: { minHeight: "auto", padding: "none", columns: 4, gap: "sm" }, props: { variant: "minimal", items: ["all", "online", "warning", "offline"] } },
       { id: "groups", type: "group-filter", enabled: true, layout: { minHeight: "auto", padding: "none", columns: 0, gap: "sm" }, props: { variant: "minimal", title: "全部", description: "选择分组查看节点" } },
+      { id: "summary", type: "summary-stats", enabled: true, layout: { minHeight: "auto", padding: "none", columns: 4, gap: "sm" }, props: { variant: "minimal", items: ["all", "online", "warning", "offline"] } },
       { id: "nodes", type: "node-collection", enabled: true, layout: { minHeight: "auto", padding: "none", columns: 4, gap: "sm" }, props: {
         variant: "minimal", view: "card", title: "节点", description: "点击节点查看指标详情", fields: ["status", "cpu", "memory", "disk", "network"],
       } },

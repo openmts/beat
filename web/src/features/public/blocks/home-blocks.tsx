@@ -26,7 +26,7 @@ function propString(block: PublicThemeBlock, key: string, fallback = "") {
 
 export function HeroBlock({ block }: HomeBlockProps) {
   return (
-    <section className="relative overflow-hidden rounded-2xl border bg-card shadow-panel">
+    <section className="relative overflow-hidden rounded-2xl border bg-card p-5 shadow-panel sm:p-7">
       <div className="pointer-events-none absolute inset-y-0 right-0 hidden w-[44%] bg-[radial-gradient(circle_at_75%_35%,hsl(var(--primary)/0.14),transparent_58%),linear-gradient(135deg,transparent_20%,hsl(var(--public-accent,var(--primary))/0.05))] lg:block" />
       <div className="pointer-events-none absolute right-8 top-6 hidden grid-cols-6 gap-2 opacity-50 lg:grid">
         {Array.from({ length: 24 }).map((_, index) => <span key={index} className="h-1 w-1 rounded-full bg-primary/30" />)}
@@ -67,7 +67,7 @@ export function GroupFilterBlock({ block, runtime }: HomeBlockProps) {
   if (propString(block, "variant") === "minimal") return <MinimalGroupFilter runtime={data} />;
   const groups = data.groups;
   return (
-    <section className="rounded-xl border bg-card shadow-panel">
+    <section className="rounded-xl border bg-card p-4 shadow-panel">
       <div className="mb-3 flex items-center justify-between gap-3">
         <div className="flex items-center gap-2"><Layers3 className="h-4 w-4 text-primary" /><h2 className="text-sm font-semibold">{propString(block, "title", "按分组查看")}</h2></div>
         <p className="text-[10px] text-muted-foreground">{propString(block, "description", "选择分组，只看旗下节点")}</p>
@@ -154,7 +154,7 @@ function MinimalStat({ icon: Icon, label, value, hint }: { icon: typeof Server; 
     <div className="min-w-0 rounded-md border bg-card p-3">
       <p className="flex items-center gap-1.5 text-[10px] text-muted-foreground"><Icon className="h-3 w-3" />{label}</p>
       <p className="mt-2 truncate text-lg font-semibold leading-none tracking-tight tabular-nums">{value}</p>
-      <p className="mt-2 truncate text-[10px] text-muted-foreground">{hint}</p>
+      <p className="mt-2 line-clamp-2 min-h-8 text-[10px] leading-4 text-muted-foreground">{hint}</p>
     </div>
   );
 }
