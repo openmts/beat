@@ -2,6 +2,7 @@ import { Component, type ComponentType, type CSSProperties, type ErrorInfo, type
 import type { PublicThemeBlock, PublicThemePage } from "@/api/types";
 import { NodeCollectionBlock } from "@/features/public/blocks/home-blocks";
 import { GroupFilterBlock, HeroBlock, HomeSummaryBlock } from "@/features/public/blocks/home-blocks";
+import { PaperMonitorBlock } from "@/features/public/blocks/paper-monitor";
 import { MetricSummaryBlock, MetricTrendsBlock, NetworkProbesBlock, NodeHeaderBlock, SystemInfoBlock } from "@/features/public/blocks/detail-blocks";
 import { AnnouncementBlock, SpacerBlock } from "@/features/public/blocks/shared-blocks";
 import type { PublicRuntime } from "@/features/public/renderer/public-runtime";
@@ -14,6 +15,7 @@ const COMPONENTS: Record<string, ComponentType<BlockProps>> = {
   "summary-stats": HomeSummaryBlock as ComponentType<BlockProps>,
   "group-filter": GroupFilterBlock as ComponentType<BlockProps>,
   "node-collection": NodeCollectionBlock as ComponentType<BlockProps>,
+  "paper-monitor": PaperMonitorBlock as ComponentType<BlockProps>,
   "node-header": NodeHeaderBlock as ComponentType<BlockProps>,
   "system-info": SystemInfoBlock as ComponentType<BlockProps>,
   "metric-summary": MetricSummaryBlock as ComponentType<BlockProps>,

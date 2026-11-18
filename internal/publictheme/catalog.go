@@ -14,6 +14,7 @@ type Preset struct {
 func Presets() []Preset {
 	minimal, _ := Normalize(DefaultDocument())
 	beatDefault, _ := Normalize(BeatDefaultDocument())
+	paper, _ := Normalize(PaperDocument())
 	return []Preset{
 		{
 			ID:          "minimal",
@@ -28,6 +29,13 @@ func Presets() []Preset {
 			Description: "清爽的蓝灰观测风格，突出节点状态、资源水位与多值指标趋势，适合日常巡检与值班大屏。",
 			IsDefault:   false,
 			Document:    beatDefault,
+		},
+		{
+			ID:          "paper",
+			Name:        "Paper",
+			Description: "纸白背景、细边框与低饱和蓝色强调色。桌面端采用节点列表与指标详情双栏布局，移动端切换为紧凑单列视图。",
+			IsDefault:   false,
+			Document:    paper,
 		},
 	}
 }

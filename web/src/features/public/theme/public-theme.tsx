@@ -108,11 +108,17 @@ function publicSurfaceClass(surface: PublicThemeAppearance["surface"]) {
 
 function themeStyle(appearance: PublicThemeAppearance, mode: "light" | "dark", presetId?: string): CSSProperties {
   const minimal = presetId === "minimal";
-  const primary = minimal && mode === "dark" ? "0 0% 98%" : hexToHsl(appearance.primary);
-  const accent = minimal && mode === "dark" ? "240 5% 65%" : hexToHsl(appearance.accent);
-  const palette = minimal
+  const paper = presetId === "paper";
+  const primary = paper
+    ? (mode === "dark" ? hexToHsl("#88b5e8") : hexToHsl("#2d639b"))
+    : minimal && mode === "dark" ? "0 0% 98%" : hexToHsl(appearance.primary);
+  const accent = paper
+    ? (mode === "dark" ? hexToHsl("#88b5e8") : hexToHsl("#2d639b"))
+    : minimal && mode === "dark" ? "240 5% 65%" : hexToHsl(appearance.accent);
+  const paperPalette = paper ? (mode === "dark" ? paperDarkPalette : paperLightPalette) : null;
+  const palette = paperPalette ?? (minimal
     ? (mode === "dark" ? minimalDarkPalette : minimalLightPalette)
-    : (mode === "dark" ? darkPalette : lightPalette);
+    : (mode === "dark" ? darkPalette : lightPalette));
   const radius = appearance.radius === "sm" ? "0.375rem" : appearance.radius === "lg" ? "0.9rem" : "0.625rem";
   return {
     "--background": palette.background,
@@ -122,7 +128,7 @@ function themeStyle(appearance: PublicThemeAppearance, mode: "light" | "dark", p
     "--popover": palette.card,
     "--popover-foreground": palette.foreground,
     "--primary": primary,
-    "--primary-foreground": mode === "dark" ? (minimal ? "240 6% 10%" : "222 36% 10%") : "0 0% 100%",
+    "--primary-foreground": mode === "dark" ? (minimal || paper ? "210 13% 9%" : "222 36% 10%") : "0 0% 100%",
     "--secondary": palette.secondary,
     "--secondary-foreground": palette.foreground,
     "--muted": palette.muted,
@@ -138,6 +144,16 @@ function themeStyle(appearance: PublicThemeAppearance, mode: "light" | "dark", p
     "--chart-disk": palette.chartDisk,
     "--chart-network": palette.chartNetwork,
     "--public-accent": accent,
+    "--paper-bg": paperPalette?.paperBackground ?? palette.background,
+    "--paper-surface": paperPalette?.card ?? palette.card,
+    "--paper-border": paperPalette?.border ?? palette.border,
+    "--paper-border-item": paperPalette?.paperBorderItem ?? palette.border,
+    "--paper-hover": paperPalette?.paperHover ?? palette.muted,
+    "--paper-selected": paperPalette?.paperSelected ?? palette.accent,
+    "--paper-accent": paperPalette?.paperAccent ?? primary,
+    "--paper-accent-line": paperPalette?.paperAccentLine ?? palette.border,
+    "--paper-accent-surface": paperPalette?.paperAccentSurface ?? palette.card,
+    "--paper-track": paperPalette?.paperTrack ?? palette.border,
   } as CSSProperties;
 }
 
@@ -207,6 +223,56 @@ const minimalDarkPalette = {
   chartMemory: "240 5% 65%",
   chartDisk: "240 4% 46%",
   chartNetwork: "240 5% 80%",
+};
+
+const paperLightPalette = {
+  background: "220 14% 96%",
+  foreground: "210 8% 20%",
+  card: "0 0% 100%",
+  secondary: "210 23% 97%",
+  muted: "210 19% 97%",
+  mutedForeground: "214 7% 54%",
+  accent: "210 33% 95%",
+  border: "211 14% 90%",
+  success: "147 50% 47%",
+  warning: "34 72% 42%",
+  chartCpu: "209 55% 39%",
+  chartMemory: "147 50% 47%",
+  chartDisk: "34 72% 42%",
+  chartNetwork: "209 55% 39%",
+  paperBackground: "220 14% 96%",
+  paperBorderItem: "210 8% 71%",
+  paperHover: "210 23% 97%",
+  paperSelected: "210 33% 95%",
+  paperAccent: "209 55% 39%",
+  paperAccentLine: "210 39% 87%",
+  paperAccentSurface: "210 43% 97%",
+  paperTrack: "211 19% 93%",
+};
+
+const paperDarkPalette = {
+  background: "210 13% 9%",
+  foreground: "210 14% 88%",
+  card: "210 9% 13%",
+  secondary: "211 13% 16%",
+  muted: "211 13% 16%",
+  mutedForeground: "211 8% 57%",
+  accent: "211 25% 18%",
+  border: "211 12% 19%",
+  success: "147 50% 60%",
+  warning: "35 61% 55%",
+  chartCpu: "209 68% 72%",
+  chartMemory: "147 50% 60%",
+  chartDisk: "35 61% 55%",
+  chartNetwork: "209 68% 72%",
+  paperBackground: "210 13% 9%",
+  paperBorderItem: "212 9% 32%",
+  paperHover: "211 13% 16%",
+  paperSelected: "211 25% 18%",
+  paperAccent: "209 68% 72%",
+  paperAccentLine: "211 27% 25%",
+  paperAccentSurface: "211 25% 15%",
+  paperTrack: "211 12% 19%",
 };
 
 function hexToHsl(hex: string): string {

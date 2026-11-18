@@ -27,8 +27,8 @@ func TestDefaultDocumentIsValid(t *testing.T) {
 
 func TestPresetCatalogContainsDefault(t *testing.T) {
 	presets := Presets()
-	if len(presets) != 2 {
-		t.Fatalf("expected two built-in presets, got %d", len(presets))
+	if len(presets) != 3 {
+		t.Fatalf("expected three built-in presets, got %d", len(presets))
 	}
 	preset, ok := PresetByID("minimal")
 	if !ok || !preset.IsDefault {
@@ -46,6 +46,13 @@ func TestPresetCatalogContainsDefault(t *testing.T) {
 	}
 	if classic.Document.PresetID != classic.ID || classic.Document.Appearance.Surface != "gradient" {
 		t.Fatal("expected the original Beat theme document to be preserved")
+	}
+	paper, ok := PresetByID("paper")
+	if !ok || paper.IsDefault {
+		t.Fatal("expected paper preset to be available and non-default")
+	}
+	if paper.Document.PresetID != paper.ID || len(paper.Document.Home.Blocks) != 1 || paper.Document.Home.Blocks[0].Type != "paper-monitor" {
+		t.Fatal("expected paper preset to use the dedicated monitor home block")
 	}
 }
 

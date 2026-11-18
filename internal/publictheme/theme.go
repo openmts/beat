@@ -52,7 +52,7 @@ type Document struct {
 }
 
 var homeBlockTypes = map[string]struct{}{
-	"hero": {}, "summary-stats": {}, "group-filter": {}, "node-collection": {}, "announcement": {}, "spacer": {},
+	"hero": {}, "summary-stats": {}, "group-filter": {}, "node-collection": {}, "paper-monitor": {}, "announcement": {}, "spacer": {},
 }
 
 var detailBlockTypes = map[string]struct{}{
@@ -118,6 +118,32 @@ func BeatDefaultDocument() Document {
 				"view": "card", "title": "节点列表", "description": "点击卡片查看完整指标监控",
 				"fields": []any{"status", "cpu", "memory", "disk", "network"},
 			}},
+		}},
+		NodeDetail: Page{Blocks: []Block{
+			{ID: "header", Type: "node-header", Enabled: true, Layout: Layout{MinHeight: "auto", Padding: "none", Gap: "md"}},
+			{ID: "overview", Type: "system-info", Enabled: true, Layout: Layout{MinHeight: "auto", Padding: "none", Gap: "md"}},
+			{ID: "summary", Type: "metric-summary", Enabled: true, Layout: Layout{MinHeight: "auto", Padding: "none", Gap: "sm"}},
+			{ID: "trends", Type: "metric-trends", Enabled: true, Layout: Layout{MinHeight: "auto", Padding: "none", Gap: "md"}, Props: map[string]any{
+				"defaultRange": "24h", "charts": []any{"cpu", "memory", "disk", "network", "load"},
+			}},
+			{ID: "probes", Type: "network-probes", Enabled: true, Layout: Layout{MinHeight: "auto", Padding: "none", Gap: "md"}},
+		}},
+	}
+}
+
+// PaperDocument recreates the dense, paper-like monitoring layout: a compact
+// node rail on desktop and a single-column list/detail flow on mobile.
+func PaperDocument() Document {
+	return Document{
+		SchemaVersion: SchemaVersion,
+		Revision:      1,
+		PresetID:      "paper",
+		Appearance: Appearance{
+			Mode: "system", Primary: "#2d639b", Accent: "#3cb371",
+			ContentWidth: "wide", Radius: "sm", Surface: "solid", Density: "compact",
+		},
+		Home: Page{Blocks: []Block{
+			{ID: "monitor", Type: "paper-monitor", Enabled: true, Layout: Layout{MinHeight: "auto", Padding: "none", Gap: "sm"}},
 		}},
 		NodeDetail: Page{Blocks: []Block{
 			{ID: "header", Type: "node-header", Enabled: true, Layout: Layout{MinHeight: "auto", Padding: "none", Gap: "md"}},

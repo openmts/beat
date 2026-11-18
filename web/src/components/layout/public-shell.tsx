@@ -27,10 +27,19 @@ function PublicShellContent() {
   const siteSubtitle = bootstrap.data?.site.subtitle || "Node observatory";
   const width = publicContentWidthClass(themeDocument.appearance.contentWidth);
   const minimal = themeDocument.presetId === "minimal";
+  const paper = themeDocument.presetId === "paper";
 
   useEffect(() => {
     document.title = `${detailView ? "指标详情" : "节点广场"} · ${siteName}`;
   }, [detailView, siteName]);
+
+  if (paper && !detailView) {
+    return (
+      <main className="min-h-screen">
+        <Outlet />
+      </main>
+    );
+  }
 
   return (
     <div className="min-h-screen">
