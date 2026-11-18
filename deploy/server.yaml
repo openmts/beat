@@ -2,6 +2,8 @@
 listen: "[::]:9099"
 data_dir: /var/lib/beat
 agent_binary_dir: /usr/local/bin
+agent_release_repository: openmts/beat
+agent_release_tag: latest
 demo_mode: false
 enrollment_token_ttl: 10m
 

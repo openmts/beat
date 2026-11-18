@@ -1,7 +1,9 @@
 package version
 
 var (
-	Version = "0.1.0-dev"
-	Commit  = "unknown"
-	Date    = "unknown"
+	Version    = "0.1.0-dev"
+	Commit     = "unknown"
+	Date       = "unknown"
+	Repository = "openmts/beat"
+	ReleaseTag = "latest"
 )

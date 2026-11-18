@@ -11,6 +11,8 @@ import (
 	"strings"
 	"time"
 
+	"beat/internal/version"
+
 	"gopkg.in/yaml.v3"
 )
 
@@ -31,6 +33,8 @@ type Config struct {
 	AgentToken         string
 	EnrollmentTokenTTL time.Duration
 	AgentBinaryDir     string
+	AgentReleaseRepo   string
+	AgentReleaseTag    string
 	DemoMode           bool
 	Retention          time.Duration
 	TLSCertPath        string
@@ -65,6 +69,8 @@ func LoadServer(args []string) (Config, error) {
 	fs.StringVar(&cfg.Listen, "listen", cfg.Listen, "HTTP and gRPC listen address")
 	fs.StringVar(&cfg.DataDir, "data-dir", cfg.DataDir, "data directory")
 	fs.StringVar(&cfg.AgentBinaryDir, "agent-binary-dir", cfg.AgentBinaryDir, "directory containing architecture-specific Agent binaries")
+	fs.StringVar(&cfg.AgentReleaseRepo, "agent-release-repository", cfg.AgentReleaseRepo, "GitHub repository containing Agent release assets")
+	fs.StringVar(&cfg.AgentReleaseTag, "agent-release-tag", cfg.AgentReleaseTag, "GitHub release tag used for Agent downloads")
 	fs.StringVar(&cfg.AgentToken, "agent-token", cfg.AgentToken, "optional fixed Agent token (minimum 32 characters)")
 	fs.DurationVar(&cfg.EnrollmentTokenTTL, "enrollment-token-ttl", cfg.EnrollmentTokenTTL, "Agent enrollment token lifetime")
 	fs.BoolVar(&cfg.DemoMode, "demo", cfg.DemoMode, "seed and continuously refresh demonstration data")
@@ -114,6 +120,8 @@ type fileConfig struct {
 	Listen             string `yaml:"listen"`
 	DataDir            string `yaml:"data_dir"`
 	AgentBinaryDir     string `yaml:"agent_binary_dir"`
+	AgentReleaseRepo   string `yaml:"agent_release_repository"`
+	AgentReleaseTag    string `yaml:"agent_release_tag"`
 	AgentToken         string `yaml:"agent_token"`
 	EnrollmentTokenTTL string `yaml:"enrollment_token_ttl"`
 	DemoMode           *bool  `yaml:"demo_mode"`
@@ -147,6 +155,12 @@ func applyConfigFile(cfg *Config, path string) error {
 	}
 	if value := strings.TrimSpace(raw.AgentBinaryDir); value != "" {
 		cfg.AgentBinaryDir = value
+	}
+	if value := strings.TrimSpace(raw.AgentReleaseRepo); value != "" {
+		cfg.AgentReleaseRepo = value
+	}
+	if value := strings.TrimSpace(raw.AgentReleaseTag); value != "" {
+		cfg.AgentReleaseTag = value
 	}
 	if value := strings.TrimSpace(raw.AgentToken); value != "" {
 		cfg.AgentToken = value
@@ -194,6 +208,8 @@ func environmentConfig() Config {
 		DataDir:            dataDir,
 		AgentToken:         strings.TrimSpace(os.Getenv("BEAT_AGENT_TOKEN")),
 		AgentBinaryDir:     strings.TrimSpace(os.Getenv("BEAT_AGENT_BINARY_DIR")),
+		AgentReleaseRepo:   env("BEAT_AGENT_RELEASE_REPOSITORY", version.Repository),
+		AgentReleaseTag:    env("BEAT_AGENT_RELEASE_TAG", version.ReleaseTag),
 		DemoMode:           envBool("BEAT_DEMO_MODE", false),
 		TLSCertPath:        strings.TrimSpace(os.Getenv("BEAT_TLS_CERT")),
 		TLSKeyPath:         strings.TrimSpace(os.Getenv("BEAT_TLS_KEY")),
@@ -207,6 +223,8 @@ func finalize(cfg Config) (Config, error) {
 	cfg.DataDir = strings.TrimSpace(cfg.DataDir)
 	cfg.AgentToken = strings.TrimSpace(cfg.AgentToken)
 	cfg.AgentBinaryDir = strings.TrimSpace(cfg.AgentBinaryDir)
+	cfg.AgentReleaseRepo = strings.Trim(strings.TrimSpace(cfg.AgentReleaseRepo), "/")
+	cfg.AgentReleaseTag = strings.TrimSpace(cfg.AgentReleaseTag)
 	cfg.TLSCertPath = strings.TrimSpace(cfg.TLSCertPath)
 	cfg.TLSKeyPath = strings.TrimSpace(cfg.TLSKeyPath)
 	if cfg.Listen == "" {
@@ -230,6 +248,9 @@ func finalize(cfg Config) (Config, error) {
 	}
 	if cfg.AgentToken != "" && len(cfg.AgentToken) < minFixedAgentToken {
 		return Config{}, fmt.Errorf("fixed Agent token must contain at least %d characters", minFixedAgentToken)
+	}
+	if cfg.AgentReleaseRepo == "" || cfg.AgentReleaseTag == "" {
+		return Config{}, fmt.Errorf("Agent release repository and tag must not be empty")
 	}
 	if (cfg.TLSCertPath == "") != (cfg.TLSKeyPath == "") {
 		return Config{}, fmt.Errorf("--tls-cert and --tls-key must be provided together")

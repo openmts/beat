@@ -117,6 +117,10 @@ paths:
                   agentArchitectures:
                     type: array
                     items: { $ref: "#/components/schemas/AgentArchitecture" }
+                  agentReleaseVersion: { type: string }
+                  agentReleaseTag: { type: string }
+                  agentReleaseUrl: { type: string, format: uri }
+                  agentReleaseRepository: { type: string }
                   enrollmentTokenTtlSeconds: { type: integer }
   /api/v1/overview:
     get:
@@ -574,6 +578,10 @@ paths:
                   architectures:
                     type: array
                     items: { $ref: "#/components/schemas/AgentArchitecture" }
+                  releaseVersion: { type: string }
+                  releaseTag: { type: string }
+                  releaseRepository: { type: string }
+                  releaseUrl: { type: string, format: uri }
   /api/v1/agent-tokens:
     post:
       summary: 生成短期 Agent 注册令牌与一键接入命令
@@ -816,37 +824,6 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/TaskRun" }
         "404":
-          $ref: "#/components/responses/Problem"
-  /downloads/beat-agent:
-    get:
-      summary: 下载当前 Server 架构的 Agent 二进制（兼容入口）
-      responses:
-        "200":
-          description: 名为 beat-agent 的 Agent 二进制文件
-          content:
-            application/octet-stream:
-              schema: { type: string, format: binary }
-        "503":
-          $ref: "#/components/responses/Problem"
-  /downloads/beat-agent/{arch}:
-    get:
-      summary: 按架构下载 Agent 二进制
-      parameters:
-        - name: arch
-          in: path
-          required: true
-          schema:
-            type: string
-            enum: [amd64, arm64]
-      responses:
-        "200":
-          description: 名为 beat-agent 的 Agent 二进制文件
-          content:
-            application/octet-stream:
-              schema: { type: string, format: binary }
-        "404":
-          $ref: "#/components/responses/Problem"
-        "503":
           $ref: "#/components/responses/Problem"
   /api/v1/settings:
     get:
@@ -1240,6 +1217,7 @@ components:
         version: { type: string }
         size: { type: integer, format: int64 }
         sha256: { type: string }
+        downloadUrl: { type: string, format: uri }
         available: { type: boolean }
     AgentUpgradeItem:
       type: object
@@ -1254,6 +1232,7 @@ components:
         toVersion: { type: string }
         artifactSha256: { type: string }
         artifactSize: { type: integer, format: int64 }
+        artifactUrl: { type: string, format: uri }
         status:
           type: string
           enum: [queued, delivered, installing, restarting, succeeded, failed]
@@ -1284,6 +1263,9 @@ components:
       type: object
       properties:
         targetVersion: { type: string }
+        releaseTag: { type: string }
+        releaseUrl: { type: string, format: uri }
+        repository: { type: string }
         artifacts:
           type: array
           items: { $ref: "#/components/schemas/AgentUpgradeArtifact" }
@@ -1553,7 +1535,7 @@ components:
         accessCommand: { type: string }
     AgentArchitecture:
       type: object
-      required: [id, label, available, downloadUrl, downloadCommand]
+      required: [id, label, available, downloadUrl, size, version, downloadCommand]
       properties:
         id:
           type: string
@@ -1562,4 +1544,6 @@ components:
         available: { type: boolean }
         downloadUrl: { type: string }
         checksumSha256: { type: string }
+        size: { type: integer, format: int64 }
+        version: { type: string }
         downloadCommand: { type: string }

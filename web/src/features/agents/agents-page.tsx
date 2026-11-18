@@ -5,6 +5,7 @@ import {
   Clipboard,
   Clock3,
   Download,
+  ExternalLink,
   KeyRound,
   Laptop,
   LoaderCircle,
@@ -69,7 +70,7 @@ export function AgentsPage() {
       <PageHeader
         eyebrow="Node onboarding"
         title="节点接入"
-        description="下载 Agent、生成短期注册令牌并复制完整接入命令。注册令牌默认 10 分钟有效，每次生成都会轮换。"
+        description="从 GitHub Release 下载 Agent、生成短期注册令牌并复制完整接入命令。注册令牌默认 10 分钟有效，每次生成都会轮换。"
         actions={<>
           <Button variant="outline" size="sm" onClick={() => void agents.refetch()}><RefreshCw className={cn("h-3.5 w-3.5", agents.isFetching && "animate-spin")} />刷新配置</Button>
           <a href={selectedArchitecture.downloadUrl} download="beat-agent" className={cn(buttonVariants({ size: "sm" }), !selectedArchitecture.available && "pointer-events-none opacity-50")} aria-disabled={!selectedArchitecture.available}>
@@ -135,7 +136,7 @@ export function AgentsPage() {
 
         <div className="grid min-w-0 gap-4">
           <Card className="min-w-0">
-            <CardHeader><CardTitle className="flex items-center gap-2"><Download className="h-4 w-4 text-primary" />Agent 一键安装</CardTitle><p className="text-xs text-muted-foreground">选择目标节点架构，自动完成目录、二进制和 systemd 初始化。</p></CardHeader>
+            <CardHeader><CardTitle className="flex items-center gap-2"><Download className="h-4 w-4 text-primary" />Agent 一键安装</CardTitle><p className="text-xs text-muted-foreground">选择目标节点架构，从 GitHub Release 下载并自动完成目录、二进制和 systemd 初始化。</p></CardHeader>
             <CardContent className="min-w-0 space-y-3">
               <div className="grid min-w-0 grid-cols-2 gap-1 rounded-lg border bg-muted/30 p-1" role="group" aria-label="Agent 目标架构">
                 {agents.data.architectures.map((item) => (
@@ -153,13 +154,14 @@ export function AgentsPage() {
                   </button>
                 ))}
               </div>
-              <div className="flex items-center justify-between rounded-lg border bg-background/55 px-3 py-2.5 text-[11px]"><span className="flex items-center gap-2"><Laptop className="h-3.5 w-3.5 text-muted-foreground" />linux / {selectedArchitecture.id}</span><Badge variant={selectedArchitecture.available ? "success" : "warning"}>{selectedArchitecture.available ? "可下载" : "未就绪"}</Badge></div>
-              {!selectedArchitecture.available ? <div className="rounded-lg border border-warning/30 bg-warning/[0.06] px-3 py-2 text-[10px] leading-5 text-warning">{selectedArchitecture.label} 安装包尚未就绪，请将对应二进制放入 Server 同目录或 <code className="font-mono">./bin</code> 后刷新。</div> : null}
+              <div className="flex min-w-0 flex-wrap items-center justify-between gap-2 rounded-lg border bg-background/55 px-3 py-2.5 text-[11px]"><span className="flex min-w-0 items-center gap-2"><Laptop className="h-3.5 w-3.5 shrink-0 text-muted-foreground" /><span className="truncate">linux / {selectedArchitecture.id}</span>{selectedArchitecture.version ? <span className="shrink-0 font-mono text-[10px] text-muted-foreground">{selectedArchitecture.version}</span> : null}</span><Badge variant={selectedArchitecture.available ? "success" : "warning"}>{selectedArchitecture.available ? "可下载" : "未就绪"}</Badge></div>
+              <div className="flex min-w-0 flex-wrap items-center justify-between gap-2 rounded-lg border border-primary/15 bg-primary/[0.04] px-3 py-2 text-[10px] leading-5 text-muted-foreground"><span className="min-w-0 break-words">发布源：<span className="font-mono text-foreground">{agents.data.releaseRepository}</span></span><a href={agents.data.releaseUrl} target="_blank" rel="noreferrer" className="inline-flex shrink-0 items-center gap-1 font-medium text-primary hover:underline">GitHub Release <ExternalLink className="h-3 w-3" /></a></div>
+              {!selectedArchitecture.available ? <div className="rounded-lg border border-warning/30 bg-warning/[0.06] px-3 py-2 text-[10px] leading-5 text-warning">{selectedArchitecture.label} 的 GitHub Release 资产尚不可用，请检查发布流水线或当前 release tag。</div> : null}
               <div className="relative min-w-0 rounded-lg bg-muted/45 p-3 pr-10 font-mono text-[10px] leading-5 text-muted-foreground">
                 <pre className="max-h-64 min-w-0 overflow-auto whitespace-pre-wrap break-all pr-5 font-mono scrollbar-thin">{selectedArchitecture.downloadCommand}</pre>
                 <button type="button" aria-label="复制下载命令" className="absolute right-2.5 top-2.5 rounded p-1 hover:bg-background hover:text-foreground" onClick={() => void copy(selectedArchitecture.downloadCommand, "download")}>{copied === "download" ? <Check className="h-3.5 w-3.5 text-success" /> : <Clipboard className="h-3.5 w-3.5" />}</button>
               </div>
-              <p className="text-[10px] leading-5 text-muted-foreground">命令会校验架构与 SHA-256，将二进制直接安装为 <code className="font-mono text-foreground">/usr/local/bin/beat-agent</code>，配置写入 <code className="font-mono text-foreground">/etc/beat/agent.yaml</code> 并生成 root 运行的 systemd 单元。生成接入命令后才会启用并启动服务。</p>
+              <p className="text-[10px] leading-5 text-muted-foreground">命令会从 GitHub Release 下载对应架构的二进制，校验主机架构与 SHA-256 后直接安装为 <code className="font-mono text-foreground">/usr/local/bin/beat-agent</code>；配置写入 <code className="font-mono text-foreground">/etc/beat/agent.yaml</code> 并生成 root 运行的 systemd 单元。生成接入命令后才会启用并启动服务。</p>
               {selectedArchitecture.checksumSha256 ? <p className="break-all rounded-lg border border-success/20 bg-success/[0.04] px-3 py-2 font-mono text-[9px] leading-4 text-muted-foreground"><span className="font-sans font-medium text-success">SHA-256</span><br />{selectedArchitecture.checksumSha256}</p> : null}
             </CardContent>
           </Card>

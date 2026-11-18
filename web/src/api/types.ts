@@ -277,6 +277,8 @@ export interface AgentArchitecture {
   available: boolean;
   downloadUrl: string;
   checksumSha256?: string;
+  size: number;
+  version: string;
   downloadCommand: string;
 }
 
@@ -285,6 +287,10 @@ export interface AgentsResponse {
   total: number;
   tokenTtlSeconds: number;
   architectures: AgentArchitecture[];
+  releaseVersion: string;
+  releaseTag: string;
+  releaseRepository: string;
+  releaseUrl: string;
 }
 
 export interface AgentUpgradeArtifact {
@@ -292,6 +298,7 @@ export interface AgentUpgradeArtifact {
   version: string;
   size: number;
   sha256: string;
+  downloadUrl: string;
   available: boolean;
 }
 
@@ -308,6 +315,7 @@ export interface AgentUpgradeItem {
   toVersion: string;
   artifactSha256: string;
   artifactSize: number;
+  artifactUrl: string;
   status: AgentUpgradeItemStatus;
   message: string;
   attempt: number;
@@ -334,6 +342,9 @@ export interface AgentUpgradeBatch {
 
 export interface AgentUpgradeOverview {
   targetVersion: string;
+  releaseTag: string;
+  releaseUrl: string;
+  repository: string;
   artifacts: AgentUpgradeArtifact[];
   totalNodes: number;
   upToDate: number;
@@ -460,6 +471,10 @@ export interface MetaResponse {
   nodeCount: number;
   site: SiteSettings;
   agentArchitectures: AgentArchitecture[];
+  agentReleaseVersion: string;
+  agentReleaseTag: string;
+  agentReleaseUrl: string;
+  agentReleaseRepository: string;
   enrollmentTokenTtlSeconds: number;
 }
 

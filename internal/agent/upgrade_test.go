@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	beatv1 "beat/internal/protocol/beatv1"
+	"beat/internal/version"
 )
 
 func TestValidateUpgradeInstruction(t *testing.T) {
@@ -20,20 +21,25 @@ func TestValidateUpgradeInstruction(t *testing.T) {
 	digest := sha256.Sum256(payload)
 	upgrade := &beatv1.AgentUpgrade{
 		OperationId: "op-1", TargetVersion: "9.9.9", Arch: runtime.GOARCH,
-		DownloadUrl: "/downloads/beat-agent/" + runtime.GOARCH,
+		DownloadUrl: "https://github.com/" + version.Repository + "/releases/download/v9.9.9/beat-agent-linux-" + runtime.GOARCH,
 		Sha256:      hex.EncodeToString(digest[:]), Size: int64(len(payload)),
 	}
-	if err := validateUpgradeInstruction("https://beat.example.com", upgrade); err != nil {
+	if err := validateUpgradeInstruction(upgrade); err != nil {
 		t.Fatalf("valid instruction rejected: %v", err)
 	}
-	upgrade.DownloadUrl = "https://evil.example.com/downloads/beat-agent/" + runtime.GOARCH
-	if err := validateUpgradeInstruction("https://beat.example.com", upgrade); err == nil {
+	upgrade.DownloadUrl = "https://evil.example.com/" + version.Repository + "/releases/download/v9.9.9/beat-agent-linux-" + runtime.GOARCH
+	if err := validateUpgradeInstruction(upgrade); err == nil {
 		t.Fatal("cross-origin upgrade URL was accepted")
 	}
-	upgrade.DownloadUrl = "/downloads/beat-agent/" + runtime.GOARCH
+	upgrade.DownloadUrl = "https://github.com/" + version.Repository + "/releases/download/v9.9.9/beat-agent-linux-" + runtime.GOARCH
 	upgrade.TargetVersion = "0.0.1"
-	if err := validateUpgradeInstruction("https://beat.example.com", upgrade); err == nil {
+	if err := validateUpgradeInstruction(upgrade); err == nil {
 		t.Fatal("downgrade was accepted")
+	}
+	upgrade.TargetVersion = "9.9.9"
+	upgrade.DownloadUrl = "http://github.com/" + version.Repository + "/releases/download/v9.9.9/beat-agent-linux-" + runtime.GOARCH
+	if err := validateUpgradeInstruction(upgrade); err == nil {
+		t.Fatal("non-HTTPS upgrade URL was accepted")
 	}
 }
 
@@ -41,7 +47,7 @@ func TestDownloadUpgradeVerifiesChecksumAndSize(t *testing.T) {
 	payload := []byte("new-agent-binary")
 	digest := sha256.Sum256(payload)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/downloads/beat-agent/"+runtime.GOARCH {
+		if r.URL.Path != "/beat-agent" {
 			t.Fatalf("unexpected path: %s", r.URL.Path)
 		}
 		_, _ = w.Write(payload)
@@ -50,7 +56,7 @@ func TestDownloadUpgradeVerifiesChecksumAndSize(t *testing.T) {
 	runtimeAgent := &Runtime{cfg: RuntimeConfig{ServerURL: server.URL}}
 	upgrade := &beatv1.AgentUpgrade{
 		OperationId: "op-download", TargetVersion: "9.9.9", Arch: runtime.GOARCH,
-		DownloadUrl: "/downloads/beat-agent/" + runtime.GOARCH,
+		DownloadUrl: server.URL + "/beat-agent",
 		Sha256:      hex.EncodeToString(digest[:]), Size: int64(len(payload)), TimeoutSeconds: 60,
 	}
 	path, err := runtimeAgent.downloadUpgrade(context.Background(), upgrade, t.TempDir())

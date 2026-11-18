@@ -6,7 +6,6 @@ import (
 	"errors"
 	"io"
 	"net/http"
-	"os"
 	"strings"
 	"time"
 
@@ -22,22 +21,6 @@ const (
 	agentUpgradeMaxConcurrent = 10
 	agentUpgradeStaleAfter    = 10 * time.Minute
 )
-
-func (s *Server) agentUpgradeArtifacts() []domain.AgentUpgradeArtifact {
-	artifacts := make([]domain.AgentUpgradeArtifact, 0, 2)
-	for _, arch := range []string{"amd64", "arm64"} {
-		artifact := domain.AgentUpgradeArtifact{Arch: arch, Version: version.Version}
-		if path := s.agentBinaryPathFor(arch); path != "" {
-			if info, err := os.Stat(path); err == nil && !info.IsDir() {
-				artifact.Size = info.Size()
-				artifact.SHA256, _ = fileSHA256(path)
-				artifact.Available = artifact.SHA256 != ""
-			}
-		}
-		artifacts = append(artifacts, artifact)
-	}
-	return artifacts
-}
 
 func (s *Server) agentUpgradeOverview(ctx context.Context) (domain.AgentUpgradeOverview, error) {
 	now := time.Now().UTC()
@@ -57,7 +40,8 @@ func (s *Server) agentUpgradeOverview(ctx context.Context) (domain.AgentUpgradeO
 	if err != nil {
 		return domain.AgentUpgradeOverview{}, err
 	}
-	artifacts := s.agentUpgradeArtifacts()
+	snapshot := s.agentReleaseSnapshot(ctx)
+	artifacts := snapshot.Artifacts
 	artifactByArch := make(map[string]domain.AgentUpgradeArtifact, len(artifacts))
 	for _, artifact := range artifacts {
 		artifactByArch[artifact.Arch] = artifact
@@ -67,7 +51,10 @@ func (s *Server) agentUpgradeOverview(ctx context.Context) (domain.AgentUpgradeO
 		nodeByID[node.ID] = node
 	}
 	overview := domain.AgentUpgradeOverview{
-		TargetVersion: version.Version,
+		TargetVersion: snapshot.Version,
+		ReleaseTag:    snapshot.ReleaseTag,
+		ReleaseURL:    snapshot.ReleaseURL,
+		Repository:    snapshot.Repository,
 		Artifacts:     artifacts,
 		TotalNodes:    len(agents),
 		ActiveBatch:   active,
@@ -88,7 +75,7 @@ func (s *Server) agentUpgradeOverview(ctx context.Context) (domain.AgentUpgradeO
 			overview.Unsupported++
 			continue
 		}
-		if version.Compare(node.AgentVersion, version.Version) >= 0 {
+		if version.Compare(node.AgentVersion, snapshot.Version) >= 0 {
 			overview.UpToDate++
 			continue
 		}
@@ -138,8 +125,9 @@ func (s *Server) handleCreateAgentUpgrade(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusInternalServerError, "storage_error", "读取节点列表失败")
 		return
 	}
+	snapshot := s.agentReleaseSnapshot(r.Context())
 	artifactByArch := make(map[string]domain.AgentUpgradeArtifact)
-	for _, artifact := range s.agentUpgradeArtifacts() {
+	for _, artifact := range snapshot.Artifacts {
 		artifactByArch[artifact.Arch] = artifact
 	}
 	nodeByID := make(map[string]domain.Node, len(nodes))
@@ -154,7 +142,7 @@ func (s *Server) handleCreateAgentUpgrade(w http.ResponseWriter, r *http.Request
 			skipped++
 			continue
 		}
-		if version.Compare(node.AgentVersion, version.Version) >= 0 {
+		if version.Compare(node.AgentVersion, snapshot.Version) >= 0 {
 			continue
 		}
 		artifact, exists := artifactByArch[node.Arch]
@@ -168,15 +156,15 @@ func (s *Server) handleCreateAgentUpgrade(w http.ResponseWriter, r *http.Request
 		}
 		items = append(items, domain.AgentUpgradeItem{
 			AgentID: agent.ID, NodeID: node.ID, NodeName: node.Hostname, Arch: node.Arch,
-			FromVersion: node.AgentVersion, ToVersion: version.Version,
-			ArtifactSHA256: artifact.SHA256, ArtifactSize: artifact.Size,
+			FromVersion: node.AgentVersion, ToVersion: snapshot.Version,
+			ArtifactSHA256: artifact.SHA256, ArtifactSize: artifact.Size, ArtifactURL: artifact.DownloadURL,
 		})
 	}
 	if len(items) == 0 {
 		writeError(w, http.StatusConflict, "no_upgradable_agents", "当前没有需要升级的 Agent")
 		return
 	}
-	batch, err := s.store.CreateAgentUpgradeBatch(r.Context(), version.Version, items, now)
+	batch, err := s.store.CreateAgentUpgradeBatch(r.Context(), snapshot.Version, items, now)
 	if errors.Is(err, sqlite.ErrAgentUpgradeInProgress) {
 		writeError(w, http.StatusConflict, "upgrade_in_progress", "已有 Agent 升级任务正在进行")
 		return
@@ -248,6 +236,10 @@ func (s *Server) dispatchAgentUpgrades(ctx context.Context, batchID string) {
 		if err != nil || !delivered {
 			continue
 		}
+		if strings.TrimSpace(item.ArtifactURL) == "" {
+			_, _ = s.store.UpdateAgentUpgradeProgress(ctx, item.AgentID, item.ID, "failed", "升级包未关联 GitHub Release 地址", time.Now().UTC())
+			continue
+		}
 		if !session.enqueueAgentUpgrade(upgradeMessage(item)) {
 			_, _ = s.store.UpdateAgentUpgradeProgress(ctx, item.AgentID, item.ID, "failed", "Agent 会话发送队列已满", time.Now().UTC())
 			continue
@@ -260,7 +252,7 @@ func (s *Server) dispatchAgentUpgrades(ctx context.Context, batchID string) {
 func upgradeMessage(item domain.AgentUpgradeItem) *beatv1.AgentUpgrade {
 	return &beatv1.AgentUpgrade{
 		OperationId: item.ID, TargetVersion: item.ToVersion, Arch: item.Arch,
-		DownloadUrl: "/downloads/beat-agent/" + item.Arch, Sha256: item.ArtifactSHA256,
+		DownloadUrl: item.ArtifactURL, Sha256: item.ArtifactSHA256,
 		Size: item.ArtifactSize, TimeoutSeconds: 300,
 	}
 }

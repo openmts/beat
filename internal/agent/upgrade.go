@@ -18,6 +18,7 @@ import (
 	"time"
 
 	beatv1 "beat/internal/protocol/beatv1"
+	"beat/internal/release"
 	"beat/internal/version"
 )
 
@@ -47,7 +48,7 @@ func (r *Runtime) handleUpgrade(ctx context.Context, cancel context.CancelFunc, 
 		r.mu.Unlock()
 	}
 
-	if err := validateUpgradeInstruction(r.cfg.ServerURL, upgrade); err != nil {
+	if err := validateUpgradeInstruction(upgrade); err != nil {
 		fail(err.Error())
 		return
 	}
@@ -104,7 +105,7 @@ func (r *Runtime) handleUpgrade(ctx context.Context, cancel context.CancelFunc, 
 	cancel()
 }
 
-func validateUpgradeInstruction(serverURL string, upgrade *beatv1.AgentUpgrade) error {
+func validateUpgradeInstruction(upgrade *beatv1.AgentUpgrade) error {
 	if upgrade == nil || strings.TrimSpace(upgrade.GetOperationId()) == "" {
 		return errors.New("升级指令缺少操作 ID")
 	}
@@ -125,28 +126,8 @@ func validateUpgradeInstruction(serverURL string, upgrade *beatv1.AgentUpgrade) 
 	if _, err := hex.DecodeString(digest); err != nil {
 		return errors.New("升级包 SHA-256 无效")
 	}
-	downloadURL, err := url.Parse(strings.TrimSpace(upgrade.GetDownloadUrl()))
-	if err != nil {
-		return errors.New("升级包地址无效")
-	}
-	server, err := url.Parse(strings.TrimSpace(serverURL))
-	if err != nil || server.Host == "" {
-		return errors.New("Agent 服务端地址无效")
-	}
-	if !downloadURL.IsAbs() {
-		if !strings.HasPrefix(downloadURL.Path, "/downloads/beat-agent/") {
-			return errors.New("升级包地址不在允许范围内")
-		}
-		downloadURL = server.ResolveReference(downloadURL)
-	}
-	if !strings.EqualFold(downloadURL.Scheme, server.Scheme) || !strings.EqualFold(downloadURL.Host, server.Host) {
-		return errors.New("升级包地址必须与当前 Beat Server 同源")
-	}
-	if !strings.HasPrefix(downloadURL.Path, "/downloads/beat-agent/") {
-		return errors.New("升级包地址不在允许范围内")
-	}
-	if downloadURL.Path != "/downloads/beat-agent/"+upgrade.GetArch() {
-		return errors.New("升级包架构路径与目标架构不一致")
+	if err := release.ValidateAgentDownloadURL(upgrade.GetDownloadUrl(), version.Repository, upgrade.GetArch()); err != nil {
+		return fmt.Errorf("升级包必须来自 GitHub Release: %w", err)
 	}
 	return nil
 }
@@ -172,8 +153,11 @@ func (r *Runtime) downloadUpgrade(ctx context.Context, upgrade *beatv1.AgentUpgr
 	client := &http.Client{
 		Transport: transport,
 		Timeout:   5 * time.Minute,
-		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
-			return errors.New("升级下载不允许重定向")
+		CheckRedirect: func(request *http.Request, via []*http.Request) error {
+			if len(via) >= 10 {
+				return errors.New("升级下载重定向次数过多")
+			}
+			return release.ValidateRedirectURL(request.URL.String())
 		},
 	}
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, parsed.String(), nil)

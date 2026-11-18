@@ -46,10 +46,10 @@ func (s *Store) CreateAgentUpgradeBatch(ctx context.Context, targetVersion strin
 		if _, err := tx.ExecContext(ctx, `
 			INSERT INTO agent_upgrade_items (
 				id, batch_id, agent_id, node_id, node_name, arch, from_version, to_version,
-				artifact_sha256, artifact_size, status, message, attempt, created_at, updated_at
-			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', '', 0, ?, ?)`,
+				artifact_sha256, artifact_size, artifact_url, status, message, attempt, created_at, updated_at
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', '', 0, ?, ?)`,
 			itemID, batchID, item.AgentID, item.NodeID, item.NodeName, item.Arch,
-			item.FromVersion, targetVersion, item.ArtifactSHA256, item.ArtifactSize,
+			item.FromVersion, targetVersion, item.ArtifactSHA256, item.ArtifactSize, item.ArtifactURL,
 			now.Unix(), now.Unix()); err != nil {
 			return domain.AgentUpgradeBatch{}, fmt.Errorf("create agent upgrade item: %w", err)
 		}
@@ -315,7 +315,7 @@ const agentUpgradeBatchSelect = `
 const agentUpgradeItemSelect = `
 	SELECT i.id, i.batch_id, i.agent_id, i.node_id, i.node_name, i.arch,
 	       i.from_version, i.to_version, i.artifact_sha256, i.artifact_size,
-	       i.status, i.message, i.attempt, i.created_at, i.updated_at,
+	       i.artifact_url, i.status, i.message, i.attempt, i.created_at, i.updated_at,
 	       i.delivered_at, i.completed_at
 	FROM agent_upgrade_items i`
 
@@ -347,7 +347,7 @@ func scanAgentUpgradeItem(row upgradeScanner) (domain.AgentUpgradeItem, error) {
 	var deliveredAt, completedAt sql.NullInt64
 	if err := row.Scan(&item.ID, &item.BatchID, &item.AgentID, &item.NodeID, &item.NodeName,
 		&item.Arch, &item.FromVersion, &item.ToVersion, &item.ArtifactSHA256, &item.ArtifactSize,
-		&item.Status, &item.Message, &item.Attempt, &createdAt, &updatedAt,
+		&item.ArtifactURL, &item.Status, &item.Message, &item.Attempt, &createdAt, &updatedAt,
 		&deliveredAt, &completedAt); err != nil {
 		return domain.AgentUpgradeItem{}, err
 	}

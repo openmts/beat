@@ -115,36 +115,6 @@ func TestInstallFileSkipsSameFile(t *testing.T) {
 	}
 }
 
-func TestInstallBundledAgentBinaries(t *testing.T) {
-	sourceDir := t.TempDir()
-	targetDir := t.TempDir()
-	for _, arch := range []string{"amd64", "arm64"} {
-		if err := os.WriteFile(filepath.Join(sourceDir, "beat-agent-linux-"+arch), []byte("agent-"+arch), 0o700); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if err := installBundledAgentBinaries(sourceDir, targetDir); err != nil {
-		t.Fatal(err)
-	}
-	for _, arch := range []string{"amd64", "arm64"} {
-		path := filepath.Join(targetDir, "beat-agent-linux-"+arch)
-		body, err := os.ReadFile(path)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if string(body) != "agent-"+arch {
-			t.Fatalf("installed %s body = %q", arch, body)
-		}
-		info, err := os.Stat(path)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if info.Mode().Perm() != 0o755 {
-			t.Fatalf("installed %s mode = %o", arch, info.Mode().Perm())
-		}
-	}
-}
-
 func TestServerInstallScriptUsesBinaryCommand(t *testing.T) {
 	body, err := os.ReadFile("../../deploy/install-server.sh")
 	if err != nil {

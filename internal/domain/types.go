@@ -110,11 +110,12 @@ type Agent struct {
 }
 
 type AgentUpgradeArtifact struct {
-	Arch      string `json:"arch"`
-	Version   string `json:"version"`
-	Size      int64  `json:"size"`
-	SHA256    string `json:"sha256"`
-	Available bool   `json:"available"`
+	Arch        string `json:"arch"`
+	Version     string `json:"version"`
+	Size        int64  `json:"size"`
+	SHA256      string `json:"sha256"`
+	DownloadURL string `json:"downloadUrl"`
+	Available   bool   `json:"available"`
 }
 
 type AgentUpgradeItem struct {
@@ -128,6 +129,7 @@ type AgentUpgradeItem struct {
 	ToVersion      string     `json:"toVersion"`
 	ArtifactSHA256 string     `json:"artifactSha256"`
 	ArtifactSize   int64      `json:"artifactSize"`
+	ArtifactURL    string     `json:"artifactUrl"`
 	Status         string     `json:"status"`
 	Message        string     `json:"message"`
 	Attempt        int        `json:"attempt"`
@@ -154,6 +156,9 @@ type AgentUpgradeBatch struct {
 
 type AgentUpgradeOverview struct {
 	TargetVersion string                 `json:"targetVersion"`
+	ReleaseTag    string                 `json:"releaseTag"`
+	ReleaseURL    string                 `json:"releaseUrl"`
+	Repository    string                 `json:"repository"`
 	Artifacts     []AgentUpgradeArtifact `json:"artifacts"`
 	TotalNodes    int                    `json:"totalNodes"`
 	UpToDate      int                    `json:"upToDate"`

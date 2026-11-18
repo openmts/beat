@@ -7,6 +7,10 @@ on:
         description: Version embedded in the binaries
         required: true
         type: string
+      agent_release_tag:
+        description: GitHub release tag used by the Server for Agent downloads
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -68,13 +72,14 @@ jobs:
         env:
           TARGET_ARCH: ${{ matrix.arch }}
           REQUESTED_VERSION: ${{ inputs.version }}
+          AGENT_RELEASE_TAG: ${{ inputs.agent_release_tag }}
         run: |
           set -euo pipefail
 
           version="$REQUESTED_VERSION"
           commit="${GITHUB_SHA:0:12}"
           build_date="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-          ldflags="-s -w -X beat/internal/version.Version=${version} -X beat/internal/version.Commit=${commit} -X beat/internal/version.Date=${build_date}"
+          ldflags="-s -w -X beat/internal/version.Version=${version} -X beat/internal/version.Commit=${commit} -X beat/internal/version.Date=${build_date} -X beat/internal/version.Repository=${GITHUB_REPOSITORY} -X beat/internal/version.ReleaseTag=${AGENT_RELEASE_TAG}"
 
           mkdir -p dist
           CGO_ENABLED=0 GOOS=linux GOARCH="$TARGET_ARCH" go build -trimpath -ldflags "$ldflags" -o "dist/beat-server-linux-${TARGET_ARCH}" ./cmd/beat-server

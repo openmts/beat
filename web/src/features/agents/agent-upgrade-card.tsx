@@ -5,6 +5,7 @@ import {
   CheckCircle2,
   Clock3,
   DownloadCloud,
+  ExternalLink,
   LoaderCircle,
   RefreshCw,
   RotateCcw,
@@ -103,7 +104,7 @@ export function AgentUpgradeCard() {
         <CardHeader className="gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div>
             <CardTitle className="flex items-center gap-2"><ServerCog className="h-4 w-4 text-primary" />Agent 版本升级</CardTitle>
-            <p className="mt-1 max-w-2xl text-xs leading-5 text-muted-foreground">升级指令由 Server 主动下发，Agent 不会定时检查版本。在线节点立即执行，离线节点将在重新接入后继续。</p>
+            <p className="mt-1 max-w-2xl text-xs leading-5 text-muted-foreground">升级指令由 Server 主动下发，Agent 收到后从 GitHub Release 下载目标版本，不会定时检查更新。在线节点立即执行，离线节点将在重新接入后继续。</p>
           </div>
           <Button size="sm" onClick={openDialog} disabled={!actionEnabled} className="w-full sm:w-auto" data-testid="agent-upgrade-open">
             {running ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : <DownloadCloud className="h-3.5 w-3.5" />}
@@ -150,6 +151,7 @@ export function AgentUpgradeCard() {
             <div className="rounded-xl border bg-gradient-to-br from-primary/[0.07] to-transparent p-4">
               <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-primary">Target release</p>
               <div className="mt-1 flex flex-wrap items-end gap-x-3 gap-y-1"><span className="font-mono text-xl font-semibold">{overview.data.targetVersion}</span><span className="pb-0.5 text-xs text-muted-foreground">立即升级 {overview.data.online} 个 · 离线排队 {overview.data.offline} 个</span></div>
+              <div className="mt-2 flex min-w-0 flex-wrap items-center gap-2 text-[11px] text-muted-foreground"><span className="min-w-0 break-all font-mono">{overview.data.repository}</span><span>·</span><a href={overview.data.releaseUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 font-medium text-primary hover:underline">Release {overview.data.releaseTag} <ExternalLink className="h-3 w-3" /></a></div>
             </div>
             <div className="grid gap-2 sm:grid-cols-3">
               <Summary label="本次升级" value={`${overview.data.upgradable}`} detail="已识别为旧版本" />

@@ -1,19 +1,18 @@
 package server
 
 import (
-	"net/http"
-	"net/http/httptest"
+	"context"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
 	"time"
 
+	"beat/internal/config"
 	"beat/internal/domain"
+	"beat/internal/release"
 
-	"github.com/go-chi/chi/v5"
 	"gopkg.in/yaml.v3"
 )
 
@@ -108,11 +107,11 @@ func TestBuildAgentAccessCommand(t *testing.T) {
 }
 
 func TestBuildAgentDownloadCommandIncludesArchitecture(t *testing.T) {
-	downloadURL := "http://[::1]:9099/downloads/beat-agent/arm64"
+	downloadURL := "https://github.com/openmts/beat/releases/download/v0.2.0/beat-agent-linux-arm64"
 	checksum := strings.Repeat("a", 64)
 	command := buildAgentDownloadCommand(downloadURL, "arm64", checksum)
 	for _, want := range []string{
-		"'http://[::1]:9099/downloads/beat-agent/arm64'",
+		"'https://github.com/openmts/beat/releases/download/v0.2.0/beat-agent-linux-arm64'",
 		`[ "$host_arch" = 'arm64' ]`,
 		"mktemp /tmp/beat-agent.XXXXXX",
 		"printf '%s  %s\\n' '" + checksum + "' \"$tmp\" | sha256sum -c -",
@@ -161,43 +160,37 @@ func TestSystemdUnitsRunAsRoot(t *testing.T) {
 	}
 }
 
-func TestAgentDownloadByNameAndArchitecture(t *testing.T) {
-	dir := t.TempDir()
-	amd64Path := filepath.Join(dir, "beat-agent-linux-amd64")
-	arm64Path := filepath.Join(dir, "beat-agent-linux-arm64")
-	if err := os.WriteFile(amd64Path, []byte("amd64-binary"), 0o755); err != nil {
-		t.Fatal(err)
+func TestAgentArchitecturesComeFromGitHubReleaseManifest(t *testing.T) {
+	digest := strings.Repeat("a", 64)
+	manifest := release.Manifest{
+		SchemaVersion: 1, Version: "v0.2.0", ReleaseTag: "v0.2.0", Repository: "openmts/beat",
+		Assets: release.Assets{Agent: release.AgentAssets{
+			AMD64: release.Asset{Name: "beat-agent-linux-amd64", URL: release.AssetURL("openmts/beat", "v0.2.0", "beat-agent-linux-amd64"), Size: 10, SHA256: digest},
+			ARM64: release.Asset{Name: "beat-agent-linux-arm64", URL: release.AssetURL("openmts/beat", "v0.2.0", "beat-agent-linux-arm64"), Size: 11, SHA256: digest},
+		}},
 	}
-	if err := os.WriteFile(arm64Path, []byte("arm64-binary"), 0o755); err != nil {
-		t.Fatal(err)
+	s := &Server{cfg: config.Config{AgentReleaseRepo: "openmts/beat", AgentReleaseTag: "v0.2.0"}, agentRelease: staticReleaseProvider{manifest: manifest}}
+	snapshot := s.agentReleaseSnapshot(context.Background())
+	architectures := s.agentArchitectures(snapshot)
+	if len(architectures) != 2 || snapshot.Version != "v0.2.0" || !snapshot.FromGitHub {
+		t.Fatalf("unexpected release snapshot: %+v architectures=%+v", snapshot, architectures)
 	}
-	s := &Server{agentBinaryDir: dir}
-	router := chi.NewRouter()
-	router.Get("/downloads/beat-agent/{arch}", s.handleAgentDownload)
+	for index, arch := range []string{"amd64", "arm64"} {
+		item := architectures[index]
+		want := release.AssetURL("openmts/beat", "v0.2.0", "beat-agent-linux-"+arch)
+		if item["id"] != arch || item["downloadUrl"] != want || item["available"] != true {
+			t.Fatalf("unexpected architecture %s: %+v", arch, item)
+		}
+	}
+}
 
-	for arch, wantBody := range map[string]string{"amd64": "amd64-binary", "arm64": "arm64-binary"} {
-		t.Run(arch, func(t *testing.T) {
-			request := httptest.NewRequest(http.MethodGet, "/downloads/beat-agent/"+arch, nil)
-			response := httptest.NewRecorder()
-			router.ServeHTTP(response, request)
-			if response.Code != http.StatusOK {
-				t.Fatalf("status = %d, want 200: %s", response.Code, response.Body.String())
-			}
-			if got := response.Header().Get("Content-Disposition"); got != `attachment; filename="beat-agent"` {
-				t.Fatalf("Content-Disposition = %q", got)
-			}
-			if got := response.Body.String(); got != wantBody {
-				t.Fatalf("body = %q, want %q", got, wantBody)
-			}
-		})
-	}
+type staticReleaseProvider struct {
+	manifest release.Manifest
+	err      error
+}
 
-	request := httptest.NewRequest(http.MethodGet, "/downloads/beat-agent/386", nil)
-	response := httptest.NewRecorder()
-	router.ServeHTTP(response, request)
-	if response.Code != http.StatusNotFound {
-		t.Fatalf("unsupported architecture status = %d, want 404", response.Code)
-	}
+func (p staticReleaseProvider) Load(context.Context) (release.Manifest, error) {
+	return p.manifest, p.err
 }
 
 func TestShellQuote(t *testing.T) {

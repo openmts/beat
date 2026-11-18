@@ -13,7 +13,8 @@ jobs:
     name: Build nightly assets
     uses: ./.github/workflows/_build.yml
     with:
-      version: nightly
+      version: 0.0.0-nightly.${{ github.run_number }}
+      agent_release_tag: nightly
 
   publish:
     name: Publish Nightly Release
@@ -23,6 +24,9 @@ jobs:
       group: nightly-release
       cancel-in-progress: false
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
       - name: Download Linux binaries
         uses: actions/download-artifact@v4
         with:
@@ -30,12 +34,20 @@ jobs:
           path: release-assets
           merge-multiple: true
 
-      - name: Generate checksums
-        working-directory: release-assets
+      - name: Generate release manifest and checksums
         run: |
           set -euo pipefail
-          sha256sum beat-* > checksums.txt
-          cat checksums.txt
+          tag="nightly"
+          version="0.0.0-nightly.${GITHUB_RUN_NUMBER}"
+          published_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          .github/scripts/generate-release-manifest.sh \
+            release-assets "$GITHUB_REPOSITORY" "$tag" "$version" "$GITHUB_SHA" "$published_at"
+          (
+            cd release-assets
+            sha256sum beat-server-linux-amd64 beat-server-linux-arm64 \
+              beat-agent-linux-amd64 beat-agent-linux-arm64 beat-manifest.json > checksums.txt
+            cat checksums.txt
+          )
 
       - name: Publish nightly release
         env:

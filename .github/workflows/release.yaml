@@ -14,12 +14,16 @@ jobs:
     uses: ./.github/workflows/_build.yml
     with:
       version: ${{ github.ref_name }}
+      agent_release_tag: latest
 
   publish:
     name: Publish GitHub Release
     needs: build
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
       - name: Download Linux binaries
         uses: actions/download-artifact@v4
         with:
@@ -27,12 +31,20 @@ jobs:
           path: release-assets
           merge-multiple: true
 
-      - name: Generate checksums
-        working-directory: release-assets
+      - name: Generate release manifest and checksums
+        env:
+          TAG: ${{ github.ref_name }}
         run: |
           set -euo pipefail
-          sha256sum beat-* > checksums.txt
-          cat checksums.txt
+          published_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          .github/scripts/generate-release-manifest.sh \
+            release-assets "$GITHUB_REPOSITORY" "$TAG" "$TAG" "$GITHUB_SHA" "$published_at"
+          (
+            cd release-assets
+            sha256sum beat-server-linux-amd64 beat-server-linux-arm64 \
+              beat-agent-linux-amd64 beat-agent-linux-arm64 beat-manifest.json > checksums.txt
+            cat checksums.txt
+          )
 
       - name: Publish release
         env:
@@ -46,6 +58,7 @@ jobs:
           else
             gh release create "$TAG" \
               --verify-tag \
+              --latest \
               --generate-notes \
               --title "$TAG" \
               release-assets/*

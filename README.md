@@ -23,7 +23,7 @@ Beat 是一个面向网络节点的轻量级指标采集与可观测平台。它
 - 任务中心支持“三网时延与丢包检测”和自定义 Shell 两种任务模板；三网任务默认通过 TCP Connect 探测电信、联通、移动目标，Server 通过 gRPC 流即时推送并回传结构化结果。
 - 前台节点广场保持公开访问；后台采用单管理员账号登录，默认账号与密码均为 `admin`，登录会话使用 HttpOnly Cookie 保存 12 小时。
 - 管理员会话持久化在 SQLite，Server 重启不会中断登录；所有写操作要求 CSRF Token 与同源校验，登录失败触发限流，管理操作写入审计日志。
-- Agent 安装包提供 SHA-256 校验，下载命令会在安装前验证摘要；Agent 支持 `doctor` 自检命令和可选 HTTPS 证书校验。
+- Agent 安装包由 GitHub Release 直接分发，下载命令会在安装前校验架构与 SHA-256；Agent 支持 `doctor` 自检命令和可选 HTTPS 证书校验。
 - 分组支持创建、编辑、删除和批量调整成员；前台节点广场可按分组筛选旗下节点。
 - Demo 模式自动生成最多 12 个节点、5 个节点分组和 24 小时时序数据，便于直接验收界面。
 
@@ -48,14 +48,16 @@ make build
 - `bin/beat-agent-linux-amd64`
 - `bin/beat-agent-linux-arm64`
 
-也可以分别执行 `make web`、`make server`、`make agent` 和 `make test`。`make agent` 会同时生成当前主机使用的 `beat-agent`，以及用于服务端分发的 x86_64 与 ARM64 两个 Linux 二进制。
+也可以分别执行 `make web`、`make server`、`make agent` 和 `make test`。`make agent` 会同时生成当前主机使用的 `beat-agent`，以及用于本地发布验证的 x86_64 与 ARM64 两个 Linux 二进制。
 
 ### 发布与 Nightly 构建
 
-GitHub Actions 提供两套发布流程，产物均包含 Linux `amd64`、`arm64` 的 `beat-server`、`beat-agent` 二进制以及 `checksums.txt`：
+GitHub Actions 提供两套发布流程，产物均包含 Linux `amd64`、`arm64` 的 `beat-server`、`beat-agent` 二进制，以及 `beat-manifest.json` 和 `checksums.txt`：
 
-- **Release**：推送 `v*` 标签（例如 `v0.1.0`）时触发，构建正式版本并发布到同名 GitHub Release。
-- **Nightly**：每次向任意分支推送代码时触发，固定使用 `nightly` 标签滚动更新预发布 Release；产物文件名与正式版本完全一致。
+- **Release**：`.github/workflows/release.yaml` 在推送 `v*` 标签（例如 `v0.1.0`）时触发，构建正式版本并发布到同名 GitHub Release。
+- **Nightly**：`.github/workflows/nightly.yaml` 在每次向任意分支推送代码时触发，固定使用 `nightly` 标签滚动更新预发布 Release；产物文件名与正式版本完全一致。
+
+统一资产名为 `beat-server-linux-{amd64,arm64}` 与 `beat-agent-linux-{amd64,arm64}`。`beat-manifest.json` 记录版本、Release 标签、文件大小、SHA-256 和 GitHub 下载地址；Server 读取该清单后生成接入与升级指令，不再提供二进制下载接口。
 
 两个流程都写入当前仓库的 GitHub Release，因此仓库需要在 **Settings → Actions → General → Workflow permissions** 中允许 `Read and write permissions`。
 
@@ -96,9 +98,8 @@ sudo ./bin/beat-server install
 `beat-server install` 会：
 
 1. 将 `beat-server` 安装到 `/usr/local/bin/beat-server`。
-2. 将 amd64/arm64 Agent 安装包安装为 `/usr/local/bin/beat-agent-linux-amd64` 和 `/usr/local/bin/beat-agent-linux-arm64`，供节点接入页面下载和批量升级。
-3. 创建 `/var/lib/beat` 与 `/etc/beat`，首次安装时生成 `/etc/beat/server.yaml`；已有配置不会被覆盖。
-4. 安装 `/etc/systemd/system/beat-server.service`，执行 `daemon-reload`、`enable` 并启动服务。
+2. 创建 `/var/lib/beat` 与 `/etc/beat`，首次安装时生成 `/etc/beat/server.yaml`；已有配置不会被覆盖。
+3. 安装 `/etc/systemd/system/beat-server.service`，执行 `daemon-reload`、`enable` 并启动服务。
 
 `deploy/install-server.sh` 只是上述命令的引导入口，可通过 `BEAT_START_NOW=false` 传递 `--no-start`。
 
@@ -130,7 +131,7 @@ sudo journalctl -u beat-server -f
 
 ### 接入真实 Agent
 
-在管理后台的 **节点接入** 页面，先选择目标架构并复制“Agent 一键安装”命令。命令会校验主机架构与 SHA-256，创建 `/etc/beat`，将二进制直接安装为 `/usr/local/bin/beat-agent`，并生成以 root 运行的 `/etc/systemd/system/beat-agent.service`。Agent 首次启动后会在 `/etc/beat/agent-id` 写入权限为 `0600` 的节点身份文件。
+在管理后台的 **节点接入** 页面，先选择目标架构并复制“Agent 一键安装”命令。命令会从 GitHub Release 下载对应资产，校验主机架构与 SHA-256，创建 `/etc/beat`，将二进制直接安装为 `/usr/local/bin/beat-agent`，并生成以 root 运行的 `/etc/systemd/system/beat-agent.service`。Agent 首次启动后会在 `/etc/beat/agent-id` 写入权限为 `0600` 的节点身份文件。
 
 随后填写节点名称和标签，点击“生成接入命令”。每次生成都会创建全新随机令牌，默认 10 分钟有效；接入命令将配置写入 `/etc/beat/agent.yaml`（0600），执行 `systemctl enable beat-agent` 和 `systemctl restart beat-agent`，Agent 随后在 systemd 下持续运行。令牌在节点首次上报后绑定该 Agent，已绑定的 Agent 持续上报不受注册窗口关闭影响。
 
@@ -146,11 +147,11 @@ Agent 启动后建立 `beat.agent.v1.AgentControl/Connect` gRPC 双向流，每 
 
 1. Server 计算节点版本、架构和目标发布包，创建升级批次。
 2. 在线 Agent 立即收到 `AgentUpgrade` 指令；离线 Agent 保持排队，重新连接后继续。
-3. Agent 从当前 Beat Server 的固定下载路径获取对应架构二进制，校验大小与 SHA-256。
+3. Agent 从 GitHub Release 的固定资产地址下载对应架构二进制，校验大小与 SHA-256。
 4. 新二进制通过 `--version` 自检后，在 `/usr/local/bin` 内原子替换旧版本，并保留 `beat-agent.previous`。
 5. Agent 退出并由 systemd 自动重启；Server 以同一 `agentId` 上报目标版本作为升级成功依据。
 
-服务端并发限制为 10 个节点同时处于已下发状态。升级期间可在页面查看排队、安装、重启、成功和失败数量；失败节点支持批量重试。Agent 以 root 运行以完成标准安装路径下的原子替换和 systemd 重启，但下载地址必须与当前 Server 同源，不接受 SSH 凭据或任意远程 Shell。
+服务端并发限制为 10 个节点同时处于已下发状态。升级期间可在页面查看排队、安装、重启、成功和失败数量；失败节点支持批量重试。Agent 以 root 运行以完成标准安装路径下的原子替换和 systemd 重启，但下载地址必须属于配置的 `openmts/beat` GitHub Release 和当前节点架构，不接受任意远程地址、SSH 凭据或远程 Shell。
 
 ### 节点编辑与卸载
 
@@ -229,7 +230,9 @@ sudo /usr/local/bin/beat-server reset-admin --config /etc/beat/server.yaml
 | `listen` / `--listen` | `[::]:9099` | HTTP + gRPC 双栈监听地址 |
 | `data_dir` / `--data-dir` | `./data` | 数据根目录，必须持久化并定期备份 |
 | `demo_mode` / `--demo` | `false` | 是否生成演示数据并持续刷新，生产环境请勿启用 |
-| `agent_binary_dir` / `--agent-binary-dir` | 自动探测 | amd64/arm64 Agent 二进制目录 |
+| `agent_binary_dir` / `--agent-binary-dir` | 自动探测 | 本地开发环境的 Agent 元数据回退目录；不用于对外提供下载 |
+| `agent_release_repository` / `--agent-release-repository` | `openmts/beat` | Agent Release 所在的 GitHub 仓库 |
+| `agent_release_tag` / `--agent-release-tag` | `latest` | Server 读取 Agent Release 清单使用的标签；nightly 部署使用 `nightly` |
 | `agent_token` / `--agent-token` | 空 | 可选固定接入令牌，至少 32 字符；正式接入优先使用短期令牌 |
 | `enrollment_token_ttl` / `--enrollment-token-ttl` | `10m` | 接入令牌有效期，范围 1 分钟至 24 小时 |
 | `tls_cert` / `--tls-cert` | 空 | TLS 证书路径；与 `tls_key` 同时提供时启用 HTTPS |
@@ -241,6 +244,8 @@ sudo /usr/local/bin/beat-server reset-admin --config /etc/beat/server.yaml
 listen: "[::]:9099"
 data_dir: /var/lib/beat
 agent_binary_dir: /usr/local/bin
+agent_release_repository: openmts/beat
+agent_release_tag: latest
 demo_mode: false
 enrollment_token_ttl: 10m
 ```
@@ -310,7 +315,6 @@ sudo /usr/local/bin/beat-agent doctor \
 - `POST /api/v1/agent-tokens`：生成短期注册令牌与一键接入命令
 - `GET /api/v1/tasks`、`POST /api/v1/tasks`、`PATCH /api/v1/tasks/{id}`、`DELETE /api/v1/tasks/{id}`：任务定义、启停与管理
 - `GET /api/v1/task-runs`、`GET /api/v1/task-runs/{id}`：执行记录、筛选与完整输出
-- `GET /downloads/beat-agent/{arch}`：按 `amd64` 或 `arm64` 下载 Agent 二进制；下载文件统一命名为 `beat-agent`，响应头包含 `X-Beat-SHA256`
 - `GET /api/v1/agent-upgrades/overview`：Agent 版本分布、可升级数量与当前批次（需登录）
 - `POST /api/v1/agent-upgrades`：创建全部 Agent 升级批次（需登录）
 - `GET /api/v1/agent-upgrades/{id}`：查询升级批次和节点进度（需登录）

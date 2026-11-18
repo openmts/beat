@@ -254,17 +254,17 @@ online   : 其他仍在上报的节点
 - 每次点击“生成接入命令”都会产生新的 256-bit 随机令牌，默认 10 分钟有效；接入命令将 Server、令牌、节点名称、标签、状态文件和采集周期写入权限为 `0600` 的 `/etc/beat/agent.yaml`，由 systemd 使用 `--config /etc/beat/agent.yaml` 加载。旧 `/etc/beat/beat-agent.env` 不再被服务读取，接入命令会主动清理该文件。
 - SQLite 只保存令牌的 SHA-256 摘要，明文令牌仅在生成响应中出现一次。
 - 未绑定令牌超过有效期后拒绝接入；首次成功上报后令牌绑定到对应 `agent_id`，该 Agent 的持续心跳不受注册窗口关闭影响。
-- Server 提供 `/downloads/beat-agent/amd64` 与 `/downloads/beat-agent/arm64` 两个架构下载地址，分别对应 `/usr/local/bin/beat-agent-linux-amd64` 和 `/usr/local/bin/beat-agent-linux-arm64`。下载响应统一命名为 `beat-agent`，并返回 `X-Beat-SHA256`；一键安装命令会校验主机架构与摘要，创建 `/etc/beat`，将二进制直接安装为 `/usr/local/bin/beat-agent`，并生成 root 运行的 `/etc/systemd/system/beat-agent.service`。Agent 身份文件 `agent-id` 与 YAML 配置一起保存在 `/etc/beat`。
-- Server 二进制内置 `beat-server install [--no-start]` 管理命令，仅允许 root 执行并使用固定路径：安装 `/usr/local/bin/beat-server`、部署 `/usr/local/bin/beat-agent-linux-amd64` 与 `/usr/local/bin/beat-agent-linux-arm64`、生成 `/etc/beat/server.yaml` 和 `/etc/systemd/system/beat-server.service`，随后执行 `systemctl enable`；默认同时启动服务。安装器通过文件身份判断二进制是否已经位于目标路径，已安装时只校正权限，不重复复制或替换 inode。已有配置不会被覆盖，配置权限会收紧为 `0600`。`deploy/install-server.sh` 是引导该命令的薄封装，并通过 `BEAT_START_NOW=false` 支持只安装不启动。
+- Agent 二进制不再经由 Server 下载接口分发。GitHub Release 提供 `beat-agent-linux-amd64`、`beat-agent-linux-arm64` 与 `beat-manifest.json`；Server 读取清单中的版本、文件大小、SHA-256 与 GitHub 地址，生成一键安装和批量升级指令。安装命令会校验主机架构与摘要，创建 `/etc/beat`，将二进制直接安装为 `/usr/local/bin/beat-agent`，并生成 root 运行的 `/etc/systemd/system/beat-agent.service`。Agent 身份文件 `agent-id` 与 YAML 配置一起保存在 `/etc/beat`。
+- Server 二进制内置 `beat-server install [--no-start]` 管理命令，仅允许 root 执行并使用固定路径：安装 `/usr/local/bin/beat-server`、生成 `/etc/beat/server.yaml` 和 `/etc/systemd/system/beat-server.service`，随后执行 `systemctl enable`；默认同时启动服务。安装器通过文件身份判断二进制是否已经位于目标路径，已安装时只校正权限，不重复复制或替换 inode。已有配置不会被覆盖，配置权限会收紧为 `0600`。`deploy/install-server.sh` 是引导该命令的薄封装，并通过 `BEAT_START_NOW=false` 支持只安装不启动。
 - Agent 二进制内置 `beat-agent install` 管理命令，仅允许 root 执行，并且目标路径固定；它负责创建目录、复制自身、创建 `/usr/local/bin/beat-agent`、初始化 `/etc/beat/agent.yaml` 和 systemd 单元，然后执行 `daemon-reload`。已有 YAML 配置不会被安装命令覆盖，配置权限会被收紧为 `0600`。
 - Agent 启动配置优先级为命令行参数 > YAML > 兼容的 `BEAT_*` 环境变量 > 默认值；`--config` 和 `BEAT_AGENT_CONFIG` 均可指定 YAML 路径。
-- 注册窗口默认 10 分钟，可通过 `--enrollment-token-ttl` 在 1 分钟至 24 小时之间调整；双架构二进制目录可通过 `--agent-binary-dir` 指定，否则自动从 Server 同目录和 `./bin` 查找。
+- 注册窗口默认 10 分钟，可通过 `--enrollment-token-ttl` 在 1 分钟至 24 小时之间调整；Agent 发布源通过 `agent_release_repository` 与 `agent_release_tag` 配置，正式部署默认读取 `openmts/beat` 的 `latest` Release，nightly 部署读取 `nightly`。`--agent-binary-dir` 仅作为本地开发环境的元数据回退。
 
 ### 5.5 系统设置
 
 - 站点名称、副标题、默认时区与对外访问地址保存到 SQLite `settings` 表，保存后立即用于前后台导航、浏览器标题和 Agent 接入命令。
 - MTS 数据目录、保留周期和 WAL 同步落盘策略同样持久化到 SQLite。由于嵌入式 MTS 引擎在 Server 启动时打开，这些参数保存后需要重启生效。
-- 启动参数以 `--listen`、`--data-dir`、`--demo`、`--agent-binary-dir`、`--tls-cert` 与 `--tls-key` 为主，也可通过 `--config` 加载 `/etc/beat/server.yaml`；优先级为命令行参数 > YAML > 兼容的 `BEAT_*` 环境变量 > 默认值。SQLite 路径从数据根目录推导，MTS 默认目录和采集策略使用默认值或系统设置。
+- 启动参数以 `--listen`、`--data-dir`、`--demo`、`--agent-release-repository`、`--agent-release-tag`、`--tls-cert` 与 `--tls-key` 为主，也可通过 `--config` 加载 `/etc/beat/server.yaml`；优先级为命令行参数 > YAML > 兼容的 `BEAT_*` 环境变量 > 默认值。SQLite 路径从数据根目录推导，MTS 默认目录和采集策略使用默认值或系统设置。
 
 ### 5.6 控制台认证
 
@@ -302,10 +302,10 @@ online   : 其他仍在上报的节点
 
 - 管理页面创建升级批次后，Server 从 SQLite 读取节点版本、状态和架构，计算旧版本节点；目标版本固定为 Server 当前发布的 Agent 版本，浏览器不能提交下载地址或校验值。
 - 新增 `AgentUpgrade` 与 `UpgradeEvent` gRPC 消息。Agent 仅在收到已认证 Server 消息后执行升级，不提供后台检查、版本轮询或 update daemon。
-- Agent 校验指令中的同源下载地址、架构、版本、大小与 SHA-256；只允许更新标准路径 `/usr/local/bin/beat-agent`，开发目录直接拒绝。
+- Agent 校验指令中的 GitHub Release 下载地址、仓库、架构、版本、大小与 SHA-256；下载重定向只允许 `github.com` 与 `*.githubusercontent.com`，并且只允许更新标准路径 `/usr/local/bin/beat-agent`，开发目录直接拒绝。
 - 新二进制先完成 `--version` 自检，再同目录原子替换并保留 `.previous`；Agent 以退出码 75 请求 systemd 重启。Server 通过重新连接时 `Hello.version` 等于目标版本确认成功，不把升级过程中的短暂断连视为失败。
 - `agent_upgrade_batches` 和 `agent_upgrade_items` 保存批次、节点、原版本、目标版本、校验值、尝试次数和进度。最多 10 个节点同时处于已下发状态，离线节点保持排队，失败节点可人工重试。
-- 所有升级写操作沿用管理员会话、CSRF、跨域拦截和审计日志。Agent 以 root 运行，以便原子替换 `/usr/local/bin/beat-agent`、安装 systemd 单元并执行本地卸载；不存在 SSH 凭据或远程 Shell 通道，升级下载地址仍限定为当前 Server 的同源固定路径。
+- 所有升级写操作沿用管理员会话、CSRF、跨域拦截和审计日志。Agent 以 root 运行，以便原子替换 `/usr/local/bin/beat-agent`、安装 systemd 单元并执行本地卸载；不存在 SSH 凭据或远程 Shell 通道，升级下载地址限定为配置仓库的 GitHub Release 固定资产。
 
 ### 5.10 前台主题与展示解耦
 

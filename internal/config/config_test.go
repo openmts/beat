@@ -9,7 +9,7 @@ import (
 )
 
 func TestLoadServerDefaultsAndFlags(t *testing.T) {
-	for _, key := range []string{"BEAT_LISTEN", "BEAT_DATA_DIR", "BEAT_AGENT_TOKEN", "BEAT_AGENT_BINARY_DIR", "BEAT_DEMO_MODE", "BEAT_ENROLLMENT_TOKEN_TTL"} {
+	for _, key := range []string{"BEAT_LISTEN", "BEAT_DATA_DIR", "BEAT_AGENT_TOKEN", "BEAT_AGENT_BINARY_DIR", "BEAT_AGENT_RELEASE_REPOSITORY", "BEAT_AGENT_RELEASE_TAG", "BEAT_DEMO_MODE", "BEAT_ENROLLMENT_TOKEN_TTL"} {
 		t.Setenv(key, "")
 	}
 	cfg, err := LoadServer(nil)
@@ -62,7 +62,7 @@ func TestLoadResetAdminAcceptsDataDirFlag(t *testing.T) {
 }
 
 func TestLoadServerYAMLAndFlagPrecedence(t *testing.T) {
-	for _, key := range []string{"BEAT_CONFIG", "BEAT_LISTEN", "BEAT_DATA_DIR", "BEAT_AGENT_TOKEN", "BEAT_AGENT_BINARY_DIR", "BEAT_DEMO_MODE", "BEAT_ENROLLMENT_TOKEN_TTL"} {
+	for _, key := range []string{"BEAT_CONFIG", "BEAT_LISTEN", "BEAT_DATA_DIR", "BEAT_AGENT_TOKEN", "BEAT_AGENT_BINARY_DIR", "BEAT_AGENT_RELEASE_REPOSITORY", "BEAT_AGENT_RELEASE_TAG", "BEAT_DEMO_MODE", "BEAT_ENROLLMENT_TOKEN_TTL"} {
 		t.Setenv(key, "")
 	}
 	dir := t.TempDir()
@@ -71,6 +71,8 @@ func TestLoadServerYAMLAndFlagPrecedence(t *testing.T) {
 	body := "listen: 127.0.0.1:18098\n" +
 		"data_dir: " + dataDir + "\n" +
 		"agent_binary_dir: /usr/local/bin\n" +
+		"agent_release_repository: openmts/beat\n" +
+		"agent_release_tag: v0.2.0\n" +
 		"demo_mode: true\n" +
 		"enrollment_token_ttl: 3m\n" +
 		"agent_token: 0123456789abcdef0123456789abcdef\n"
@@ -83,7 +85,7 @@ func TestLoadServerYAMLAndFlagPrecedence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Listen != "127.0.0.1:18098" || cfg.DataDir != dataDir || cfg.AgentBinaryDir != "/usr/local/bin" || !cfg.DemoMode || cfg.EnrollmentTokenTTL != 3*time.Minute {
+	if cfg.Listen != "127.0.0.1:18098" || cfg.DataDir != dataDir || cfg.AgentBinaryDir != "/usr/local/bin" || cfg.AgentReleaseRepo != "openmts/beat" || cfg.AgentReleaseTag != "v0.2.0" || !cfg.DemoMode || cfg.EnrollmentTokenTTL != 3*time.Minute {
 		t.Fatalf("YAML configuration was not applied: %+v", cfg)
 	}
 
@@ -117,7 +119,7 @@ func TestLoadServerRejectsInvalidYAML(t *testing.T) {
 }
 
 func TestLoadServerTreatsEmptyYAMLAsDefaults(t *testing.T) {
-	for _, key := range []string{"BEAT_CONFIG", "BEAT_LISTEN", "BEAT_DATA_DIR", "BEAT_AGENT_TOKEN", "BEAT_AGENT_BINARY_DIR", "BEAT_DEMO_MODE", "BEAT_ENROLLMENT_TOKEN_TTL"} {
+	for _, key := range []string{"BEAT_CONFIG", "BEAT_LISTEN", "BEAT_DATA_DIR", "BEAT_AGENT_TOKEN", "BEAT_AGENT_BINARY_DIR", "BEAT_AGENT_RELEASE_REPOSITORY", "BEAT_AGENT_RELEASE_TAG", "BEAT_DEMO_MODE", "BEAT_ENROLLMENT_TOKEN_TTL"} {
 		t.Setenv(key, "")
 	}
 	path := filepath.Join(t.TempDir(), "server.yaml")

@@ -25,6 +25,8 @@ const serverDefaultConfig = `# Beat Server configuration. Command-line flags ove
 listen: "[::]:9099"
 data_dir: /var/lib/beat
 agent_binary_dir: /usr/local/bin
+agent_release_repository: openmts/beat
+agent_release_tag: latest
 demo_mode: false
 enrollment_token_ttl: 10m
 
@@ -115,9 +117,6 @@ func installServer(source string, start bool) error {
 	if err := installFile(source, serverInstallPath, 0o755); err != nil {
 		return fmt.Errorf("install Server executable: %w", err)
 	}
-	if err := installBundledAgentBinaries(filepath.Dir(source), serverBinaryDir); err != nil {
-		return err
-	}
 	if err := writeServerConfigIfMissing(serverConfigPath, serverDefaultConfig); err != nil {
 		return err
 	}
@@ -158,28 +157,6 @@ func removeLegacyServerLayout() {
 	for _, dir := range []string{"/opt/beat/bin", "/opt/beat/agent", "/opt/beat"} {
 		_ = os.Remove(dir)
 	}
-}
-
-func installBundledAgentBinaries(sourceDir, targetDir string) error {
-	for _, arch := range []string{"amd64", "arm64"} {
-		source := ""
-		for _, name := range []string{"beat-agent-linux-" + arch, "beat-agent-" + arch} {
-			candidate := filepath.Join(sourceDir, name)
-			if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
-				source = candidate
-				break
-			}
-		}
-		if source == "" {
-			fmt.Fprintf(os.Stderr, "warning: Agent binary for %s is missing; downloads will be unavailable\n", arch)
-			continue
-		}
-		target := filepath.Join(targetDir, "beat-agent-linux-"+arch)
-		if err := installFile(source, target, 0o755); err != nil {
-			return fmt.Errorf("install Agent package for %s: %w", arch, err)
-		}
-	}
-	return nil
 }
 
 func writeServerConfigIfMissing(path, contents string) error {

@@ -62,6 +62,7 @@ type Server struct {
 	upgradeDispatchMu sync.Mutex
 
 	agentBinaryDir string
+	agentRelease   agentReleaseProvider
 }
 
 func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*Server, error) {
@@ -105,6 +106,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*Server, 
 		loginLimiter:      newLoginLimiter(),
 		agentSessions:     newAgentSessionRegistry(),
 		agentBinaryDir:    resolveAgentBinaryDir(cfg.AgentBinaryDir),
+		agentRelease:      newGitHubReleaseProvider(cfg.AgentReleaseRepo, cfg.AgentReleaseTag),
 	}
 	s.grpcServer = grpc.NewServer(
 		grpc.MaxRecvMsgSize(8<<20),
@@ -201,8 +203,6 @@ func (s *Server) routes() http.Handler {
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"status": "ready", "driver": stats.Driver, "storage": stats})
 	})
-	r.Get("/downloads/beat-agent", s.handleAgentDownload)
-	r.Get("/downloads/beat-agent/{arch}", s.handleAgentDownload)
 	r.Route("/api/v1", func(r chi.Router) {
 		r.Post("/auth/login", s.handleAuthLogin)
 		r.Post("/auth/logout", s.handleAuthLogout)
@@ -694,11 +694,17 @@ func (s *Server) handleAgents(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "storage_error", "读取代理失败")
 		return
 	}
+	snapshot := s.agentReleaseSnapshot(r.Context())
+	architectures := s.agentArchitectures(snapshot)
 	writeJSON(w, http.StatusOK, map[string]any{
-		"items":           agents,
-		"total":           len(agents),
-		"tokenTtlSeconds": int(s.cfg.EnrollmentTokenTTL.Seconds()),
-		"architectures":   s.agentArchitectures(s.configuredServerURL(r)),
+		"items":             agents,
+		"total":             len(agents),
+		"tokenTtlSeconds":   int(s.cfg.EnrollmentTokenTTL.Seconds()),
+		"architectures":     architectures,
+		"releaseVersion":    snapshot.Version,
+		"releaseTag":        snapshot.ReleaseTag,
+		"releaseRepository": snapshot.Repository,
+		"releaseUrl":        snapshot.ReleaseURL,
 	})
 }
 
@@ -741,45 +747,6 @@ func (s *Server) handleCreateAgentToken(w http.ResponseWriter, r *http.Request) 
 		"ttlSeconds":    int(s.cfg.EnrollmentTokenTTL.Seconds()),
 		"accessCommand": buildAgentAccessCommand(serverURL, token, name, labels),
 	})
-}
-
-func (s *Server) handleAgentDownload(w http.ResponseWriter, r *http.Request) {
-	arch := chi.URLParam(r, "arch")
-	if arch == "" {
-		arch = runtime.GOARCH
-	}
-	if !supportedAgentArch(arch) {
-		writeError(w, http.StatusNotFound, "unsupported_architecture", "不支持的 Agent 架构")
-		return
-	}
-	binaryPath := s.agentBinaryPathFor(arch)
-	if binaryPath == "" {
-		writeError(w, http.StatusServiceUnavailable, "agent_binary_unavailable", "当前架构的 Agent 二进制不可用")
-		return
-	}
-	file, err := os.Open(binaryPath)
-	if err != nil {
-		s.logger.Warn("open_agent_binary_failed", "path", binaryPath, "error", err)
-		writeError(w, http.StatusServiceUnavailable, "agent_binary_unavailable", "当前架构的 Agent 二进制不可用")
-		return
-	}
-	defer file.Close()
-	info, err := file.Stat()
-	if err != nil || info.IsDir() {
-		writeError(w, http.StatusServiceUnavailable, "agent_binary_unavailable", "Agent 二进制不可用")
-		return
-	}
-	w.Header().Set("Content-Type", "application/octet-stream")
-	w.Header().Set("Content-Disposition", `attachment; filename="beat-agent"`)
-	w.Header().Set("X-Content-Type-Options", "nosniff")
-	if checksum, checksumErr := fileSHA256(binaryPath); checksumErr == nil {
-		w.Header().Set("X-Beat-SHA256", checksum)
-		w.Header().Set("ETag", `"sha256-`+checksum+`"`)
-		w.Header().Set("Digest", "sha-256="+base64.StdEncoding.EncodeToString(mustHexDecode(checksum)))
-	} else {
-		s.logger.Warn("agent_binary_checksum_failed", "path", binaryPath, "error", checksumErr)
-	}
-	http.ServeContent(w, r, "beat-agent", info.ModTime(), file)
 }
 
 func resolveAgentBinaryDir(configured string) string {
@@ -845,29 +812,23 @@ func (s *Server) agentBinaryPathFor(arch string) string {
 	return ""
 }
 
-func supportedAgentArch(arch string) bool {
-	return arch == "amd64" || arch == "arm64"
-}
-
-func (s *Server) agentArchitectures(serverURL string) []map[string]any {
+func (s *Server) agentArchitectures(snapshot agentReleaseSnapshot) []map[string]any {
 	labels := map[string]string{
 		"amd64": "x86_64 / AMD64",
 		"arm64": "ARM64 / AArch64",
 	}
 	result := make([]map[string]any, 0, 2)
-	for _, arch := range []string{"amd64", "arm64"} {
-		downloadURL := strings.TrimRight(serverURL, "/") + "/downloads/beat-agent/" + arch
-		checksum := ""
-		if binaryPath := s.agentBinaryPathFor(arch); binaryPath != "" {
-			checksum, _ = fileSHA256(binaryPath)
-		}
+	for _, artifact := range snapshot.Artifacts {
+		arch := artifact.Arch
 		result = append(result, map[string]any{
 			"id":              arch,
 			"label":           labels[arch],
-			"available":       checksum != "",
-			"downloadUrl":     downloadURL,
-			"checksumSha256":  checksum,
-			"downloadCommand": buildAgentDownloadCommand(downloadURL, arch, checksum),
+			"available":       artifact.Available,
+			"downloadUrl":     artifact.DownloadURL,
+			"checksumSha256":  artifact.SHA256,
+			"size":            artifact.Size,
+			"version":         artifact.Version,
+			"downloadCommand": buildAgentDownloadCommand(artifact.DownloadURL, arch, artifact.SHA256),
 		})
 	}
 	return result
@@ -913,11 +874,6 @@ func fileSHA256(path string) (string, error) {
 		return "", err
 	}
 	return hex.EncodeToString(hash.Sum(nil)), nil
-}
-
-func mustHexDecode(value string) []byte {
-	decoded, _ := hex.DecodeString(value)
-	return decoded
 }
 
 func buildAgentAccessCommand(serverURL, token, name, labels string) string {
@@ -1066,13 +1022,18 @@ func (s *Server) writeSettings(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleMeta(w http.ResponseWriter, r *http.Request) {
 	nodes, _ := s.store.ListNodes(r.Context(), "", time.Now().UTC())
 	settings := s.currentSettings()
+	snapshot := s.agentReleaseSnapshot(r.Context())
 	writeJSON(w, http.StatusOK, map[string]any{
 		"version":                   version.Version,
 		"serverTime":                time.Now().UTC(),
 		"demoMode":                  s.cfg.DemoMode,
 		"nodeCount":                 len(nodes),
 		"site":                      settings.Site,
-		"agentArchitectures":        s.agentArchitectures(s.configuredServerURL(r)),
+		"agentArchitectures":        s.agentArchitectures(snapshot),
+		"agentReleaseVersion":       snapshot.Version,
+		"agentReleaseTag":           snapshot.ReleaseTag,
+		"agentReleaseUrl":           snapshot.ReleaseURL,
+		"agentReleaseRepository":    snapshot.Repository,
 		"enrollmentTokenTtlSeconds": int(s.cfg.EnrollmentTokenTTL.Seconds()),
 	})
 }
